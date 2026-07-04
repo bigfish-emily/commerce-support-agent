@@ -1,5 +1,7 @@
 # E-commerce AI Agent - Agentic RAG + HITL
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A **multi-skill AI agent** built with **FastAPI**, **LangGraph**, **OpenAI ChatGPT**, and **ChromaDB**. The agent routes each request to the right skill - Q&A (RAG), Order (HITL), or Track - and orchestrates the full conversation flow. 7 nodes, 3 skills, 1 checkpointer, ChromaDB-backed semantic retrieval.
 
 ## Skills
@@ -328,3 +330,7 @@ curl -X POST http://localhost:8000/chat \
 ```
 
 Or use `api-requests.http` with IntelliJ HTTP Client or `npx httpyac api-requests.http --env dev`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
