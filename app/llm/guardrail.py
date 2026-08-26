@@ -5,6 +5,7 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.llm.json_fallback import add_json_instruction, parse_json_model
 from app.llm.prompts import INPUT_GUARD_PROMPT, OUTPUT_GUARD_PROMPT
 from app.llm.types import InputGuardResult, OutputGuardResult
 
@@ -20,6 +21,7 @@ class Guardrail:
     """
 
     def __init__(self, llm: ChatOpenAI) -> None:
+        self._base_llm = llm
         self._input_llm = llm.with_structured_output(InputGuardResult)
         self._output_llm = llm.with_structured_output(OutputGuardResult)
 
@@ -40,8 +42,13 @@ class Guardrail:
         try:
             return await self._input_llm.ainvoke(messages)
         except Exception as exc:
-            logger.warning("Input guard LLM failed, using heuristic fallback: %s", exc)
-            return _heuristic_input_guard(message)
+            logger.warning("Structured input guard failed, trying JSON-text fallback: %s", exc)
+            try:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, InputGuardResult))
+                return parse_json_model(raw, InputGuardResult)
+            except Exception as fallback_exc:
+                logger.warning("Input guard LLM failed, using heuristic fallback: %s", fallback_exc)
+                return _heuristic_input_guard(message)
 
     async def check_output(self, answer: str) -> OutputGuardResult:
         messages = [
@@ -51,7 +58,12 @@ class Guardrail:
         try:
             return await self._output_llm.ainvoke(messages)
         except Exception as exc:
-            logger.warning("Output guard LLM failed, using deterministic fallback: %s", exc)
+            logger.warning("Structured output guard failed, trying JSON-text fallback: %s", exc)
+            try:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, OutputGuardResult))
+                return parse_json_model(raw, OutputGuardResult)
+            except Exception as fallback_exc:
+                logger.warning("Output guard LLM failed, using deterministic fallback: %s", fallback_exc)
             if not answer.strip():
                 return OutputGuardResult(valid=False, reason="empty answer")
             if "[TODO]" in answer or "Traceback" in answer:

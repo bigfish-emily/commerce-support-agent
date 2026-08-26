@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.intent.decomposer import decompose_business_message
+from app.llm.json_fallback import add_json_instruction, parse_json_model
 from app.llm.prompts import INTENT_PLANNER_PROMPT
 from app.llm.types import IntentRouteResult, PlannedTask, TaskPlanResult
 
@@ -17,6 +18,7 @@ class IntentPlanner:
     """Plan ordered business tasks from a user request."""
 
     def __init__(self, llm: ChatOpenAI) -> None:
+        self._base_llm = llm
         self._llm = llm.with_structured_output(TaskPlanResult)
 
     async def plan(self, message: str) -> TaskPlanResult:
@@ -27,8 +29,13 @@ class IntentPlanner:
         try:
             result = await self._llm.ainvoke(messages)
         except Exception as exc:
-            logger.warning("LLM intent planner failed, using deterministic fallback: %s", exc)
-            return fallback_plan(message)
+            logger.warning("Structured planner failed, trying JSON-text fallback: %s", exc)
+            try:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, TaskPlanResult))
+                result = parse_json_model(raw, TaskPlanResult)
+            except Exception as fallback_exc:
+                logger.warning("LLM intent planner failed, using deterministic fallback: %s", fallback_exc)
+                return fallback_plan(message)
         tasks = [task for task in result.tasks if task.intent in VALID_INTENTS]
         if not tasks:
             return fallback_plan(message)

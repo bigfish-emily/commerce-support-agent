@@ -105,7 +105,12 @@ class AgentActions:
                 support_docs = self._search_support_docs(text)
                 retrieved_policy.extend(sections)
                 retrieved_support_docs.extend(support_docs)
-                answer = await self._policy_generator.generate(text, sections, support_docs)
+                answer = await self._policy_generator.generate(
+                    text,
+                    sections,
+                    support_docs,
+                    completed_context="\n\n".join(answers),
+                )
                 answers.append(f"[政策问答]\n{answer}")
                 event_details["tool"] = "search_policy_knowledge"
                 event_details["hit_count"] = len(sections)

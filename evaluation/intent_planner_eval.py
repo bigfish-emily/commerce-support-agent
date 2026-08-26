@@ -25,9 +25,28 @@ def load_cases() -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
+def select_cases(cases: list[dict], limit: int) -> list[dict]:
+    if os.environ.get("LLM_EVAL_BALANCED", "0") != "1":
+        return cases[:limit]
+    selected: list[dict] = []
+    seen_intents: set[str] = set()
+    for case in cases:
+        intent = case.get("expected_intent", case.get("expected_skill"))
+        if intent in seen_intents:
+            continue
+        selected.append(case)
+        seen_intents.add(intent)
+        if len(selected) >= limit:
+            return selected
+    if len(selected) < limit:
+        selected_ids = {case["id"] for case in selected}
+        selected.extend(case for case in cases if case["id"] not in selected_ids)
+    return selected[:limit]
+
+
 async def evaluate() -> None:
     limit = int(os.environ.get("LLM_EVAL_LIMIT", "20"))
-    cases = load_cases()[:limit]
+    cases = select_cases(load_cases(), limit)
     wrong_predictions: dict[str, int] = {}
     correct = 0
     for case in cases:

@@ -265,7 +265,7 @@ LLM 评测：
 ```bash
 OPENAI_API_KEY=<your-key>
 OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-chat
+OPENAI_MODEL=deepseek-v4-flash
 LLM_EVAL_LIMIT=20
 python -m evaluation.intent_planner_eval
 ```
@@ -277,6 +277,19 @@ RUN_LLM_ROUTER_EVAL=1 LLM_EVAL_LIMIT=20 python -m evaluation.intent_eval
 ```
 
 DeepSeek 可以跑，因为 `langchain-openai` 支持 OpenAI-compatible API。需要记录 provider、model、temperature、prompt version、评测日期，避免把不同模型的数字混在一起。
+
+低成本 live smoke：
+
+```bash
+OPENAI_API_KEY=<your-key>
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-flash
+LIVE_SMOKE_OFFSET=2
+LIVE_SMOKE_LIMIT=1
+python -m evaluation.live_agent_smoke
+```
+
+最近一次小样本验证：`deepseek-v4-flash` 不支持 native `response_format`，项目会自动降级到 JSON-text structured fallback，再用 Pydantic 做本地 schema 校验。复合任务 live smoke 结果为 `tasks=['order_status', 'policy', 'escalation']`，`statuses=['completed', 'completed', 'awaiting_confirmation']`，`hitl=True`，`output_valid=True`。
 
 项目也导出了 DeepEval 兼容 case，并预留 Ragas/TruLens 指标口径。相关框架：
 

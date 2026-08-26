@@ -6,6 +6,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.llm.json_fallback import add_json_instruction, parse_json_model
 from app.llm.offline import OfflineChatModel
 from app.llm.prompts import OLIST_TASK_PROMPT, POLICY_ANSWER_PROMPT, QA_ANSWER_PROMPT
 from app.llm.types import OlistTaskResult
@@ -64,6 +65,7 @@ class PolicyResponseGenerator:
         user_message: str,
         policy_sections: list[dict[str, object]],
         support_docs: list[dict[str, object]] | None = None,
+        completed_context: str = "",
     ) -> str:
         if not policy_sections:
             return "没有找到匹配的客服政策，请转人工确认。"
@@ -87,6 +89,9 @@ class PolicyResponseGenerator:
                 f"- {doc.get('intent', '')}/{doc.get('capability', '')}: {doc.get('text', '')}"
                 for doc in support_docs[:3]
             )
+        if completed_context:
+            context += "\n\nAlready completed deterministic tool results:\n"
+            context += completed_context
         prompt = POLICY_ANSWER_PROMPT.format(policy_context=context)
         messages = [
             SystemMessage(content=prompt),
@@ -108,6 +113,7 @@ class OlistTaskExtractor:
     """Extracts order/category slots from an Olist support request."""
 
     def __init__(self, llm: ChatOpenAI) -> None:
+        self._base_llm = llm
         self._llm = llm.with_structured_output(OlistTaskResult)
 
     async def extract(self, user_message: str) -> OlistTaskResult:
@@ -118,7 +124,12 @@ class OlistTaskExtractor:
         try:
             return await self._llm.ainvoke(messages)
         except Exception as exc:
-            logger.warning("Task extractor LLM failed, using regex fallback: %s", exc)
+            logger.warning("Structured task extractor failed, trying JSON-text fallback: %s", exc)
+            try:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, OlistTaskResult))
+                return parse_json_model(raw, OlistTaskResult)
+            except Exception as fallback_exc:
+                logger.warning("Task extractor LLM failed, using regex fallback: %s", fallback_exc)
             order_match = re.search(r"[0-9a-fA-F][0-9a-fA-F\s:-]{30,80}[0-9a-fA-F]", user_message)
             category_match = re.search(r"[a-z]+(?:[_ -][a-z]+)+", user_message.lower())
             order_id = re.sub(r"[^0-9a-fA-F]", "", order_match.group(0)).lower() if order_match else ""
