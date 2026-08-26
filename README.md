@@ -143,7 +143,7 @@ flowchart LR
     Output --> Trace[(SQLite Trace Store)]
 ```
 
-当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/运营场景有明确的业务边界和副作用风险：先由 LLM task planner 拆出有序任务计划，再由确定性 executor 按顺序执行；只读任务可以连续执行，遇到售后升级、退款、取消订单、改地址、发票等副作用任务时进入 HITL。HITL 不表示自动提权；它只是把“模型草稿”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address` 和 `invoice_request`，生产中替换为 OMS/CRM/退款/优惠券 MCP tools。
+当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/运营场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到售后升级、退款、取消订单、改地址、发票等副作用任务时进入 HITL。HITL 不表示自动提权；它只是把“模型草稿”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address` 和 `invoice_request`。
 
 ## Agentic RAG
 
@@ -244,6 +244,7 @@ GET /observability/traces/{session_id}?limit=20
 .\.venv\Scripts\python.exe -m evaluation.ops_decision_eval
 .\.venv\Scripts\python.exe -m evaluation.tool_repair_eval
 .\.venv\Scripts\python.exe -m evaluation.performance_eval
+.\.venv\Scripts\python.exe -m evaluation.live_agent_eval
 .\.venv\Scripts\python.exe -m evaluation.agent_metrics_report
 ```
 
@@ -251,7 +252,7 @@ GET /observability/traces/{session_id}?limit=20
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 50 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
+| Unit/Integration Tests | 51 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -263,11 +264,24 @@ GET /observability/traces/{session_id}?limit=20
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
 | Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 中文政策问题能命中正确 policy section |
 | After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
+| Live LLM Agent eval | 5/5, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
 | Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
-| Layered metrics report | 67 metrics | 规划、工具、RAG、运营决策、端到端轨迹、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
+| Layered metrics report | 75 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
 
-LLM 评测：
+真实 LLM Agent 主链路评测：
+
+```bash
+OPENAI_API_KEY=<your-key>
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-flash
+LIVE_AGENT_EVAL_LIMIT=5
+python -m evaluation.live_agent_eval
+```
+
+最近一次 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p95 latency `38246.40ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分。
+
+LLM planner 单项评测：
 
 ```bash
 OPENAI_API_KEY=<your-key>
@@ -394,6 +408,7 @@ evaluation/
 ├── ops_decision_eval.py
 ├── tool_repair_eval.py
 ├── performance_eval.py
+├── live_agent_eval.py
 ├── deepeval_export.py
 └── deepeval_optional.py
 data/

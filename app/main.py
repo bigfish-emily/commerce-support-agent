@@ -93,6 +93,21 @@ async def chat(request: ChatRequest) -> ChatResponse:
     # Invoke graph - resume from interrupt or start new run
     t_graph = time.perf_counter()
     if has_interrupt:
+        if _pending_confirmation_expired(snapshot.values):
+            logger.info("GRAPH RESUME | pending side effect expired, canceling")
+            result = await agent.ainvoke(Command(resume="__hitl_timeout__"), config)
+            record_trace(
+                session_id=session_id,
+                user_message=request.message,
+                result=result,
+                latency_ms=(time.perf_counter() - t_start) * 1000,
+                status="hitl_timeout_canceled",
+            )
+            return ChatResponse(
+                answer=str(result["final_answer"]),
+                session_id=session_id,
+                sources=_response_sources(result),
+            )
         if not _is_confirmation_reply(request.message):
             pending_result = _pending_confirmation_response(snapshot.values)
             record_trace(
@@ -215,11 +230,17 @@ def _is_confirmation_reply(message: str) -> bool:
 def _pending_confirmation_response(state: dict) -> dict[str, object]:
     pending = state.get("pending_side_effect", {}) if state else {}
     action_type = pending.get("type", "side_effect")
+    expires_at = pending.get("expires_at")
+    expires_hint = ""
+    if isinstance(expires_at, (int, float)):
+        remaining = max(int(expires_at - time.time()), 0)
+        expires_hint = f"\n该确认将在 {remaining} 秒后超时自动取消。"
     return {
         "route_intent": "pending_confirmation",
         "final_answer": (
             f"当前 session 还有一个待确认的副作用动作：{action_type}。\n"
             "请先回复 yes/确认 执行，或 no/取消 放弃；如果要开始新任务，请换一个 Session ID。"
+            f"{expires_hint}"
         ),
         "trajectory_events": [
             {
@@ -230,6 +251,14 @@ def _pending_confirmation_response(state: dict) -> dict[str, object]:
             }
         ],
     }
+
+
+def _pending_confirmation_expired(state: dict) -> bool:
+    pending = state.get("pending_side_effect", {}) if state else {}
+    if not pending.get("requires_confirmation"):
+        return False
+    expires_at = pending.get("expires_at")
+    return isinstance(expires_at, (int, float)) and time.time() >= float(expires_at)
 
 
 @app.get("/observability/summary", response_model=TraceSummaryResponse)

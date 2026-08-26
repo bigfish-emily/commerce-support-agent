@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 # Must be set BEFORE importing app — LlmClient reads OPENAI_API_KEY at import time.
@@ -213,6 +214,27 @@ async def test_escalation_second_turn_cancel(client: AsyncClient) -> None:
         response = await client.post("/chat", json={"message": "no", "session_id": "s3"})
     assert response.status_code == 200
     assert "已取消创建售后升级 case" in response.json()["answer"]
+
+
+@pytest.mark.anyio
+async def test_escalation_confirmation_timeout_cancels_pending_action(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HITL_TIMEOUT_SECONDS", "1")
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("escalation"), _mock_task():
+        await client.post(
+            "/chat",
+            json={"message": f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术", "session_id": "timeout-s1"},
+        )
+
+    await asyncio.sleep(1.1)
+    with g1, g2:
+        response = await client.post("/chat", json={"message": "yes", "session_id": "timeout-s1"})
+    assert response.status_code == 200
+    assert "已超时自动取消" in response.json()["answer"]
+    assert "CASE-" not in response.json()["answer"]
 
 
 @pytest.mark.anyio

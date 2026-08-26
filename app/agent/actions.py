@@ -1,3 +1,6 @@
+import os
+import time
+
 from langgraph.types import interrupt
 
 from app.agent.state import AgentState
@@ -167,11 +170,16 @@ class AgentActions:
             "messages": [*state["messages"], {"role": "assistant", "content": final_answer}],
         }
         if escalation_draft:
+            created_at = time.time()
+            timeout_seconds = _hitl_timeout_seconds()
             update["escalation_draft"] = escalation_draft
             update["pending_side_effect"] = {
                 "type": escalation_draft.get("action_type", "open_support_case"),
                 "requires_confirmation": True,
                 "task_intent": "escalation",
+                "created_at": created_at,
+                "expires_at": created_at + timeout_seconds,
+                "timeout_seconds": timeout_seconds,
             }
         return update
 
@@ -238,12 +246,17 @@ class AgentActions:
                 "final_answer": answer,
                 "messages": [*state["messages"], {"role": "assistant", "content": answer}],
             }
+        created_at = time.time()
+        timeout_seconds = _hitl_timeout_seconds()
         return {
             "escalation_draft": draft,
             "pending_side_effect": {
                 "type": draft.get("action_type", "open_support_case"),
                 "requires_confirmation": True,
                 "task_intent": "escalation",
+                "created_at": created_at,
+                "expires_at": created_at + timeout_seconds,
+                "timeout_seconds": timeout_seconds,
             },
             "final_answer": answer,
             "messages": [*state["messages"], {"role": "assistant", "content": answer}],
@@ -315,6 +328,9 @@ class AgentActions:
         elif confirmed:
             answer = "没有找到可提交的升级草稿，请重新发起。"
             status = "failed"
+        elif user_response.lower().strip() == "__hitl_timeout__":
+            answer = "待确认的售后动作已超时自动取消；如果仍需处理，请重新发起任务。"
+            status = "timeout_canceled"
         else:
             answer = "已取消创建售后升级 case。"
             status = "canceled"
@@ -390,6 +406,15 @@ def _with_order_context(task_text: str, full_message: str) -> str:
     if not repair.ok:
         return task_text
     return f"{task_text}\n上下文订单号：{repair.value}"
+
+
+def _hitl_timeout_seconds() -> int:
+    raw = os.environ.get("HITL_TIMEOUT_SECONDS", "900")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 900
+    return max(value, 1)
 
 
 def _event(

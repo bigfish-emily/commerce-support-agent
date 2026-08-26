@@ -63,13 +63,14 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 
 ### 8. 如果 LLM planner 拆错，怎么回滚？
 
-只读任务不需要业务回滚，只需要 trace 记录错误并允许用户重问。副作用任务不会直接执行，先进入 HITL，所以 planner 拆错通常会在确认前被用户或人工发现。真实生产里还会增加：
+只读任务不需要业务回滚，只需要 trace 记录错误并允许用户重问。副作用任务不会直接执行，先进入 HITL，所以 planner 拆错通常会在确认前被用户或人工发现。当前已经落地的保护包括：
 
 - planner 输出 schema 校验和业务规则校验；
+- provider 不支持 native structured output 时走 JSON-text fallback，再用 Pydantic 校验；
+- 只读任务优先执行，副作用任务延后并停在 HITL；
+- HITL pending action 带 `created_at/expires_at`，过期后不能再确认执行；
 - risky action 二次分类；
-- confirmed action 的幂等 request_id；
-- 可撤销动作走补偿事务，例如取消退款申请、关闭工单；
-- 不可撤销动作提高权限门槛，例如人工主管二次确认。
+- confirmed action 用幂等 key 返回稳定业务编号。
 
 ## RAG 与知识库
 
@@ -146,14 +147,11 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 用户确认后，系统调用对应工具；用户取消后清理 pending state；用户发起无关新任务时，当前实现会要求先确认/取消或换 session，避免一个 session 里悬挂副作用被误触发。
 
-### 18. HITL 超时怎么办？
+### 18. HITL 超时怎么做？
 
-当前 demo 没有真实超时调度。生产中需要 checkpoint 中记录 `pending_side_effect.created_at` 和 `expires_at`：
+当前已经落地在主 `/chat` 入口和 LangGraph checkpoint 里。副作用草稿生成时，`pending_side_effect` 会写入 `created_at`、`expires_at` 和 `timeout_seconds`，默认 `HITL_TIMEOUT_SECONDS=900`。用户在过期后再回复 yes，服务端不会执行旧工具调用，而是 resume graph 并取消旧 interrupt。
 
-- 超时未确认：自动取消草稿，写入 trace；
-- 高风险动作：通知人工队列；
-- 用户超时后再回复 yes：返回“确认已过期，请重新发起”，不能执行旧草稿；
-- 定时器实现：Celery/RocketMQ delayed message/Kafka + scheduler 都可。
+代码落点：`app/agent/actions.py` 写入超时元数据；`app/main.py` 的 `_pending_confirmation_expired()` 在恢复 interrupt 前拦截过期确认；`tests/test_main.py` 覆盖“超时后 yes 不会创建 CASE”的行为。
 
 ### 19. 用户回复“不要/算了”怎么处理？
 
@@ -161,11 +159,13 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 ## 评测与指标
 
-### 20. LLM judge 为什么只有 3 条？
+### 20. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
 
-这是低成本 smoke，不是完整评测。它验证 DeepSeek/OpenAI-compatible API、真实 Agent 执行、judge prompt 和结果落盘链路能跑通。完整 LLM judge 应该扩到 30-100 条，覆盖 order、policy、multi-intent、HITL、fallback、拒答、中文混合表达等，并把失败样本沉淀到回归集。
+不是。LLM-as-Judge 只是事后答案质量评估。真正的主链路是：input guard -> LLM task planner -> LLM slot extractor/answer generator -> deterministic tools -> output guard。`IntentPlanner.plan()` 是有 key 时的第一步，规则 decomposer 只在 LLM 调用失败或输出非法时兜底。
 
-不能把 3 条 judge 作为主要能力证明。主要证据应来自确定性 CI 指标、真实轨迹 eval、RAG recall、工具参数修复和可观测性。
+现在已经新增 `evaluation/live_agent_eval.py`，用 DeepSeek `deepseek-v4-flash` 跑真实 Agent 主链路：5 条 case 覆盖订单查询、类目风险、政策边界、售后运营决策、多意图 HITL，`case_pass_rate=100%`，`task_exact/tools_used/hitl_correct/output_valid/answer_keywords` 均为 `100%`。
+
+LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulness、tool correctness、HITL correctness，但它不是核心能力证明。
 
 ### 21. 之前“trajectory 100%”为什么有风险？
 
@@ -189,7 +189,9 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 ### 23. 现在的指标能证明真实 Agent 能力吗？
 
-能证明工程链路和确定性能力，不能完全证明真实模型在线表现。离线指标证明数据、工具、RAG、状态机、HITL 和评测框架可靠；live smoke/LLM judge 证明接入模型后链路可运行。要证明线上能力，还需要更大的真实 LLM eval、线上 trace 回放和人工标注集。
+能分层证明，而不是只靠一个分数。离线指标证明数据、工具、RAG、状态机、HITL 和 trace 不会因为模型随机性而漂；真实 LLM Agent eval 证明模型已经进入 planner、抽槽、生成和 guard 主链路；LLM-as-Judge 证明小样本答案质量。当前总表有 75 项指标，其中“真实 LLM Agent”分组 5 条 live case 全过。
+
+如果面试官追问“5 条够不够”，回答要明确：5 条是低成本 live smoke，证明真实链路可跑；规模化可信度来自可扩展的 eval harness，下一步可以把 `LIVE_AGENT_EVAL_LIMIT` 扩到 30-100，并把失败样本进入回归集。
 
 ## 安全、隐私、多租户
 
@@ -242,7 +244,7 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 - policy KB 不是企业真实 SOP；
 - hybrid retrieval 是本地 baseline，还不是 ES + vector DB + reranker；
 - 可观测性是 SQLite 和简单接口，不是 OpenTelemetry + dashboard；
-- HITL 超时调度还未完整实现。
+- live eval 样本目前是低成本 5 条，还需要扩成更大的模型回归集。
 
 回答时不要否认缺口，要强调这些是个人项目和生产系统之间的边界，并说明可落地的演进路径。
 
@@ -254,16 +256,16 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 高级不在于用了多少框架，而在于把 Agent 落到生产问题：多意图拆解、工具参数修复、RAG 召回评测、副作用 HITL、真实轨迹 eval、trace 回放、MCP 边界和成本控制。这个项目不是一个大模型聊天 UI，而是一个可测试、可审计、可替换工具后端的业务 Agent skeleton。
 
-更坦诚的说法：目前它是“高级 Agent 工程样板项目”，不是完整商用 SaaS。它足够支撑秋招面试讨论架构和工程取舍，但如果要冲更强竞争力，下一步应补 tenant ACL、HITL timeout、真实 ES/vector DB、dashboard 和更大规模 LLM judge。
+更坦诚的说法：目前它是“高级 Agent 工程样板项目”，不是完整商用 SaaS。它足够支撑秋招面试讨论架构和工程取舍；如果继续冲更强竞争力，优先补 tenant ACL、真实 ES/vector DB、dashboard 和更大规模 live LLM eval。
 
 ## 项目成熟度评分
 
 | 维度 | 当前评分 | 证据 | 冲 9 分补强 |
 |---|---:|---|---|
 | 业务完整度 | 8/10 | 覆盖客服查询、政策解释、售后升级、退款/取消/改地址/发票申请、售后运营决策 | 接入真实商家规则、库存/优惠券/CRM sandbox |
-| Agent 架构 | 8/10 | LangGraph plan-and-execute、结构化 planner、HITL、fallback、trace | 增加 checkpoint 持久化恢复 demo、HITL timeout scheduler |
+| Agent 架构 | 8.5/10 | LangGraph plan-and-execute、LLM planner、结构化 fallback、HITL、HITL timeout、trace | 增加 checkpoint 持久化恢复 demo 和更完整状态回放 |
 | RAG 能力 | 7.5/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
 | 工具治理 | 8/10 | 参数修复、副作用 action_type、MCP server/client adapter、幂等模拟 | 持久化幂等表、真实外部 MCP sandbox |
-| 评测体系 | 8/10 | 50 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、67 项总指标 | 扩大 LLM judge 到 30-100 条，加入失败样本回归池 |
+| 评测体系 | 8.5/10 | 51 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、5 条 live LLM eval、75 项总指标 | 扩大 live LLM eval 到 30-100 条，加入失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |

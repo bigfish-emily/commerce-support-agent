@@ -54,6 +54,7 @@ def main() -> None:
     metrics.extend(rag_metrics())
     metrics.extend(after_sales_ops_metrics())
     metrics.extend(e2e_metrics())
+    metrics.extend(live_agent_metrics())
     metrics.extend(answer_quality_metrics())
     metrics.extend(safety_metrics())
     metrics.extend(performance_and_ops_metrics())
@@ -483,6 +484,63 @@ def e2e_metrics() -> list[Metric]:
     ]
 
 
+def live_agent_metrics() -> list[Metric]:
+    path = ROOT / "evaluation" / "live_agent_eval_results.jsonl"
+    if not path.exists():
+        return [
+            Metric(
+                "真实 LLM Agent",
+                "live eval status",
+                "not_run",
+                "0",
+                "真实 LLM 进入 planner/抽槽/生成/guard 主链路后的端到端评估状态。",
+                "`OPENAI_API_KEY=... python -m evaluation.live_agent_eval` 会生成结果。",
+                api_key="是",
+            )
+        ]
+
+    rows = load_jsonl(path)
+    if not rows:
+        return []
+    check_names = list(rows[0]["checks"])
+    metrics = [
+        Metric(
+            "真实 LLM Agent",
+            "live case pass rate",
+            _pct(sum(bool(row["passed"]) for row in rows), len(rows)),
+            str(len(rows)),
+            "真实 LLM 作为 planner/抽槽/生成器进入 Agent 主链路后，端到端 case 是否全部通过。",
+            "每条 case 的 task/tool/HITL/trace/output/answer checks 全部为 true 才算 pass。",
+            api_key="是",
+        )
+    ]
+    for name in check_names:
+        metrics.append(
+            Metric(
+                "真实 LLM Agent",
+                f"live {name}",
+                _pct(sum(bool(row["checks"][name]) for row in rows), len(rows)),
+                str(len(rows)),
+                _live_check_meaning(name),
+                f"live_agent_eval_results.jsonl 中 checks.{name}=true 的比例。",
+                api_key="是",
+            )
+        )
+    latencies = [float(row["latency_ms"]) for row in rows]
+    metrics.append(
+        Metric(
+            "真实 LLM Agent",
+            "live p95 latency",
+            f"{_percentile(latencies, 95):.2f} ms",
+            str(len(rows)),
+            "包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p95。",
+            "按 live_agent_eval 每条 case latency_ms 取 p95。",
+            api_key="是",
+        )
+    )
+    return metrics
+
+
 async def _run_trajectory_cases(graph, cases: list[dict]) -> list[dict]:
     return [await _run_case(graph, case) for case in cases]
 
@@ -738,6 +796,17 @@ def _deterministic_output_guard(answer: str) -> OutputGuardResult:
     if "[TODO]" in answer or "Traceback" in answer:
         return OutputGuardResult(valid=False, reason="placeholder or traceback")
     return OutputGuardResult(valid=True, reason="deterministic checks passed")
+
+
+def _live_check_meaning(name: str) -> str:
+    return {
+        "task_exact": "LLM planner 生成的任务列表是否与 gold 完全一致。",
+        "tools_used": "真实轨迹是否调用了该任务需要的确定性工具。",
+        "hitl_correct": "副作用任务是否进入 HITL，只读任务是否不误触发 HITL。",
+        "no_failed_event": "真实轨迹里是否没有 failed/blocked 事件。",
+        "output_valid": "输出 guard 是否放行真实 Agent 回答。",
+        "answer_keywords": "回答是否包含该业务问题必须出现的实体/政策/动作关键词或同义表达。",
+    }.get(name, "真实 LLM Agent eval 检查项。")
 
 
 def _measure(fn: Callable[[], object], warmup: int = 20, runs: int = 200) -> list[float]:
