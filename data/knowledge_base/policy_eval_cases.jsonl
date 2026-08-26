@@ -1,0 +1,10 @@
+{"id":"kb-order-status","query":"客户问订单当前状态，回答前必须查什么信息？","expected_section":"Order Status Response Policy"}
+{"id":"kb-delay","query":"订单送达晚于预计送达时间时，能不能直接承诺退款？","expected_section":"Delivery Delay Policy"}
+{"id":"kb-low-review","query":"客户给了1星或2星低分时，客服跟进重点是什么？","expected_section":"Low Review Recovery Policy"}
+{"id":"kb-cancel","query":"取消订单是否可以直接创建售后case？","expected_section":"Cancellation Follow-Up Policy"}
+{"id":"kb-compensation","query":"优惠券、退款、补偿这类动作为什么不能让模型直接执行？","expected_section":"Compensation Boundary Policy"}
+{"id":"kb-human-approval","query":"创建售后case之前需要什么确认？","expected_section":"Human Approval Policy"}
+{"id":"kb-message-style","query":"给客户的话术应该避免哪些内部技术词？","expected_section":"Customer Message Style"}
+{"id":"kb-tool-boundary","query":"订单状态、延迟天数、评价分这些事实应该从哪里来？","expected_section":"Tool Boundary Policy"}
+{"id":"kb-category","query":"类目运营风险分析可以回答什么，不能替代什么？","expected_section":"Category Operations Policy"}
+{"id":"kb-audit","query":"生产系统里一次客服agent任务应该记录哪些轨迹？","expected_section":"Audit and Trace Policy"}
