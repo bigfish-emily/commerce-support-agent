@@ -1,58 +1,52 @@
-"""Dependency injection — module-level singletons wired together.
-
-One instance of each component, shared across all requests.
-Tests import these directly and call order_repo.reset() between cases.
-"""
+"""Dependency injection — module-level singletons wired together."""
 
 import os
 
+from dotenv import load_dotenv
+
+from app.agent.actions import AgentActions
 from app.agent.graph import AgentGraph
-from app.agent.skills import AgentSkills
 from app.llm.client import LlmClient
 from app.llm.guardrail import Guardrail
-from app.llm.response_generator import OrderDraftGenerator, QaResponseGenerator
-from app.llm.skill_router import SkillRouter
-from app.order.repository import InMemoryOrderRepository
-from app.order.service import OrderService
-from app.product.repository import ChromaProductRepository
-from app.product.service import ProductService
+from app.llm.intent_planner import IntentPlanner
+from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerator, QaResponseGenerator
+from app.olist.knowledge import MarkdownKnowledgeBase
+from app.olist.service import InMemoryCaseService, OlistService
+from app.retrieval.hybrid import HybridSupportRetriever
 
-# Repositories (infrastructure)
-# Product search is backed by ChromaDB (semantic retrieval). The collection is
-# populated offline by the indexer (`make index`); the client connects lazily.
-product_repo = ChromaProductRepository(
-    host=os.environ.get("CHROMA_HOST", "localhost"),
-    port=int(os.environ.get("CHROMA_PORT", "8000")),
-    collection_name=os.environ.get("CHROMA_COLLECTION", "products"),
-    embedding_model=os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
-    top_k=int(os.environ.get("RAG_TOP_K", "3")),
-)
-order_repo = InMemoryOrderRepository()
+load_dotenv()
 
-# Domain services
-product_service = ProductService(product_repo)
-order_service = OrderService(order_repo)
+olist_service = OlistService()
+knowledge_base = MarkdownKnowledgeBase()
+support_retriever = HybridSupportRetriever()
+case_service = InMemoryCaseService()
 
-# LLM client — one ChatOpenAI shared across all LLM components
 llm_client = LlmClient(
-    api_key=os.environ["OPENAI_API_KEY"],
+    api_key=os.environ.get("OPENAI_API_KEY", "offline"),
     model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+    base_url=os.environ.get("OPENAI_BASE_URL"),
 )
+runtime_status = {
+    "mode": llm_client.mode,
+    "model": llm_client.model,
+    "base_url": llm_client.base_url,
+}
 
-# LLM components — each receives the same ChatOpenAI instance
-skill_router = SkillRouter(llm_client.chat_openai)
+intent_planner = IntentPlanner(llm_client.chat_openai)
 qa_generator = QaResponseGenerator(llm_client.chat_openai)
-order_generator = OrderDraftGenerator(llm_client.chat_openai)
+policy_generator = PolicyResponseGenerator(llm_client.chat_openai)
+task_extractor = OlistTaskExtractor(llm_client.chat_openai)
 guardrail = Guardrail(llm_client.chat_openai)
 
-# Agent skills — receives everything it needs via constructor
-skills = AgentSkills(
-    skill_router=skill_router,
+actions = AgentActions(
+    intent_planner=intent_planner,
     qa_generator=qa_generator,
-    order_generator=order_generator,
-    product_service=product_service,
-    order_service=order_service,
+    policy_generator=policy_generator,
+    task_extractor=task_extractor,
+    olist_service=olist_service,
+    knowledge_base=knowledge_base,
+    support_retriever=support_retriever,
+    case_service=case_service,
 )
 
-# Agent graph builder — wires skills into the LangGraph graph
-agent_graph_builder = AgentGraph(skills=skills)
+agent_graph_builder = AgentGraph(actions=actions)

@@ -31,23 +31,24 @@ def format_state(state: dict) -> str:
 
     parts = [
         f"session_id: {state.get('session_id', '?')}",
-        f"skill: {state.get('skill') or '(none)'}",
-        f"has_order: {bool(state.get('order'))}",
-        f"order_confirmed: {state.get('order_confirmed', False)}",
+        f"route_intent: {state.get('route_intent') or '(none)'}",
+        f"task_plan: {state.get('task_plan') or []}",
+        f"has_escalation_draft: {bool(state.get('escalation_draft'))}",
     ]
 
-    if state.get("order"):
-        order = state["order"]
-        parts.append(
-            f"order: {order.get('product_name')} x{order.get('quantity')} = ${order.get('total_price')}"
-        )
-
-    if state.get("product_results"):
-        sources = state["product_results"]
+    if state.get("retrieved_insights"):
+        sources = state["retrieved_insights"]
         if isinstance(sources[0], dict):
-            parts.append(f"product_results: {[p['name'] for p in sources]}")
+            parts.append(f"retrieved_insights: {[p['name'] for p in sources]}")
         else:
-            parts.append(f"product_results: {sources}")
+            parts.append(f"retrieved_insights: {sources}")
+
+    if state.get("retrieved_policy"):
+        sources = state["retrieved_policy"]
+        if isinstance(sources[0], dict):
+            parts.append(f"retrieved_policy: {[p['section_title'] for p in sources]}")
+        else:
+            parts.append(f"retrieved_policy: {sources}")
 
     return (
         "\n  "

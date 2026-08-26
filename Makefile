@@ -1,4 +1,4 @@
-.PHONY: build up down logs index inspect-documents inspect-embeddings test lint format clean eval
+.PHONY: build up down logs build-data test lint format eval eval-llm mcp clean
 
 build:
 	docker compose build
@@ -6,17 +6,11 @@ build:
 up:
 	docker compose up
 
-# Build the vector index — embeds the catalog into ChromaDB. Run once after `make up`
-# (and again whenever data/products.json changes). Starts the chroma service if needed.
-index:
-	docker compose run --rm ecommerce-agent python -m embedding.index
-
-# Inspect what's stored in ChromaDB (read-only, no OpenAI key needed).
-inspect-documents:
-	docker compose run --rm ecommerce-agent python -m embedding.inspect --mode documents
-
-inspect-embeddings:
-	docker compose run --rm ecommerce-agent python -m embedding.inspect --mode embeddings
+build-data:
+	python scripts/build_olist_dataset.py
+	python scripts/build_bitext_dataset.py
+	python scripts/build_rescommons_dataset.py
+	python scripts/build_v1rtucious_eval.py
 
 down:
 	docker compose down
@@ -28,13 +22,31 @@ test:
 	python -m pytest tests/ -v
 
 lint:
-	ruff check app/ embedding/ tests/
+	ruff check app/ evaluation/ scripts/ tests/
 
 format:
-	ruff format app/ embedding/ tests/
+	ruff format app/ evaluation/ scripts/ tests/
 
 eval:
-	python -m evaluation.skill_router_eval
+	python -m evaluation.intent_eval
+	python -m evaluation.multi_intent_eval
+	python -m evaluation.task_eval
+	python -m evaluation.rag_retrieval_eval
+	python -m evaluation.hybrid_retrieval_eval
+	python -m evaluation.v1rtucious_eval_profile
+	python -m evaluation.knowledge_eval
+	python -m evaluation.tool_repair_eval
+	python -m evaluation.trajectory_eval
+	python -m evaluation.performance_eval
+	python -m evaluation.agent_metrics_report
+	python -m evaluation.deepeval_export
+
+eval-llm:
+	python -m evaluation.intent_planner_eval
+	RUN_LLM_ROUTER_EVAL=1 python -m evaluation.intent_eval
+
+mcp:
+	python -m app.mcp_server
 
 clean:
 	docker compose down -v

@@ -1,7 +1,7 @@
 [project]
-name = "ecommerce-ai-agent"
+name = "olist-marketplace-support-agent"
 version = "0.2.0"
-description = "E-commerce AI Agent - FastAPI + LangGraph + OpenAI ChatGPT"
+description = "Olist marketplace support Agent - FastAPI + LangGraph + public eval data"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
@@ -11,16 +11,22 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=2.0.0",
     "aiosqlite>=0.20.0",
     "langchain-openai>=1.0.0",
+    "mcp>=1.0.0",
+    "httpx>=0.28.0",
     "python-dotenv>=1.0.0",
-    "chromadb>=1.5.9,<2.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "httpx>=0.28.0",
     "anyio>=4.0",
     "ruff>=0.11.0",
+]
+eval = [
+    "deepeval>=3.0.0",
+]
+data = [
+    "pyarrow>=25.0.1",
 ]
 
 [tool.ruff]
@@ -34,6 +40,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "app/llm/prompts.py" = ["E501"]   # LLM prompts - breaking lines alters prompt text
 
 [tool.pytest.ini_options]
+addopts = "--basetemp=.pytest-tmp"
 filterwarnings = [
     "ignore::DeprecationWarning:langchain_core.*",
 ]

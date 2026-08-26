@@ -1,18 +1,37 @@
-"""Pydantic models for LLM JSON output - parsed via model_validate_json()."""
+"""Pydantic models for LLM structured output."""
 
 from pydantic import BaseModel, Field
 
 
-class SkillResult(BaseModel):
-    skill: str = Field(..., description="Either 'qa', 'order', or 'track'")
+class IntentRouteResult(BaseModel):
+    intent: str = Field(..., description="Either 'qa', 'order_status', 'policy', or 'escalation'")
 
 
-class OrderDraftResult(BaseModel):
-    product_id: str
-    product_name: str
-    quantity: int
-    total_price: float
-    note: str = ""
+class PlannedTask(BaseModel):
+    intent: str = Field(..., description="Either 'qa', 'order_status', 'policy', or 'escalation'")
+    text: str = Field("", description="User sub-request for this task")
+    side_effect: bool = Field(False, description="Whether the task may change external business state")
+    action_type: str = Field(
+        "none",
+        description=(
+            "For side effects: open_support_case, refund_request, cancel_order, "
+            "change_address, invoice_request, or none"
+        ),
+    )
+    depends_on: list[int] = Field(
+        default_factory=list,
+        description="Zero-based indices of prerequisite tasks",
+    )
+
+
+class TaskPlanResult(BaseModel):
+    tasks: list[PlannedTask] = Field(default_factory=list)
+
+
+class OlistTaskResult(BaseModel):
+    order_id: str = Field("", description="32-character Olist order id if present")
+    category: str = Field("", description="Product category if present")
+    user_goal: str = Field("", description="Short summary of the user's marketplace support goal")
 
 
 class InputGuardResult(BaseModel):

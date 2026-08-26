@@ -1,106 +1,73 @@
-### Flow 1: Q&A - product question
+### Flow 1: Category QA - marketplace risk insight
 POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "Tell me about laptops, what do you have?",
+  "message": "health_beauty 类目有什么运营风险？",
   "session_id": "qa-demo"
 }
 
-### Flow 1: Q&A - follow-up, same session
+### Flow 1: Category QA - another category
 POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "Do you have any wireless headphones?",
+  "message": "home_appliances 类目的订单主要有哪些物流和评价风险？",
   "session_id": "qa-demo"
 }
 
-### Flow 1b: Semantic RAG - no keyword overlap (expects: UltraBook 13 Air)
-# "lightweight to carry while traveling" -> matches "ultraportable / lightweight",
-# even though the query never says "laptop". Keyword search would miss this.
+### Flow 2: Order status - exact deterministic facts
 POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "I need something really light to carry around while traveling",
-  "session_id": "rag-demo"
+  "message": "帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态",
+  "session_id": "status-demo"
 }
 
-### Flow 1b: Semantic RAG - intent, not keywords (expects: SlatePad Pro 11)
-# "take notes and sketch by hand" -> matches stylus support / drawing / note-taking.
+### Flow 3: Policy RAG - support policy answer
 POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "What can I use to take notes and sketch by hand?",
-  "session_id": "rag-demo"
+  "message": "退款补偿能不能直接承诺？",
+  "session_id": "policy-demo"
 }
 
-### Flow 1b: Semantic RAG - paraphrase (expects: Rugged Phone Go)
-# "survives being dropped in water" -> matches "water and dust resistant / IP68".
+### Flow 4: Escalation - HITL step 1
 POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "Which phone survives being dropped in water?",
-  "session_id": "rag-demo"
+  "message": "订单 203096f03d82e0dffbc41ebc2e2bcfb7 延迟且低分，生成客服跟进话术",
+  "session_id": "case-demo"
 }
 
-### Flow 1b: Semantic RAG - use case (expects: PulseFit Watch)
-# "track my running and heart rate" -> matches fitness smartwatch / GPS / heart rate.
-POST {{host}}/chat
-Content-Type: application/json
-
-{
-  "message": "I want to track my running and heart rate",
-  "session_id": "rag-demo"
-}
-
-### Flow 1b: Semantic RAG - problem statement (expects: AeroStand Aluminum)
-# "back hurts at my desk" -> matches "improves posture", zero shared keywords.
-POST {{host}}/chat
-Content-Type: application/json
-
-{
-  "message": "My back hurts when I work at my desk all day, any ideas?",
-  "session_id": "rag-demo"
-}
-
-### Flow 2: Order - HITL step 1: draft
-POST {{host}}/chat
-Content-Type: application/json
-
-{
-  "message": "I want to buy a ProBook 15",
-  "session_id": "order-demo"
-}
-
-### Flow 2: Order - HITL step 2: confirm
+### Flow 4: Escalation - HITL step 2 confirm
 POST {{host}}/chat
 Content-Type: application/json
 
 {
   "message": "yes",
-  "session_id": "order-demo"
+  "session_id": "case-demo"
 }
 
-### Flow 2 (variant): Order - HITL step 1: draft
+### Flow 4 variant: Escalation - cancel
 POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "I want to buy BudgetPhone X",
-  "session_id": "order-cancel-demo"
+  "message": "订单 203096f03d82e0dffbc41ebc2e2bcfb7 延迟且低分，生成客服跟进话术",
+  "session_id": "case-cancel-demo"
 }
 
-### Flow 2 (variant): Order - HITL step 2: cancel
+### Flow 4 variant: cancel case creation
 POST {{host}}/chat
 Content-Type: application/json
 
 {
   "message": "no",
-  "session_id": "order-cancel-demo"
+  "session_id": "case-cancel-demo"
 }
 
 ### Guardrail: off-topic - should be rejected
@@ -108,7 +75,7 @@ POST {{host}}/chat
 Content-Type: application/json
 
 {
-  "message": "What's the weather like today?",
+  "message": "帮我写一个操作系统内核",
   "session_id": "guard-demo"
 }
 
@@ -119,22 +86,4 @@ Content-Type: application/json
 {
   "message": "",
   "session_id": "guard-demo"
-}
-
-### Flow 3: Track order - check status (mock, needs a confirmed order first)
-POST {{host}}/chat
-Content-Type: application/json
-
-{
-  "message": "What is the status of my orders?",
-  "session_id": "order-demo"
-}
-
-### Flow 3: Track order - no orders placed yet
-POST {{host}}/chat
-Content-Type: application/json
-
-{
-  "message": "Track my shipment",
-  "session_id": "track-new"
 }

@@ -4,8 +4,11 @@
 .venv
 __pycache__
 .pytest_cache
+.pytest-tmp
+.ruff_cache
 *.pyc
 .env.example
 *.md
+!data/knowledge_base/*.md
 docs/
 tests/

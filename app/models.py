@@ -10,3 +10,22 @@ class ChatResponse(BaseModel):
     answer: str
     session_id: str
     sources: list[str] = []
+
+
+class TraceSummaryResponse(BaseModel):
+    total: int
+    status_counts: dict[str, int]
+    route_intent_counts: dict[str, int]
+    avg_latency_ms: float
+    p95_latency_ms: float
+
+
+class TraceReplayResponse(BaseModel):
+    session_id: str
+    traces: list[dict]
+
+
+class RuntimeStatusResponse(BaseModel):
+    mode: str
+    model: str
+    base_url: str

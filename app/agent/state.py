@@ -1,26 +1,24 @@
 from typing import NotRequired, TypedDict
 
 
-class OrderDraft(TypedDict):
-    product_id: str
-    product_name: str
-    quantity: int
-    total_price: float
-
-
 class AgentState(TypedDict):
-    """State that flows through LangGraph nodes.
+    """Serializable state that flows through LangGraph nodes.
 
-    TypedDict is a lightweight alternative to Pydantic for graph state.
-    LangGraph copies this dict between nodes - each node returns a partial
-    update that gets merged into the accumulated state.
+    Runtime dependencies live in DI. This state stores only durable business
+    data that can be checkpointed and resumed after HITL interrupts.
     """
 
     session_id: str
     messages: list[dict[str, str]]
-    skill: str
-    product_results: list[dict[str, object]]
-    order: NotRequired[OrderDraft]
-    order_confirmed: NotRequired[bool]
+    route_intent: str
+    task_plan: list[dict[str, object]]
+    completed_tasks: list[dict[str, object]]
+    trajectory_events: list[dict[str, object]]
+    artifacts: dict[str, object]
+    retrieved_insights: list[dict[str, object]]
+    retrieved_policy: list[dict[str, object]]
+    retrieved_support_docs: list[dict[str, object]]
+    escalation_draft: NotRequired[dict[str, object]]
+    pending_side_effect: NotRequired[dict[str, object]]
     user_response: NotRequired[str]
     final_answer: str
