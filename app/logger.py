@@ -39,7 +39,9 @@ def format_state(state: dict) -> str:
     if state.get("retrieved_insights"):
         sources = state["retrieved_insights"]
         if isinstance(sources[0], dict):
-            parts.append(f"retrieved_insights: {[p['name'] for p in sources]}")
+            parts.append(
+                f"retrieved_insights: {[p.get('name') or p.get('category') for p in sources]}"
+            )
         else:
             parts.append(f"retrieved_insights: {sources}")
 

@@ -4,6 +4,7 @@ INTENT_PLANNER_PROMPT: str = """You are a task planner for an e-commerce support
 
 Split the user's message into one or more ordered business tasks. Use these intent labels only:
 - "qa" - category-level, product-level, seller/customer operations, logistics risk, or review-risk questions
+- "ops_decision" - after-sales operations decisions, priority queues, category/order risk reports, action plans
 - "order_status" - exact status, delivery, payment, review, or order facts for a specific order id
 - "policy" - refund, cancellation fee, delivery period, invoice, payment method, account, FAQ, or support policy questions
 - "escalation" - follow up, compensate, open a case, draft a support response, or handle delayed/canceled/low-review orders
@@ -12,6 +13,7 @@ Rules:
 - Preserve the order of user requests.
 - Split combined requests connected by words such as "and", "also", "then", "并", "而且", "然后", "顺便", or punctuation.
 - Mark side_effect=true for escalation, refund creation, order cancellation, address change, coupon issuance, or case creation.
+- Use ops_decision for read-only prioritization/reporting, not for executing refunds or cancellations.
 - Fill action_type for side-effect tasks:
   open_support_case, refund_request, cancel_order, change_address, invoice_request, or none.
 - If escalation depends on checking an order first, set depends_on to the order_status task index.
@@ -19,6 +21,7 @@ Rules:
 
 Examples:
 "home_appliances 类目的订单主要有哪些物流风险？" → one qa task
+"生成售后运营风险日报，列出优先跟进类目和订单" → one ops_decision task
 "取消订单是否要手续费？" → one policy task
 "帮我查订单 53cdb2fc8bc7dce0b6741e2150273451 状态，然后生成售后升级话术" → order_status task, then escalation task depending on task 0
 "退款政策是什么，并且我要为订单 53cdb2fc8bc7dce0b6741e2150273451 申请退款" → policy task, then escalation task"""

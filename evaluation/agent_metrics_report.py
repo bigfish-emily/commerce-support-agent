@@ -52,6 +52,7 @@ def main() -> None:
     metrics.extend(plan_metrics())
     metrics.extend(tool_metrics())
     metrics.extend(rag_metrics())
+    metrics.extend(after_sales_ops_metrics())
     metrics.extend(e2e_metrics())
     metrics.extend(answer_quality_metrics())
     metrics.extend(safety_metrics())
@@ -357,6 +358,78 @@ def hybrid_metrics() -> list[Metric]:
     return rows
 
 
+def after_sales_ops_metrics() -> list[Metric]:
+    service = OlistService()
+    report = service.after_sales_priority_report("生成售后运营风险日报，列出优先跟进类目和订单")
+    categories = list(report["high_risk_categories"])
+    orders = list(report["priority_orders"])
+
+    category_sorted = _is_sorted_desc([float(item["risk_score"]) for item in categories])
+    order_sorted = _is_sorted_desc([float(item["priority_score"]) for item in orders])
+    category_actionable = sum(1 for item in categories if item.get("recommended_action"))
+    order_actionable = sum(1 for item in orders if item.get("recommended_action") and item.get("reasons"))
+    read_only_policy = any("HITL" in str(rule) for rule in report.get("decision_rules", []))
+
+    return [
+        Metric(
+            "运营决策",
+            "高风险类目覆盖率",
+            _pct(len(categories), 5),
+            "Top5",
+            "售后运营日报是否能输出可跟进的高风险类目列表。",
+            "after_sales_priority_report 返回 high_risk_categories 的数量 / 5。",
+        ),
+        Metric(
+            "运营决策",
+            "高风险类目排序正确率",
+            _pct(int(category_sorted), 1),
+            str(len(categories)),
+            "类目是否按风险分从高到低排序，便于运营优先处理。",
+            "risk_score 序列是否单调递减。",
+        ),
+        Metric(
+            "运营决策",
+            "类目行动建议覆盖率",
+            _pct(category_actionable, len(categories)),
+            str(len(categories)),
+            "每个高风险类目是否都有可执行的运营建议。",
+            "recommended_action 非空的比例。",
+        ),
+        Metric(
+            "运营决策",
+            "优先跟进订单覆盖率",
+            _pct(len(orders), 8),
+            "Top8",
+            "是否能从订单事实中挑出售后优先跟进队列。",
+            "after_sales_priority_report 返回 priority_orders 的数量 / 8。",
+        ),
+        Metric(
+            "运营决策",
+            "优先跟进订单排序正确率",
+            _pct(int(order_sorted), 1),
+            str(len(orders)),
+            "订单队列是否按售后优先级从高到低排序。",
+            "priority_score 序列是否单调递减。",
+        ),
+        Metric(
+            "运营决策",
+            "订单行动建议覆盖率",
+            _pct(order_actionable, len(orders)),
+            str(len(orders)),
+            "每个优先订单是否给出原因和建议动作。",
+            "recommended_action 非空且 reasons 非空的比例。",
+        ),
+        Metric(
+            "运营决策",
+            "运营建议只读/HITL 边界命中率",
+            _pct(int(read_only_policy), 1),
+            "1",
+            "运营决策报告是否明确把建议和退款/取消等副作用执行分开。",
+            "decision_rules 中是否声明副作用仍需 HITL。",
+        ),
+    ]
+
+
 def e2e_metrics() -> list[Metric]:
     cases = load_jsonl(ROOT / "data" / "olist_derived" / "eval_cases.jsonl")
     graph = _build_offline_graph()
@@ -645,11 +718,16 @@ def _relative_order_ok(predicted: list[str], expected: list[str]) -> bool:
     return True
 
 
+def _is_sorted_desc(values: list[float]) -> bool:
+    return all(left >= right for left, right in zip(values, values[1:]))
+
+
 def _expected_tool(intent: str) -> str:
     return {
         "order_status": "get_order_status",
         "qa": "search_category_risk",
         "policy": "search_policy_knowledge",
+        "ops_decision": "generate_after_sales_priority_report",
         "escalation": "prepare_side_effect",
     }.get(intent, "")
 

@@ -4,7 +4,12 @@ from app.agent.state import AgentState
 from app.llm.intent_planner import IntentPlanner
 from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerator, QaResponseGenerator
 from app.olist.knowledge import MarkdownKnowledgeBase
-from app.olist.service import InMemoryCaseService, OlistService, format_order_status
+from app.olist.service import (
+    InMemoryCaseService,
+    OlistService,
+    format_after_sales_report,
+    format_order_status,
+)
 from app.retrieval.hybrid import HybridSupportRetriever
 from app.tools.repair import repair_order_id
 
@@ -91,6 +96,13 @@ class AgentActions:
                 event_details["tool"] = "search_category_risk"
                 event_details["hit_count"] = len(insights)
                 event_details["support_doc_count"] = len(support_docs)
+            elif intent == "ops_decision":
+                report = self._olist_service.after_sales_priority_report(text)
+                answers.append(f"[售后运营决策]\n{format_after_sales_report(report)}")
+                retrieved_insights.extend(report.get("high_risk_categories", []))
+                event_details["tool"] = "generate_after_sales_priority_report"
+                event_details["category_count"] = len(report.get("high_risk_categories", []))
+                event_details["order_count"] = len(report.get("priority_orders", []))
             elif intent == "policy":
                 hits = self._knowledge_base.search(text, k=3)
                 sections = [
@@ -141,7 +153,11 @@ class AgentActions:
             "trajectory_events": trajectory_events,
             "artifacts": {
                 "policy_sources": [str(item["section_title"]) for item in retrieved_policy],
-                "insight_sources": [str(item["name"]) for item in retrieved_insights],
+                "insight_sources": [
+                    str(item.get("name") or item.get("category") or "")
+                    for item in retrieved_insights
+                    if item.get("name") or item.get("category")
+                ],
                 "support_sources": [str(item["doc_id"]) for item in retrieved_support_docs],
             },
             "retrieved_insights": retrieved_insights,

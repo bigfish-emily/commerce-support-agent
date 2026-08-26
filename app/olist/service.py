@@ -89,6 +89,74 @@ class OlistService:
             )
         return insights
 
+    def after_sales_priority_report(
+        self,
+        query: str = "",
+        top_categories: int = 5,
+        top_orders: int = 8,
+    ) -> dict[str, object]:
+        category_rows = []
+        for category, risk in self._category_risks.items():
+            order_count = int(risk["order_count"])
+            risk_score = _ops_risk_score(risk)
+            category_rows.append(
+                {
+                    "category": category,
+                    "risk_score": risk_score,
+                    "order_count": order_count,
+                    "delay_rate": risk["delay_rate"],
+                    "low_review_rate": risk["low_review_rate"],
+                    "cancellation_rate": risk["cancellation_rate"],
+                    "avg_delay_days": risk.get("avg_delay_days", 0),
+                    "sample_order_ids": risk["sample_order_ids"][:3],
+                    "recommended_action": _category_action(risk),
+                }
+            )
+        high_risk_categories = sorted(
+            category_rows,
+            key=lambda item: (float(item["risk_score"]), int(item["order_count"])),
+            reverse=True,
+        )[:top_categories]
+
+        order_rows = []
+        for order in self._by_id.values():
+            priority_score, reasons = _order_priority(order)
+            if priority_score <= 0:
+                continue
+            order_rows.append(
+                {
+                    "order_id": order["order_id"],
+                    "priority_score": priority_score,
+                    "status": order["status"],
+                    "category_summary": "、".join(sorted({p["category"] for p in order["products"]})),
+                    "delay_days": order["delay_days"],
+                    "review_score": order["review_score"],
+                    "payment_value": order["payment_value"],
+                    "reasons": reasons,
+                    "recommended_action": _order_action(order),
+                }
+            )
+        priority_orders = sorted(
+            order_rows,
+            key=lambda item: (float(item["priority_score"]), float(item["payment_value"] or 0)),
+            reverse=True,
+        )[:top_orders]
+
+        return {
+            "query": query,
+            "summary": (
+                f"Identified {len(high_risk_categories)} high-risk categories and "
+                f"{len(priority_orders)} priority after-sales orders from Olist facts."
+            ),
+            "high_risk_categories": high_risk_categories,
+            "priority_orders": priority_orders,
+            "decision_rules": [
+                "delay_rate, low_review_rate, cancellation_rate, and order_count drive category priority",
+                "delayed/canceled/low-review/high-value orders are ranked for after-sales follow-up",
+                "recommended actions are read-only suggestions; refunds/cancellations still require HITL",
+            ],
+        }
+
     def escalation_draft(self, order_id: str) -> dict | None:
         status = self.get_order_status(order_id)
         if status is None:
@@ -168,3 +236,94 @@ def format_order_status(status: OrderStatusView | None) -> str:
         f"支付金额：{status.payment_value:.2f}；"
         f"评价分：{status.review_score if status.review_score is not None else '暂无'}。"
     )
+
+
+def format_after_sales_report(report: dict[str, object]) -> str:
+    categories = report.get("high_risk_categories", [])
+    orders = report.get("priority_orders", [])
+    lines = ["售后运营决策建议：", str(report.get("summary", "")), "", "高风险类目 Top："]
+    for item in categories[:5]:
+        lines.append(
+            "- {category}: risk_score={risk_score:.3f}, delay={delay_rate:.2%}, "
+            "low_review={low_review_rate:.2%}, cancel={cancellation_rate:.2%}; {action}".format(
+                category=item["category"],
+                risk_score=float(item["risk_score"]),
+                delay_rate=float(item["delay_rate"]),
+                low_review_rate=float(item["low_review_rate"]),
+                cancellation_rate=float(item["cancellation_rate"]),
+                action=item["recommended_action"],
+            )
+        )
+    lines.extend(["", "优先跟进订单 Top："])
+    for item in orders[:8]:
+        lines.append(
+            "- {order_id}: score={priority_score:.2f}, status={status}, delay={delay}, "
+            "review={review}; {action}".format(
+                order_id=item["order_id"],
+                priority_score=float(item["priority_score"]),
+                status=item["status"],
+                delay=item["delay_days"],
+                review=item["review_score"],
+                action=item["recommended_action"],
+            )
+        )
+    lines.append("")
+    lines.append("注意：以上是只读运营建议；退款、取消、改地址、发票和工单创建仍需 HITL 确认。")
+    return "\n".join(lines)
+
+
+def _ops_risk_score(risk: dict) -> float:
+    volume_factor = min(int(risk["order_count"]) / 10000, 1.0)
+    return round(
+        float(risk["delay_rate"]) * 0.35
+        + float(risk["low_review_rate"]) * 0.40
+        + float(risk["cancellation_rate"]) * 0.15
+        + volume_factor * 0.10,
+        4,
+    )
+
+
+def _category_action(risk: dict) -> str:
+    actions = []
+    if float(risk["delay_rate"]) >= 0.08:
+        actions.append("check logistics SLA and delayed-order follow-up")
+    if float(risk["low_review_rate"]) >= 0.12:
+        actions.append("review customer feedback and improve support scripts")
+    if float(risk["cancellation_rate"]) >= 0.02:
+        actions.append("inspect cancellation reasons before promotion")
+    return "; ".join(actions) if actions else "monitor weekly trend"
+
+
+def _order_priority(order: dict) -> tuple[float, list[str]]:
+    score = 0.0
+    reasons = []
+    delay_days = order.get("delay_days")
+    review_score = order.get("review_score")
+    if isinstance(delay_days, int) and delay_days > 0:
+        score += min(delay_days, 30) * 0.5
+        reasons.append(f"delayed {delay_days} day(s)")
+    if isinstance(review_score, int) and review_score <= 2:
+        score += (3 - review_score) * 4
+        reasons.append(f"low review score {review_score}")
+    if order.get("status") == "canceled":
+        score += 5
+        reasons.append("canceled order")
+    payment_value = float(order.get("payment_value") or 0)
+    if payment_value >= 300:
+        score += 2
+        reasons.append(f"high value {payment_value:.2f}")
+    return round(score, 2), reasons
+
+
+def _order_action(order: dict) -> str:
+    if order.get("status") == "canceled":
+        return "prepare cancellation explanation and retention check"
+    review_score = order.get("review_score")
+    delay_days = order.get("delay_days")
+    if isinstance(delay_days, int) and delay_days > 0 and isinstance(review_score, int) and review_score <= 2:
+        return "prepare escalation draft and proactive apology"
+    if isinstance(delay_days, int) and delay_days > 0:
+        return "send delayed-delivery follow-up"
+    if isinstance(review_score, int) and review_score <= 2:
+        return "inspect review issue and support recovery"
+    return "monitor"

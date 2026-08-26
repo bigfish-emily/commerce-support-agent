@@ -10,7 +10,7 @@ from app.llm.json_fallback import add_json_instruction, parse_json_model
 from app.llm.prompts import INTENT_PLANNER_PROMPT
 from app.llm.types import IntentRouteResult, PlannedTask, TaskPlanResult
 
-VALID_INTENTS = {"qa", "order_status", "policy", "escalation"}
+VALID_INTENTS = {"qa", "order_status", "policy", "ops_decision", "escalation"}
 logger = logging.getLogger(__name__)
 
 

@@ -44,6 +44,26 @@ QA_PATTERNS = (
     "取消率",
 )
 
+OPS_DECISION_PATTERNS = (
+    "after-sales report",
+    "support operations report",
+    "priority queue",
+    "prioritize",
+    "action plan",
+    "运营决策",
+    "运营日报",
+    "风险日报",
+    "售后日报",
+    "优先级",
+    "优先跟进",
+    "重点跟进",
+    "高风险订单",
+    "高风险类目",
+    "处理建议",
+    "行动建议",
+    "经营建议",
+)
+
 POLICY_PATTERNS = (
     "policy",
     "fee",
@@ -144,6 +164,8 @@ def decompose_business_message(message: str) -> list[BusinessTask]:
 
 def _classify_segment(segment: str) -> str:
     text = segment.lower()
+    if _has_any(text, OPS_DECISION_PATTERNS):
+        return "ops_decision"
     if _has_any(text, QA_PATTERNS):
         return "qa"
     if _looks_like_order_cancel_action(text):

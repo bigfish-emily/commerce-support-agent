@@ -50,6 +50,7 @@ def _expected_tool(intent: str) -> str:
         "order_status": "get_order_status",
         "qa": "search_category_risk",
         "policy": "search_policy_knowledge",
+        "ops_decision": "generate_after_sales_priority_report",
         "escalation": "prepare_side_effect",
     }.get(intent, "")
 

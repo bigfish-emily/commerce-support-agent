@@ -102,6 +102,33 @@ async def test_qa_category_insights(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_after_sales_ops_decision_report(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("ops_decision"):
+        response = await client.post(
+            "/chat",
+            json={"message": "生成售后运营风险日报，列出优先跟进类目和订单"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert "[售后运营决策]" in body["answer"]
+    assert "高风险类目" in body["answer"]
+    assert "优先跟进订单" in body["answer"]
+    assert "HITL" in body["answer"]
+    assert body["sources"]
+
+
+@pytest.mark.anyio
+async def test_offline_after_sales_ops_decision_report(client: AsyncClient) -> None:
+    response = await client.post(
+        "/chat",
+        json={"message": "生成售后运营风险日报，列出优先跟进类目和订单"},
+    )
+    assert response.status_code == 200
+    assert "[售后运营决策]" in response.json()["answer"]
+
+
+@pytest.mark.anyio
 async def test_order_status_lookup(client: AsyncClient) -> None:
     g1, g2 = _mock_guard(input_on_topic=True)
     with g1, g2, _mock_plan("order_status"), _mock_task():

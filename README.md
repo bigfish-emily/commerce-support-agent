@@ -10,12 +10,13 @@
 查订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态；如果已经延迟且低分，生成客服跟进话术，确认后创建售后升级 case。
 ```
 
-系统支持四类业务能力：
+系统支持五类业务能力：
 
 | Route Intent | 场景 | LLM 负责 | 确定性工具负责 |
 |---|---|---|---|
 | `order_status` | 精确订单状态、配送、支付、评价查询 | 识别用户是否在查订单、抽取 order_id | 从订单事实索引读取可信业务数据 |
 | `qa` | 类目运营风险、物流风险、低分评价分析 | 将业务问题转成类目检索需求并生成分析口径 | 从全量订单聚合结果中检索类目风险 |
+| `ops_decision` | 售后运营日报、优先跟进类目/订单、客服主管决策 | 理解运营决策目标，组织报告口径 | 从全量订单和类目风险索引生成只读优先级报告 |
 | `policy` | 退款、取消、发票、支付、账号、配送时效、补偿边界 | 基于检索到的政策段落生成客服回答 | 从 markdown policy KB 检索相关章节 |
 | `escalation` | 售后升级、退款/补偿申请、取消订单、改地址、发票申请、创建 case | 判断副作用意图、生成可审核草稿 | 幂等执行对应企业工具，必须经过 HITL 确认 |
 
@@ -125,6 +126,9 @@ flowchart LR
     CatRag --> QaLLM[LLM Answer]
     QaLLM --> Output
 
+    Executor -- ops_decision --> OpsReport[After-sales Ops Report]
+    OpsReport --> Output
+
     Executor -- policy --> PolicyRag[Policy KB Retrieval]
     PolicyRag --> PolicyLLM[LLM Answer]
     PolicyLLM --> Output
@@ -168,6 +172,7 @@ python -m app.mcp_server
 |---|---|
 | `get_order_status` | 查询订单状态、配送、支付、评价事实 |
 | `search_category_risk` | 查询类目运营风险 |
+| `generate_after_sales_priority_report` | 生成高风险类目和优先跟进订单的只读运营决策报告 |
 | `draft_escalation` | 生成售后升级草稿 |
 
 面试中要说清楚：**MCP 是工具上下文协议，不是多 Agent 协作协议**。生产里 Agent 会作为 MCP client 接企业 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 server，方便外部 Agent 客户端复用和测试。
@@ -236,6 +241,7 @@ GET /observability/traces/{session_id}?limit=20
 .\.venv\Scripts\python.exe -m evaluation.hybrid_retrieval_eval
 .\.venv\Scripts\python.exe -m evaluation.v1rtucious_eval_profile
 .\.venv\Scripts\python.exe -m evaluation.knowledge_eval
+.\.venv\Scripts\python.exe -m evaluation.ops_decision_eval
 .\.venv\Scripts\python.exe -m evaluation.tool_repair_eval
 .\.venv\Scripts\python.exe -m evaluation.performance_eval
 .\.venv\Scripts\python.exe -m evaluation.agent_metrics_report
@@ -245,7 +251,7 @@ GET /observability/traces/{session_id}?limit=20
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 45 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、guard fallback、副作用排序和跨子任务槽位继承 |
+| Unit/Integration Tests | 50 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -256,9 +262,10 @@ GET /observability/traces/{session_id}?limit=20
 | ResCommons hybrid retrieval | BM25 intent@5 81%, char-ngram intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
 | Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 中文政策问题能命中正确 policy section |
+| After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
 | Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
-| Layered metrics report | 60+ metrics | 规划、工具、RAG、端到端轨迹、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
+| Layered metrics report | 67 metrics | 规划、工具、RAG、运营决策、端到端轨迹、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
 
 LLM 评测：
 
@@ -331,7 +338,7 @@ DeepSeek/OpenAI-compatible 配置见 `.env.example`：
 ```text
 OPENAI_API_KEY=your-key
 OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-chat
+OPENAI_MODEL=deepseek-v4-flash
 ```
 
 示例请求：
@@ -346,6 +353,12 @@ curl -X POST http://localhost:8000/chat ^
 curl -X POST http://localhost:8000/chat ^
   -H "Content-Type: application/json" ^
   -d "{\"message\":\"帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态\",\"session_id\":\"demo-order\"}"
+```
+
+```bash
+curl -X POST http://localhost:8000/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"生成售后运营风险日报，列出优先跟进类目和订单\",\"session_id\":\"demo-ops\"}"
 ```
 
 ```bash
@@ -378,6 +391,7 @@ evaluation/
 ├── task_eval.py
 ├── rag_retrieval_eval.py
 ├── knowledge_eval.py
+├── ops_decision_eval.py
 ├── tool_repair_eval.py
 ├── performance_eval.py
 ├── deepeval_export.py

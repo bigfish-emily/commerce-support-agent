@@ -32,6 +32,12 @@ def test_decompose_category_risk_as_qa() -> None:
     assert [task.intent for task in tasks] == ["qa"]
 
 
+def test_decompose_after_sales_ops_decision_as_read_only_task() -> None:
+    tasks = decompose_business_message("生成售后运营风险日报，列出优先跟进类目和订单")
+    assert [task.intent for task in tasks] == ["ops_decision"]
+    assert tasks[0].side_effect is False
+
+
 def test_decompose_refund_compensation_question_as_policy() -> None:
     tasks = decompose_business_message("退款补偿能不能直接承诺？")
     assert [task.intent for task in tasks] == ["policy"]

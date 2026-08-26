@@ -8,7 +8,7 @@ import mcp_types as types
 from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
 
-from app.olist.service import OlistService, format_order_status
+from app.olist.service import OlistService, format_after_sales_report, format_order_status
 
 olist_service = OlistService()
 
@@ -29,6 +29,11 @@ def draft_escalation(order_id: str) -> dict[str, object]:
     if draft is None:
         return {"found": False, "reason": "order_not_found"}
     return {"found": True, **draft}
+
+
+def generate_after_sales_priority_report(query: str = "") -> dict[str, object]:
+    """Generate a read-only after-sales operations decision report."""
+    return olist_service.after_sales_priority_report(query)
 
 
 async def list_tools(
@@ -52,6 +57,11 @@ async def list_tools(
                 description="Draft a support escalation for delayed, canceled, or low-review orders.",
                 input_schema=_object_schema({"order_id": "32-character Olist order id"}, ["order_id"]),
             ),
+            types.Tool(
+                name="generate_after_sales_priority_report",
+                description="Generate high-risk category and priority after-sales order recommendations.",
+                input_schema=_object_schema({"query": "Natural-language operations decision request"}, []),
+            ),
         ]
     )
 
@@ -67,6 +77,9 @@ async def call_tool(
         structured = {"insights": search_category_risk(str(args.get("query", "")))}
     elif params.name == "draft_escalation":
         structured = draft_escalation(str(args.get("order_id", "")))
+    elif params.name == "generate_after_sales_priority_report":
+        report = generate_after_sales_priority_report(str(args.get("query", "")))
+        structured = {"report": report, "answer": format_after_sales_report(report)}
     else:
         return types.CallToolResult(
             content=[types.TextContent(text=f"Unknown tool: {params.name}")],
