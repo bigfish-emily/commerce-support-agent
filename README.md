@@ -249,7 +249,7 @@ GET /observability/traces/{session_id}?limit=20
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
-| Multi-intent decomposition | exact/contains/order/side-effect 均为 80% | 验证一句话多意图拆解，不漏副作用任务，不重复执行同类任务；当前离线 fallback 仍是主要改进点 |
+| Multi-intent decomposition | exact/contains/order/side-effect 均为 100% | 验证一句话多意图拆解，不漏副作用任务，不重复执行同类任务；取消订单等副作用动作优先进入 HITL |
 | Category RAG exact_underscore | Top1 41.67% | 只支持原始下划线类目名，真实用户写法容易失败 |
 | Category RAG token_overlap | Top1 77.22%, Recall@3 80.56% | 能处理空格/连字符，但 compact alias 仍会失败 |
 | Category RAG adaptive_rewrite | Top1 100% | 当前主链路使用，覆盖下划线/空格/连字符/紧凑写法 |
@@ -404,13 +404,13 @@ tests/
 - **MCP 和多 Agent 协议有什么区别？** MCP 解决 Agent 调工具和拿上下文；A2A/Agent Card 解决 Agent 之间能力发现、任务委托和状态协商。这个项目重点是企业工具接入，因此 MCP 是必要层。
 - **为什么接 Stripe MCP？** Stripe 不是最终 OMS，而是最适合个人项目验证真实外部 MCP + sandbox 副作用的 SaaS。它可以演示支付/退款类工具 schema、鉴权、HITL、幂等和 trace；生产里替换为企业内部退款/工单/优惠券 MCP。
 - **副作用怎么防重复？** 路由侧识别风险意图，图执行侧 interrupt 等人工确认，工具侧幂等 key 防止重复创建 case。
-- **怎么证明有效？** 用 Olist/Bitext/policy 三类评测集分别证明任务覆盖、意图覆盖、RAG 召回和工具鲁棒性；LLM judge 指标作为在线可选项，不替代确定性 CI。
+- **怎么证明有效？** 用 Olist/Bitext/policy 三类评测集分别证明任务覆盖、意图覆盖、RAG 召回和工具鲁棒性；LLM judge 小样本验证回答相关性、事实一致性、工具正确性和 HITL 正确性，但不替代确定性 CI。
 
 ## 下一步扩展
 
 - 将本地 hybrid retrieval 替换为 Elasticsearch + vector database + learned reranker，并接入更多中文客服 FAQ/商家规则。
 - 增加 tenant/seller ACL、优惠券/退款工具权限、预算限流和分布式 trace。
-- 增加真实 LLM judge eval：用少量 DeepSeek/OpenAI-compatible key 测 answer relevancy、faithfulness、tool correctness，并把失败样本落盘进入回归集。
+- 扩大真实 LLM judge eval：从当前 3 条 smoke 扩到 30-100 条，并把失败样本落盘进入回归集。
 - 将 SQLite trace 替换为 MySQL/PostgreSQL + Kafka/RocketMQ 审计流，用于线上回放、成本统计和评测飞轮。
 
 ## License

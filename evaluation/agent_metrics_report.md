@@ -5,10 +5,10 @@
 | 分类 | 指标 | 当前结果 | 样本量 | 含义 | 计算方式 | API key |
 |---|---|---:|---:|---|---|---|
 | 规划/意图 | 细粒度客服 intent 到业务 route intent 准确率 | 100.00% | 1080 | 验证 27 类客服原始意图能否映射到 order_status/policy/escalation 等业务入口。 | map_intent(intent).route_intent == expected_intent 的比例。 | 否 |
-| 规划/意图 | 多意图拆解 exact match | 80.00% | 60 | 用户一句话含多个任务时，预测任务列表必须和 gold 完全一致。 | predicted_intents == expected_intents 的比例。 | 否 |
-| 规划/意图 | 多意图 contains-all | 80.00% | 60 | 允许多预测，但不能漏掉用户要求的业务任务。 | expected_intents 是否为 predicted_intents 子集。 | 否 |
-| 规划/意图 | 多意图顺序准确率 | 80.00% | 60 | 验证 read-only 查询是否在副作用动作之前，避免先执行退款/取消。 | expected_intents 在 predicted_intents 中的相对顺序是否保持。 | 否 |
-| 规划/意图 | 副作用识别准确率 | 80.00% | 60 | 验证 planner/decomposer 能否识别需要 HITL 的任务。 | any(task.side_effect) == has_side_effect。 | 否 |
+| 规划/意图 | 多意图拆解 exact match | 100.00% | 60 | 用户一句话含多个任务时，预测任务列表必须和 gold 完全一致。 | predicted_intents == expected_intents 的比例。 | 否 |
+| 规划/意图 | 多意图 contains-all | 100.00% | 60 | 允许多预测，但不能漏掉用户要求的业务任务。 | expected_intents 是否为 predicted_intents 子集。 | 否 |
+| 规划/意图 | 多意图顺序准确率 | 100.00% | 60 | 验证 read-only 查询是否在副作用动作之前，避免先执行退款/取消。 | expected_intents 在 predicted_intents 中的相对顺序是否保持。 | 否 |
+| 规划/意图 | 副作用识别准确率 | 100.00% | 60 | 验证 planner/decomposer 能否识别需要 HITL 的任务。 | any(task.side_effect) == has_side_effect。 | 否 |
 | 工具/参数 | 业务工具任务成功率 | 100.00% | 245 | 验证订单查询、类目分析、售后草稿是否都能被事实工具支撑。 | Olist gold case 上，工具输出与 expected order/status/category/draft 是否匹配。 | 否 |
 | 工具/参数 | 工具选择覆盖率 | 100.00% | 245 | 每个 gold route intent 是否都有确定性工具承接。 | expected_intent 是否能映射到预期 tool name。 | 否 |
 | 工具/参数 | order_id 参数修复准确率 | 100.00% | 6 | 工具参数含空格、大小写、前缀、缺失、多 ID 时是否能修复或拒绝。 | repair_order_id 输出 ok/value/error_code 与 gold 是否一致。 | 否 |
@@ -57,8 +57,8 @@
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
 | 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.274 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.825 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.220 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.113 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 1628 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

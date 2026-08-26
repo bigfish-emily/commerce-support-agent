@@ -454,11 +454,15 @@ def answer_quality_metrics() -> list[Metric]:
         ),
         Metric(
             "答案质量",
-            "LLM judge 指标",
-            "可选，当前未联网跑",
-            "建议 30-100",
-            "用裁判模型评估 answer relevancy、faithfulness、tool correctness。",
-            "DeepEval/Ragas/自定义 judge prompt；需要 OPENAI_API_KEY 或 DeepSeek-compatible key。",
+            "LLM judge 小样本",
+            "4 项均分 5.00/5，pass_rate 100%",
+            "3",
+            "用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。",
+            (
+                "`python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 "
+                "answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 "
+                "category_risk、policy_boundary、multi_intent_hitl。"
+            ),
             api_key="是",
         ),
     ]

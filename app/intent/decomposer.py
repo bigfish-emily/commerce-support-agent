@@ -146,10 +146,10 @@ def _classify_segment(segment: str) -> str:
     text = segment.lower()
     if _has_any(text, QA_PATTERNS):
         return "qa"
+    if _looks_like_order_cancel_action(text):
+        return "escalation"
     if _has_any(text, POLICY_PATTERNS) or _looks_like_policy_question(text):
         return "policy"
-    if "cancel" in text and _has_any(text, ("{{order number}}", "order", "purchase", "oorder", "puchase")):
-        return "escalation"
     if _has_any(text, ESCALATION_PATTERNS):
         return "escalation"
     if _has_any(text, ORDER_PATTERNS) or "{{order number}}" in text:
@@ -178,6 +178,13 @@ def _looks_like_policy_question(text: str) -> bool:
         ),
     )
     return side_effect_topic and _has_any(text, POLICY_QUESTION_CUES)
+
+
+def _looks_like_order_cancel_action(text: str) -> bool:
+    has_cancel_verb = "cancel" in text or "cancell" in text
+    has_order_object = _has_any(text, ("{{order number}}", "order", "purchase", "oorder", "puchase"))
+    policy_only = _has_any(text, ("fee", "charge", "penalty", "termination", "withdrawal"))
+    return has_cancel_verb and has_order_object and not policy_only
 
 
 def _task_signature(segment: str) -> str:
