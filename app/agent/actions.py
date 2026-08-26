@@ -112,7 +112,8 @@ class AgentActions:
                 event_details["support_doc_count"] = len(support_docs)
             elif intent == "escalation":
                 action_type = str(task.get("action_type") or self._infer_action_type(text))
-                draft_answer, draft = await self._prepare_escalation_from_text(text, action_type)
+                slot_text = _with_order_context(text, state["messages"][-1]["content"])
+                draft_answer, draft = await self._prepare_escalation_from_text(slot_text, action_type)
                 answers.append(f"[售后升级]\n{draft_answer}")
                 escalation_draft = draft
                 completed.append({"index": idx, "intent": intent, "status": "awaiting_confirmation"})
@@ -359,6 +360,15 @@ def _execution_order(tasks: list[dict[str, object]]) -> list[tuple[int, dict[str
     read_only = [item for item in indexed if not item[1].get("side_effect")]
     side_effects = [item for item in indexed if item[1].get("side_effect")]
     return [*read_only, *side_effects]
+
+
+def _with_order_context(task_text: str, full_message: str) -> str:
+    if repair_order_id(task_text).ok:
+        return task_text
+    repair = repair_order_id(full_message)
+    if not repair.ok:
+        return task_text
+    return f"{task_text}\n上下文订单号：{repair.value}"
 
 
 def _event(

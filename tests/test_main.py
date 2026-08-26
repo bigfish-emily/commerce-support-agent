@@ -256,6 +256,24 @@ async def test_multi_task_plan_executes_read_only_tasks_before_escalation(client
 
 
 @pytest.mark.anyio
+async def test_offline_multi_intent_escalation_inherits_order_context(client: AsyncClient) -> None:
+    response = await client.post(
+        "/chat",
+        json={
+            "message": f"查订单 {ORDER_ID} 状态，并且说明退款政策，然后生成售后升级话术",
+            "session_id": "offline-context-carry",
+        },
+    )
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert "[订单查询]" in answer
+    assert "[政策问答]" in answer
+    assert "[售后升级]" in answer
+    assert "是否确认执行" in answer
+    assert "没有检测到有效 order_id" not in answer
+
+
+@pytest.mark.anyio
 async def test_executor_defers_side_effect_until_read_only_tasks_finish(client: AsyncClient) -> None:
     g1, g2 = _mock_guard(input_on_topic=True)
     with (
