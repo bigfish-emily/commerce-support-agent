@@ -72,6 +72,8 @@ def _repair_payload(payload: dict[str, Any], schema: type[BaseModel]) -> dict[st
                 repaired.setdefault("text", "")
                 repaired.setdefault("side_effect", False)
                 repaired.setdefault("action_type", "none")
+                if repaired.get("action_type") is None:
+                    repaired["action_type"] = "none"
                 if repaired.get("depends_on") is None:
                     repaired["depends_on"] = []
                 elif isinstance(repaired.get("depends_on"), int):

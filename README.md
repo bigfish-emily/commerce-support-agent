@@ -291,6 +291,20 @@ python -m evaluation.live_agent_smoke
 
 最近一次小样本验证：`deepseek-v4-flash` 不支持 native `response_format`，项目会自动降级到 JSON-text structured fallback，再用 Pydantic 做本地 schema 校验。复合任务 live smoke 结果为 `tasks=['order_status', 'policy', 'escalation']`，`statuses=['completed', 'completed', 'awaiting_confirmation']`，`hitl=True`，`output_valid=True`。
 
+LLM-as-Judge 小样本：
+
+```bash
+OPENAI_API_KEY=<your-key>
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-flash
+LLM_JUDGE_LIMIT=3
+python -m evaluation.llm_judge_eval
+```
+
+最近一次小样本结果：category risk、policy boundary、multi-intent HITL 三类样本均通过，answer relevance / faithfulness / tool correctness / HITL correctness 四项均分 `5.00/5`，pass rate `100%`。这是低成本 smoke 级 judge，不等价于大规模线上评测。
+
+网页控制台说明：左侧按钮只是预设输入模板，方便现场演示；点击发送后会调用真实 `/chat` API。页面顶部 `/runtime/status` 会显示当前是 `offline_workflow` 还是 `live_llm_agent`，只有用真实 key 启动服务时才是 live LLM。
+
 项目也导出了 DeepEval 兼容 case，并预留 Ragas/TruLens 指标口径。相关框架：
 
 - [DeepEval](https://deepeval.com/docs/metrics-introduction)：answer relevancy、faithfulness、contextual precision/recall、tool correctness。

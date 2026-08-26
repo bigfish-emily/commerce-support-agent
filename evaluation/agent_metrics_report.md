@@ -52,7 +52,7 @@
 | 端到端/轨迹 | 轨迹无失败率 | 100.00% | 245 | 离线 gold 轨迹是否没有 failed/blocked 事件。 | trajectory statuses 中不含 failed/blocked。 | 否 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
-| 答案质量 | LLM judge 指标 | 可选，当前未联网跑 | 建议 30-100 | 用裁判模型评估 answer relevancy、faithfulness、tool correctness。 | DeepEval/Ragas/自定义 judge prompt；需要 OPENAI_API_KEY 或 DeepSeek-compatible key。 | 是 |
+| 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 100% | 3 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 category_risk、policy_boundary、multi_intent_hitl。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
