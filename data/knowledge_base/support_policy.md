@@ -68,6 +68,31 @@ When a user asks for compensation directly, the Agent should say that it can pre
 a case for review. It should collect or verify order id, status, delay information,
 review score, and customer complaint context before proposing any next step.
 
+## Invoice Request Policy
+
+Invoice requests require the order id, customer identity or tax profile, invoice
+title, billing identifier, and contact email. The Agent may explain what information
+is needed and prepare an invoice request draft, but it must not claim that an invoice
+has been issued until the invoice tool returns a confirmed result.
+
+If the customer asks for an invoice without an order id, ask for the full order id
+first. If the request includes an order id and asks to submit the invoice request,
+route it as a side-effect escalation and require human confirmation before calling
+the invoice tool.
+
+## Address Change Policy
+
+Shipping address changes are allowed only before the downstream order or logistics
+system marks the shipment as locked, shipped, or delivered. The Agent should first
+check the order status, explain that address changes may be unavailable after
+shipment, and collect the new recipient name, phone number, street address, city,
+state, and postal code.
+
+Changing an address modifies fulfillment data, so the Agent may draft the request
+but must require human confirmation before calling an address-change tool. If the
+order has already been delivered, the Agent should not attempt to change the address
+and should offer a support follow-up case instead.
+
 ## Human Approval Policy
 
 Any action that creates a support case, changes customer entitlement, sends a message

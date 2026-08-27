@@ -188,16 +188,28 @@ class OlistService:
 class InMemoryCaseService:
     def __init__(self) -> None:
         self._cases: dict[str, dict] = {}
+        self._idempotency_index: dict[str, str] = {}
 
     def open_case(self, order_id: str, message_text: str) -> str:
-        return self.execute_action(
+        result = self.execute_action(
             action_type="open_support_case",
             order_id=order_id,
             message_text=message_text,
         )
+        return str(result["result_id"])
 
-    def execute_action(self, action_type: str, order_id: str, message_text: str) -> str:
-        digest = hashlib.sha1(f"{order_id}:{message_text}".encode()).hexdigest()[:10]
+    def execute_action(self, action_type: str, order_id: str, message_text: str) -> dict[str, object]:
+        idempotency_key = _idempotency_key(action_type, order_id, message_text)
+        if idempotency_key in self._idempotency_index:
+            case_id = self._idempotency_index[idempotency_key]
+            return {
+                "result_id": case_id,
+                "duplicate": True,
+                "idempotency_key": idempotency_key,
+                "record": self._cases[case_id],
+            }
+
+        digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
         prefixes = {
             "open_support_case": "CASE",
             "refund_request": "REFUND",
@@ -207,21 +219,49 @@ class InMemoryCaseService:
         }
         prefix = prefixes.get(action_type, "CASE")
         case_id = f"{prefix}-{digest}"
+        self._idempotency_index[idempotency_key] = case_id
         self._cases[case_id] = {
             "case_id": case_id,
             "action_type": action_type,
             "order_id": order_id,
             "message_text": message_text,
             "status": "opened",
+            "idempotency_key": idempotency_key,
         }
-        return case_id
+        return {
+            "result_id": case_id,
+            "duplicate": False,
+            "idempotency_key": idempotency_key,
+            "record": self._cases[case_id],
+        }
 
     def reset(self) -> None:
         self._cases.clear()
+        self._idempotency_index.clear()
 
 
     def get(self, case_id: str) -> dict | None:
         return self._cases.get(case_id)
+
+
+def _idempotency_key(action_type: str, order_id: str, message_text: str) -> str:
+    reason = _reason_code(message_text)
+    return f"olist-demo:{action_type}:{order_id}:{reason}"
+
+
+def _reason_code(message_text: str) -> str:
+    lowered = message_text.lower()
+    reasons = []
+    if "delayed" in lowered or "延迟" in lowered:
+        reasons.append("delivery_delay")
+    if "low review" in lowered or "低分" in lowered:
+        reasons.append("low_review")
+    if "canceled" in lowered or "取消" in lowered:
+        reasons.append("canceled")
+    if not reasons:
+        digest = hashlib.sha1(message_text.encode()).hexdigest()[:8]
+        reasons.append(f"message_{digest}")
+    return "+".join(sorted(reasons))
 
 
 def format_order_status(status: OrderStatusView | None) -> str:

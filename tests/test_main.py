@@ -377,6 +377,54 @@ async def test_refund_side_effect_uses_refund_tool(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_multiple_escalations_continue_after_first_confirmation(client: AsyncClient) -> None:
+    from app.llm.types import PlannedTask, TaskPlanResult
+
+    g1, g2 = _mock_guard(input_on_topic=True)
+    plan = TaskPlanResult(
+        tasks=[
+            PlannedTask(
+                intent="escalation",
+                text=f"给订单 {ORDER_ID} 申请退款",
+                side_effect=True,
+                action_type="refund_request",
+            ),
+            PlannedTask(
+                intent="escalation",
+                text=f"给订单 {ORDER_ID} 申请发票",
+                side_effect=True,
+                action_type="invoice_request",
+            ),
+        ]
+    )
+    with (
+        g1,
+        g2,
+        patch("app.llm.intent_planner.IntentPlanner.plan", AsyncMock(return_value=plan)),
+        _mock_task(),
+    ):
+        first = await client.post(
+            "/chat",
+            json={"message": f"给订单 {ORDER_ID} 申请退款，再申请发票", "session_id": "two-effects"},
+        )
+    assert first.status_code == 200
+    assert "提交退款/补偿申请" in first.json()["answer"]
+
+    with g1, g2:
+        second = await client.post("/chat", json={"message": "yes", "session_id": "two-effects"})
+    assert second.status_code == 200
+    assert "已执行提交退款/补偿申请" in second.json()["answer"]
+    assert "提交发票申请" in second.json()["answer"]
+    assert "是否确认执行" in second.json()["answer"]
+
+    with g1, g2:
+        third = await client.post("/chat", json={"message": "yes", "session_id": "two-effects"})
+    assert third.status_code == 200
+    assert "已执行提交发票申请" in third.json()["answer"]
+    assert "INV-" in third.json()["answer"]
+
+
+@pytest.mark.anyio
 async def test_chat_trace_contains_trajectory_events(client: AsyncClient, tmp_path, monkeypatch) -> None:
     import app.trace_store as trace_store
     from app.trace_store import list_session_traces

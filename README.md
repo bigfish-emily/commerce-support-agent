@@ -227,6 +227,22 @@ GET /observability/traces/{session_id}?limit=20
 
 这不是完整监控平台，但已经覆盖面试中最关键的问题：能按 session 回放一次 Agent 轨迹，能看路由分布、失败状态和延迟分布。生产中可以把同一份 trace 事件同步到 Kafka/RocketMQ 审计流，再接 Prometheus/Grafana 或 OpenTelemetry。
 
+## CI
+
+仓库已配置 GitHub Actions：
+
+```text
+.github/workflows/ci.yml
+```
+
+每次 push / pull request 会自动执行：
+
+- `ruff check app evaluation scripts tests`
+- `python -m pytest -q`
+- intent、multi-intent、task、RAG、policy KB、ops decision、tool repair、trajectory 和 metrics report 离线评估
+
+CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或产生不可控费用。需要模型实测时，在本地或受控 runner 设置 `OPENAI_API_KEY` 后运行 `python -m evaluation.live_agent_eval`。
+
 ## 评测结果
 
 所有本地评测默认不需要真实 API key，适合 CI 和面试现场演示。LLM planner/judge eval 单独放到 `eval-llm`。
@@ -244,7 +260,7 @@ GET /observability/traces/{session_id}?limit=20
 .\.venv\Scripts\python.exe -m evaluation.ops_decision_eval
 .\.venv\Scripts\python.exe -m evaluation.tool_repair_eval
 .\.venv\Scripts\python.exe -m evaluation.performance_eval
-.\.venv\Scripts\python.exe -m evaluation.live_agent_eval
+.\.venv\Scripts\python.exe -m evaluation.live_agent_eval   # requires OPENAI_API_KEY
 .\.venv\Scripts\python.exe -m evaluation.agent_metrics_report
 ```
 
@@ -252,7 +268,7 @@ GET /observability/traces/{session_id}?limit=20
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 51 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
+| Unit/Integration Tests | 53 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、幂等 duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -262,9 +278,9 @@ GET /observability/traces/{session_id}?limit=20
 | Category RAG adaptive_rewrite | Top1 100% | 当前主链路使用，覆盖下划线/空格/连字符/紧凑写法 |
 | ResCommons hybrid retrieval | BM25 intent@5 81%, char-ngram intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
-| Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 中文政策问题能命中正确 policy section |
+| Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 12 条中文政策问题能命中正确 policy section，覆盖退款、补偿、取消、发票、改地址、人工确认等 |
 | After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
-| Live LLM Agent eval | 5/5, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
+| Live LLM Agent eval | 30/30, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
 | Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
 | Layered metrics report | 75 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
@@ -275,11 +291,11 @@ GET /observability/traces/{session_id}?limit=20
 OPENAI_API_KEY=<your-key>
 OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-v4-flash
-LIVE_AGENT_EVAL_LIMIT=5
+LIVE_AGENT_EVAL_LIMIT=30
 python -m evaluation.live_agent_eval
 ```
 
-最近一次 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p95 latency `38246.40ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分。
+最近一次 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p95 latency `26052.12ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分。
 
 LLM planner 单项评测：
 

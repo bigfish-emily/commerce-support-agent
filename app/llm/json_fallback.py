@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any, TypeVar
 
@@ -8,6 +9,22 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def native_structured_output_enabled(llm: object) -> bool:
+    override = os.environ.get("OPENAI_NATIVE_STRUCTURED_OUTPUT", "").lower().strip()
+    if override in {"0", "false", "no"}:
+        return False
+    if override in {"1", "true", "yes"}:
+        return True
+
+    values = [repr(llm)]
+    for attr in ("openai_api_base", "base_url", "model_name", "model"):
+        value = getattr(llm, attr, None)
+        if value is not None:
+            values.append(str(value))
+    fingerprint = " ".join(values).lower()
+    return "deepseek" not in fingerprint
 
 
 def json_instruction(schema: type[BaseModel]) -> str:

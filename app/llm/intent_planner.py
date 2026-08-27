@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.intent.decomposer import decompose_business_message
-from app.llm.json_fallback import add_json_instruction, parse_json_model
+from app.llm.json_fallback import add_json_instruction, native_structured_output_enabled, parse_json_model
 from app.llm.prompts import INTENT_PLANNER_PROMPT
 from app.llm.types import IntentRouteResult, PlannedTask, TaskPlanResult
 
@@ -19,7 +19,11 @@ class IntentPlanner:
 
     def __init__(self, llm: ChatOpenAI) -> None:
         self._base_llm = llm
-        self._llm = llm.with_structured_output(TaskPlanResult)
+        self._llm = (
+            llm.with_structured_output(TaskPlanResult)
+            if native_structured_output_enabled(llm)
+            else None
+        )
 
     async def plan(self, message: str) -> TaskPlanResult:
         messages = [
@@ -27,7 +31,11 @@ class IntentPlanner:
             HumanMessage(content=message),
         ]
         try:
-            result = await self._llm.ainvoke(messages)
+            if self._llm is None:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, TaskPlanResult))
+                result = parse_json_model(raw, TaskPlanResult)
+            else:
+                result = await self._llm.ainvoke(messages)
         except Exception as exc:
             logger.warning("Structured planner failed, trying JSON-text fallback: %s", exc)
             try:
@@ -36,7 +44,7 @@ class IntentPlanner:
             except Exception as fallback_exc:
                 logger.warning("LLM intent planner failed, using deterministic fallback: %s", fallback_exc)
                 return fallback_plan(message)
-        tasks = [task for task in result.tasks if task.intent in VALID_INTENTS]
+        tasks = _dedupe_redundant_tasks([task for task in result.tasks if task.intent in VALID_INTENTS])
         if not tasks:
             return fallback_plan(message)
         return TaskPlanResult(tasks=_normalize_dependencies(tasks))
@@ -74,3 +82,21 @@ def _normalize_dependencies(tasks: list[PlannedTask]) -> list[PlannedTask]:
         else:
             normalized.append(task)
     return normalized
+
+
+def _dedupe_redundant_tasks(tasks: list[PlannedTask]) -> list[PlannedTask]:
+    deduped: list[PlannedTask] = []
+    seen_read_only_without_order: set[str] = set()
+    for task in tasks:
+        if not task.side_effect and not _contains_order_id(task.text):
+            if task.intent in seen_read_only_without_order:
+                continue
+            seen_read_only_without_order.add(task.intent)
+        deduped.append(task)
+    return deduped
+
+
+def _contains_order_id(text: str) -> bool:
+    import re
+
+    return bool(re.search(r"[0-9a-fA-F]{32}", text))

@@ -6,7 +6,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from app.llm.json_fallback import add_json_instruction, parse_json_model
+from app.llm.json_fallback import add_json_instruction, native_structured_output_enabled, parse_json_model
 from app.llm.offline import OfflineChatModel
 from app.llm.prompts import OLIST_TASK_PROMPT, POLICY_ANSWER_PROMPT, QA_ANSWER_PROMPT
 from app.llm.types import OlistTaskResult
@@ -48,7 +48,7 @@ class QaResponseGenerator:
         ]
         try:
             response = await self._llm.ainvoke(messages)
-            return str(response.content)
+            return _with_canonical_category_prefix(str(response.content), products)
         except Exception as exc:
             logger.warning("QA generation LLM failed, using grounded template fallback: %s", exc)
             return _format_insight_fallback(products, support_docs or [])
@@ -114,7 +114,11 @@ class OlistTaskExtractor:
 
     def __init__(self, llm: ChatOpenAI) -> None:
         self._base_llm = llm
-        self._llm = llm.with_structured_output(OlistTaskResult)
+        self._llm = (
+            llm.with_structured_output(OlistTaskResult)
+            if native_structured_output_enabled(llm)
+            else None
+        )
 
     async def extract(self, user_message: str) -> OlistTaskResult:
         messages = [
@@ -122,6 +126,9 @@ class OlistTaskExtractor:
             HumanMessage(content=user_message),
         ]
         try:
+            if self._llm is None:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, OlistTaskResult))
+                return parse_json_model(raw, OlistTaskResult)
             return await self._llm.ainvoke(messages)
         except Exception as exc:
             logger.warning("Structured task extractor failed, trying JSON-text fallback: %s", exc)
@@ -153,6 +160,16 @@ def _format_insight_fallback(products: list[dict], support_docs: list[dict[str, 
         lines.append(examples.strip())
     lines.append("建议优先排查延迟率、低分率和取消率最高的类目，并用样例订单继续下钻。")
     return "\n".join(lines)
+
+
+def _with_canonical_category_prefix(answer: str, products: list[dict]) -> str:
+    names = [str(item.get("name", "")) for item in products[:3] if item.get("name")]
+    if not names:
+        return answer
+    missing = [name for name in names if name not in answer]
+    if not missing:
+        return answer
+    return f"命中类目：{', '.join(names)}。\n{answer}"
 
 
 def _format_support_examples(support_docs: list[dict[str, object]]) -> str:

@@ -15,7 +15,8 @@ class AgentGraph:
         """Graph topology:
 
         plan_tasks -> execute_task_plan -> END
-        execute_task_plan -> await_confirmation -> finalize_escalation -> END
+        execute_task_plan -> await_confirmation -> finalize_escalation
+        finalize_escalation -> execute_task_plan when later tasks remain
         """
         graph: StateGraph = StateGraph(AgentState)
 
@@ -35,7 +36,14 @@ class AgentGraph:
             },
         )
         graph.add_edge("await_confirmation", "finalize_escalation")
-        graph.add_edge("finalize_escalation", END)
+        graph.add_conditional_edges(
+            "finalize_escalation",
+            self._route_after_finalize,
+            {
+                "continue": "execute_task_plan",
+                "end": END,
+            },
+        )
 
         return graph.compile(checkpointer=checkpointer)
 
@@ -43,4 +51,17 @@ class AgentGraph:
     def _route_after_execution(state: AgentState) -> str:
         if state.get("pending_side_effect", {}).get("requires_confirmation"):
             return "await_confirmation"
+        return "end"
+
+    @staticmethod
+    def _route_after_finalize(state: AgentState) -> str:
+        terminal = {"completed", "canceled", "timeout_canceled", "failed", "blocked"}
+        completed = {
+            int(task["index"])
+            for task in state.get("completed_tasks", [])
+            if task.get("status") in terminal and isinstance(task.get("index"), int)
+        }
+        for index, _task in enumerate(state.get("task_plan", [])):
+            if index not in completed:
+                return "continue"
         return "end"

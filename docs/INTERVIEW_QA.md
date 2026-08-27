@@ -163,7 +163,7 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 不是。LLM-as-Judge 只是事后答案质量评估。真正的主链路是：input guard -> LLM task planner -> LLM slot extractor/answer generator -> deterministic tools -> output guard。`IntentPlanner.plan()` 是有 key 时的第一步，规则 decomposer 只在 LLM 调用失败或输出非法时兜底。
 
-现在已经新增 `evaluation/live_agent_eval.py`，用 DeepSeek `deepseek-v4-flash` 跑真实 Agent 主链路：5 条 case 覆盖订单查询、类目风险、政策边界、售后运营决策、多意图 HITL，`case_pass_rate=100%`，`task_exact/tools_used/hitl_correct/output_valid/answer_keywords` 均为 `100%`。
+现在已经新增 `evaluation/live_agent_eval.py`，用 DeepSeek `deepseek-v4-flash` 跑真实 Agent 主链路：30 条 case 覆盖订单查询、类目风险、政策边界、发票/改地址、售后运营决策、多意图 HITL，`case_pass_rate=100%`，`task_exact/tools_used/hitl_correct/output_valid/answer_keywords` 均为 `100%`。
 
 LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulness、tool correctness、HITL correctness，但它不是核心能力证明。
 
@@ -191,7 +191,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 能分层证明，而不是只靠一个分数。离线指标证明数据、工具、RAG、状态机、HITL 和 trace 不会因为模型随机性而漂；真实 LLM Agent eval 证明模型已经进入 planner、抽槽、生成和 guard 主链路；LLM-as-Judge 证明小样本答案质量。当前总表有 75 项指标，其中“真实 LLM Agent”分组 5 条 live case 全过。
 
-如果面试官追问“5 条够不够”，回答要明确：5 条是低成本 live smoke，证明真实链路可跑；规模化可信度来自可扩展的 eval harness，下一步可以把 `LIVE_AGENT_EVAL_LIMIT` 扩到 30-100，并把失败样本进入回归集。
+如果面试官追问“30 条够不够”，回答要明确：30 条已经不是单点 smoke，覆盖了五类主路径和多意图 HITL；但它仍不是线上统计意义上的大样本。可信度来自可扩展的 eval harness，下一步可以按同一格式扩到 100+，并把失败样本进入回归集。
 
 ## 安全、隐私、多租户
 
@@ -244,7 +244,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 - policy KB 不是企业真实 SOP；
 - hybrid retrieval 是本地 baseline，还不是 ES + vector DB + reranker；
 - 可观测性是 SQLite 和简单接口，不是 OpenTelemetry + dashboard；
-- live eval 样本目前是低成本 5 条，还需要扩成更大的模型回归集。
+- live eval 样本目前是 30 条，还需要扩成更大的模型回归集。
 
 回答时不要否认缺口，要强调这些是个人项目和生产系统之间的边界，并说明可落地的演进路径。
 
@@ -266,6 +266,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 | Agent 架构 | 8.5/10 | LangGraph plan-and-execute、LLM planner、结构化 fallback、HITL、HITL timeout、trace | 增加 checkpoint 持久化恢复 demo 和更完整状态回放 |
 | RAG 能力 | 7.5/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
 | 工具治理 | 8/10 | 参数修复、副作用 action_type、MCP server/client adapter、幂等模拟 | 持久化幂等表、真实外部 MCP sandbox |
-| 评测体系 | 8.5/10 | 51 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、5 条 live LLM eval、75 项总指标 | 扩大 live LLM eval 到 30-100 条，加入失败样本回归池 |
+| 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
+| 评测体系 | 8.8/10 | 53 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、75 项总指标 | 扩大 live LLM eval 到 100+ 条，加入失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |

@@ -24,9 +24,9 @@
 | RAG/检索 | 类目 RAG adaptive_rewrite Top1 | 100.00% | 180 | 首位召回是否命中正确类目。 | ranked[0] == expected_category。 | 否 |
 | RAG/检索 | 类目 RAG adaptive_rewrite Recall@3 | 100.00% | 180 | Top3 是否包含正确类目，衡量召回能力。 | expected_category in ranked[:3]。 | 否 |
 | RAG/检索 | 类目 RAG adaptive_rewrite MRR@3 | 100.00% | 180 | 正确类目越靠前分数越高。 | 命中时累加 1/rank，未命中为 0。 | 否 |
-| RAG/检索 | 政策 KB Top1 | 100.00% | 10 | 政策问题首位是否命中正确章节。 | ranked[0] == expected_section。 | 否 |
-| RAG/检索 | 政策 KB Recall@3 | 100.00% | 10 | Top3 是否包含正确政策章节。 | expected_section in ranked[:3]。 | 否 |
-| RAG/检索 | 政策 KB MRR@3 | 100.00% | 10 | 正确政策章节越靠前分数越高。 | 命中时累加 1/rank。 | 否 |
+| RAG/检索 | 政策 KB Top1 | 100.00% | 12 | 政策问题首位是否命中正确章节。 | ranked[0] == expected_section。 | 否 |
+| RAG/检索 | 政策 KB Recall@3 | 100.00% | 12 | Top3 是否包含正确政策章节。 | expected_section in ranked[:3]。 | 否 |
+| RAG/检索 | 政策 KB MRR@3 | 100.00% | 12 | 正确政策章节越靠前分数越高。 | 命中时累加 1/rank。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 intent@1 | 64.00% | 100 | 首位召回文档的客服 intent 是否与 query intent 一致。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 intent@5 | 81.00% | 100 | Top5 是否出现同 intent 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 intent_mrr@5 | 70.73% | 100 | 同 intent 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
@@ -57,25 +57,25 @@
 | 端到端/轨迹 | 轨迹工具正确率 | 100.00% | 245 | 轨迹中是否调用了 intent 对应工具。 | event.details.tool == expected_tool(expected_intent)。 | 否 |
 | 端到端/轨迹 | 副作用 HITL 轨迹覆盖率 | 100.00% | 245 | 副作用任务轨迹是否进入 awaiting_confirmation。 | escalation case 是否有 status=awaiting_confirmation。 | 否 |
 | 端到端/轨迹 | 轨迹无失败率 | 100.00% | 245 | 离线 gold 轨迹是否没有 failed/blocked 事件。 | trajectory statuses 中不含 failed/blocked。 | 否 |
-| 真实 LLM Agent | live case pass rate | 100.00% | 5 | 真实 LLM 作为 planner/抽槽/生成器进入 Agent 主链路后，端到端 case 是否全部通过。 | 每条 case 的 task/tool/HITL/trace/output/answer checks 全部为 true 才算 pass。 | 是 |
-| 真实 LLM Agent | live task_exact | 100.00% | 5 | LLM planner 生成的任务列表是否与 gold 完全一致。 | live_agent_eval_results.jsonl 中 checks.task_exact=true 的比例。 | 是 |
-| 真实 LLM Agent | live tools_used | 100.00% | 5 | 真实轨迹是否调用了该任务需要的确定性工具。 | live_agent_eval_results.jsonl 中 checks.tools_used=true 的比例。 | 是 |
-| 真实 LLM Agent | live hitl_correct | 100.00% | 5 | 副作用任务是否进入 HITL，只读任务是否不误触发 HITL。 | live_agent_eval_results.jsonl 中 checks.hitl_correct=true 的比例。 | 是 |
-| 真实 LLM Agent | live no_failed_event | 100.00% | 5 | 真实轨迹里是否没有 failed/blocked 事件。 | live_agent_eval_results.jsonl 中 checks.no_failed_event=true 的比例。 | 是 |
-| 真实 LLM Agent | live output_valid | 100.00% | 5 | 输出 guard 是否放行真实 Agent 回答。 | live_agent_eval_results.jsonl 中 checks.output_valid=true 的比例。 | 是 |
-| 真实 LLM Agent | live answer_keywords | 100.00% | 5 | 回答是否包含该业务问题必须出现的实体/政策/动作关键词或同义表达。 | live_agent_eval_results.jsonl 中 checks.answer_keywords=true 的比例。 | 是 |
-| 真实 LLM Agent | live p95 latency | 38246.40 ms | 5 | 包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p95。 | 按 live_agent_eval 每条 case latency_ms 取 p95。 | 是 |
+| 真实 LLM Agent | live case pass rate | 100.00% | 30 | 真实 LLM 作为 planner/抽槽/生成器进入 Agent 主链路后，端到端 case 是否全部通过。 | 每条 case 的 task/tool/HITL/trace/output/answer checks 全部为 true 才算 pass。 | 是 |
+| 真实 LLM Agent | live task_exact | 100.00% | 30 | LLM planner 生成的任务列表是否与 gold 完全一致。 | live_agent_eval_results.jsonl 中 checks.task_exact=true 的比例。 | 是 |
+| 真实 LLM Agent | live tools_used | 100.00% | 30 | 真实轨迹是否调用了该任务需要的确定性工具。 | live_agent_eval_results.jsonl 中 checks.tools_used=true 的比例。 | 是 |
+| 真实 LLM Agent | live hitl_correct | 100.00% | 30 | 副作用任务是否进入 HITL，只读任务是否不误触发 HITL。 | live_agent_eval_results.jsonl 中 checks.hitl_correct=true 的比例。 | 是 |
+| 真实 LLM Agent | live no_failed_event | 100.00% | 30 | 真实轨迹里是否没有 failed/blocked 事件。 | live_agent_eval_results.jsonl 中 checks.no_failed_event=true 的比例。 | 是 |
+| 真实 LLM Agent | live output_valid | 100.00% | 30 | 输出 guard 是否放行真实 Agent 回答。 | live_agent_eval_results.jsonl 中 checks.output_valid=true 的比例。 | 是 |
+| 真实 LLM Agent | live answer_keywords | 100.00% | 30 | 回答是否包含该业务问题必须出现的实体/政策/动作关键词或同义表达。 | live_agent_eval_results.jsonl 中 checks.answer_keywords=true 的比例。 | 是 |
+| 真实 LLM Agent | live p95 latency | 26052.12 ms | 30 | 包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p95。 | 按 live_agent_eval 每条 case latency_ms 取 p95。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
 | 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 100% | 3 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 category_risk、policy_boundary、multi_intent_hitl。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
-| 性能/成本 | order_status_lookup p95 延迟 | 0.001 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.408 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.855 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.277 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.936 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
-| 性能/成本 | policy KB 估算 token | 1628 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
+| 性能/成本 | policy KB 估算 token | 1951 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 可观测性 | trace 写入与回放可用率 | 100.00% | 1 | 请求 trace 是否可按 session 查询回放。 | 写入一条 trace 后 list_session_traces 是否返回记录。 | 否 |
 | 可观测性 | trace summary 可用率 | 100.00% | 1 | 是否能统计状态分布、路由分布和延迟。 | trace_summary().total 是否等于写入条数。 | 否 |

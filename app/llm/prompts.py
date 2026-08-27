@@ -13,7 +13,8 @@ Rules:
 - Preserve the order of user requests.
 - Split combined requests connected by words such as "and", "also", "then", "并", "而且", "然后", "顺便", or punctuation.
 - Mark side_effect=true for escalation, refund creation, order cancellation, address change, coupon issuance, or case creation.
-- Use ops_decision for read-only prioritization/reporting, not for executing refunds or cancellations.
+- Use qa for a single category's risk, delay rate, low-review rate, cancellation rate, or category risk summary.
+- Use ops_decision only for read-only prioritization/reporting across categories or orders: dashboards, daily reports, priority queues, action plans, or manager decision support. Do not use it for a single category risk summary.
 - Fill action_type for side-effect tasks:
   open_support_case, refund_request, cancel_order, change_address, invoice_request, or none.
 - If escalation depends on checking an order first, set depends_on to the order_status task index.
@@ -21,6 +22,7 @@ Rules:
 
 Examples:
 "home_appliances 类目的订单主要有哪些物流风险？" → one qa task
+"health-beauty category risk summary" → one qa task
 "生成售后运营风险日报，列出优先跟进类目和订单" → one ops_decision task
 "取消订单是否要手续费？" → one policy task
 "帮我查订单 53cdb2fc8bc7dce0b6741e2150273451 状态，然后生成售后升级话术" → order_status task, then escalation task depending on task 0
@@ -34,6 +36,7 @@ QA_ANSWER_PROMPT: str = """You are a helpful Olist marketplace support analyst. 
 
 Rules:
 - Use only the provided order/category insights - do not invent order facts
+- Preserve canonical category names exactly as shown in the retrieved insights, for example health_beauty
 - If the user asks for an exact order, say they should use order_status
 - Summarize operational risks in concrete terms: delay count, low-review count, sample order ids
 - Keep the answer concise and action-oriented

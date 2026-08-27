@@ -56,21 +56,29 @@ class AgentActions:
 
     async def execute_task_plan(self, state: AgentState) -> dict:
         answers: list[str] = []
-        completed: list[dict[str, object]] = []
-        retrieved_insights: list[dict[str, object]] = []
-        retrieved_policy: list[dict[str, object]] = []
-        retrieved_support_docs: list[dict[str, object]] = []
+        if _should_include_previous_answer(state):
+            answers.append(str(state.get("final_answer", "")))
+        completed: list[dict[str, object]] = list(state.get("completed_tasks", []))
+        retrieved_insights: list[dict[str, object]] = list(state.get("retrieved_insights", []))
+        retrieved_policy: list[dict[str, object]] = list(state.get("retrieved_policy", []))
+        retrieved_support_docs: list[dict[str, object]] = list(state.get("retrieved_support_docs", []))
         escalation_draft: dict[str, object] | None = None
         trajectory_events = list(state.get("trajectory_events", []))
 
         tasks = state.get("task_plan", [])
+        terminal_indices = _terminal_task_indices(completed)
         for idx, task in _execution_order(tasks):
+            if idx in terminal_indices:
+                continue
             dependencies = [int(dep) for dep in task.get("depends_on", []) if isinstance(dep, int)]
-            completed_indices = {
-                int(item["index"]) for item in completed if item.get("status") == "completed"
-            }
+            completed_indices = _completed_task_indices(completed)
             if any(dep not in completed_indices for dep in dependencies):
-                completed.append({"index": idx, "intent": task.get("intent", "policy"), "status": "blocked"})
+                completed = _upsert_task_status(
+                    completed,
+                    idx,
+                    str(task.get("intent", "policy")),
+                    "blocked",
+                )
                 answers.append("[任务阻断]\n前置任务没有完成，已停止后续可能有副作用的动作。")
                 trajectory_events.append(
                     _event(
@@ -83,7 +91,7 @@ class AgentActions:
                 break
 
             intent = str(task.get("intent", "policy"))
-            text = str(task.get("text") or state["messages"][-1]["content"])
+            text = str(task.get("text") or _latest_user_task_message(state))
             event_details: dict[str, object] = {"task_index": idx, "text": text[:300]}
             if intent == "order_status":
                 answer = await self._answer_order_status(text)
@@ -135,15 +143,23 @@ class AgentActions:
                 slot_text = _with_order_context(text, state["messages"][-1]["content"])
                 draft_answer, draft = await self._prepare_escalation_from_text(slot_text, action_type)
                 answers.append(f"[售后升级]\n{draft_answer}")
-                escalation_draft = draft
-                completed.append({"index": idx, "intent": intent, "status": "awaiting_confirmation"})
+                if draft is not None:
+                    draft["task_index"] = idx
                 event_details["tool"] = "prepare_side_effect"
                 event_details["action_type"] = action_type
-                trajectory_events.append(
-                    _event("execute_task_plan", intent, "awaiting_confirmation", event_details)
-                )
-                break
-            completed.append({"index": idx, "intent": intent, "status": "completed"})
+                if draft is None:
+                    completed = _upsert_task_status(completed, idx, intent, "failed")
+                    trajectory_events.append(_event("execute_task_plan", intent, "failed", event_details))
+                    continue
+                else:
+                    escalation_draft = draft
+                    completed = _upsert_task_status(completed, idx, intent, "awaiting_confirmation")
+                    trajectory_events.append(
+                        _event("execute_task_plan", intent, "awaiting_confirmation", event_details)
+                    )
+                    break
+            completed = _upsert_task_status(completed, idx, intent, "completed")
+            terminal_indices.add(idx)
             trajectory_events.append(_event("execute_task_plan", intent, "completed", event_details))
 
         final_answer = (
@@ -177,6 +193,7 @@ class AgentActions:
                 "type": escalation_draft.get("action_type", "open_support_case"),
                 "requires_confirmation": True,
                 "task_intent": "escalation",
+                "task_index": escalation_draft.get("task_index"),
                 "created_at": created_at,
                 "expires_at": created_at + timeout_seconds,
                 "timeout_seconds": timeout_seconds,
@@ -254,6 +271,7 @@ class AgentActions:
                 "type": draft.get("action_type", "open_support_case"),
                 "requires_confirmation": True,
                 "task_intent": "escalation",
+                "task_index": draft.get("task_index"),
                 "created_at": created_at,
                 "expires_at": created_at + timeout_seconds,
                 "timeout_seconds": timeout_seconds,
@@ -315,15 +333,18 @@ class AgentActions:
             "升级",
         )
         draft = state.get("escalation_draft", {})
+        pending = state.get("pending_side_effect", {})
+        task_index = _maybe_int(pending.get("task_index") or draft.get("task_index"))
         if confirmed and draft:
             action_type = str(draft.get("action_type", "open_support_case"))
-            result_id = self._case_service.execute_action(
+            result = self._case_service.execute_action(
                 action_type=action_type,
                 order_id=str(draft["order_id"]),
                 message_text=str(draft["message_text"]),
             )
             action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
-            answer = f"已执行{action_label}：{result_id}。"
+            duplicate_hint = "（重复请求，已返回已有结果）" if result["duplicate"] else ""
+            answer = f"已执行{action_label}：{result['result_id']}。{duplicate_hint}"
             status = "completed"
         elif confirmed:
             answer = "没有找到可提交的升级草稿，请重新发起。"
@@ -335,9 +356,14 @@ class AgentActions:
             answer = "已取消创建售后升级 case。"
             status = "canceled"
 
+        completed = list(state.get("completed_tasks", []))
+        if task_index is not None:
+            completed = _upsert_task_status(completed, task_index, "escalation", status)
+
         return {
             "final_answer": answer,
             "messages": [*state["messages"], {"role": "assistant", "content": answer}],
+            "completed_tasks": completed,
             "pending_side_effect": {},
             "escalation_draft": {},
             "trajectory_events": [
@@ -349,6 +375,7 @@ class AgentActions:
                     {
                         "confirmed": confirmed,
                         "action_type": str(draft.get("action_type", "")) if draft else "",
+                        "task_index": task_index,
                     },
                 ),
             ],
@@ -415,6 +442,91 @@ def _hitl_timeout_seconds() -> int:
     except ValueError:
         return 900
     return max(value, 1)
+
+
+def _latest_user_task_message(state: AgentState) -> str:
+    confirmation_replies = {
+        "yes",
+        "yeah",
+        "y",
+        "confirm",
+        "ok",
+        "okay",
+        "no",
+        "n",
+        "cancel",
+        "确认",
+        "创建",
+        "升级",
+        "取消",
+        "不用",
+        "不要",
+        "算了",
+        "放弃",
+        "否",
+        "__hitl_timeout__",
+    }
+    for message in reversed(state.get("messages", [])):
+        if message.get("role") != "user":
+            continue
+        content = str(message.get("content", ""))
+        if content.lower().strip() not in confirmation_replies:
+            return content
+    return str(state["messages"][-1]["content"])
+
+
+def _completed_task_indices(completed: list[dict[str, object]]) -> set[int]:
+    return {
+        int(item["index"])
+        for item in completed
+        if item.get("status") == "completed" and _maybe_int(item.get("index")) is not None
+    }
+
+
+def _terminal_task_indices(completed: list[dict[str, object]]) -> set[int]:
+    terminal = {"completed", "canceled", "timeout_canceled", "failed", "blocked"}
+    return {
+        int(item["index"])
+        for item in completed
+        if item.get("status") in terminal and _maybe_int(item.get("index")) is not None
+    }
+
+
+def _upsert_task_status(
+    completed: list[dict[str, object]],
+    index: int,
+    intent: str,
+    status: str,
+) -> list[dict[str, object]]:
+    row = {"index": index, "intent": intent, "status": status}
+    updated = []
+    replaced = False
+    for item in completed:
+        if item.get("index") == index:
+            updated.append(row)
+            replaced = True
+        else:
+            updated.append(item)
+    if not replaced:
+        updated.append(row)
+    return updated
+
+
+def _should_include_previous_answer(state: AgentState) -> bool:
+    events = state.get("trajectory_events", [])
+    return bool(
+        state.get("final_answer")
+        and events
+        and events[-1].get("node") == "finalize_escalation"
+    )
+
+
+def _maybe_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
 
 
 def _event(

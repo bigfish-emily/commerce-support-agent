@@ -5,7 +5,7 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from app.llm.json_fallback import add_json_instruction, parse_json_model
+from app.llm.json_fallback import add_json_instruction, native_structured_output_enabled, parse_json_model
 from app.llm.prompts import INPUT_GUARD_PROMPT, OUTPUT_GUARD_PROMPT
 from app.llm.types import InputGuardResult, OutputGuardResult
 
@@ -22,8 +22,9 @@ class Guardrail:
 
     def __init__(self, llm: ChatOpenAI) -> None:
         self._base_llm = llm
-        self._input_llm = llm.with_structured_output(InputGuardResult)
-        self._output_llm = llm.with_structured_output(OutputGuardResult)
+        native_structured = native_structured_output_enabled(llm)
+        self._input_llm = llm.with_structured_output(InputGuardResult) if native_structured else None
+        self._output_llm = llm.with_structured_output(OutputGuardResult) if native_structured else None
 
     async def check_input(self, message: str, history: list[dict] | None = None) -> InputGuardResult:
         context_text = ""
@@ -40,6 +41,9 @@ class Guardrail:
             HumanMessage(content=f"{context_text}User message: {message}"),
         ]
         try:
+            if self._input_llm is None:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, InputGuardResult))
+                return parse_json_model(raw, InputGuardResult)
             return await self._input_llm.ainvoke(messages)
         except Exception as exc:
             logger.warning("Structured input guard failed, trying JSON-text fallback: %s", exc)
@@ -56,6 +60,9 @@ class Guardrail:
             HumanMessage(content=answer),
         ]
         try:
+            if self._output_llm is None:
+                raw = await self._base_llm.ainvoke(add_json_instruction(messages, OutputGuardResult))
+                return parse_json_model(raw, OutputGuardResult)
             return await self._output_llm.ainvoke(messages)
         except Exception as exc:
             logger.warning("Structured output guard failed, trying JSON-text fallback: %s", exc)
