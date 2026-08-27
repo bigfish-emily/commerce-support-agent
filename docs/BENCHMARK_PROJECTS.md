@@ -55,6 +55,18 @@ python scripts/run_tau2_retail_subset.py \
 Run without `--dry-run` after configuring an API key in the tau2 environment.
 Results are written by tau2 under `tau2-root/data/simulations/`.
 
+Current local status on Windows:
+
+- Adapter import/launcher dry-run passes from the main project.
+- The external `benchmark-tmp` checkout is present and sparse-cloned.
+- `uv run python -c "import tau2"` still stalls during dependency copy/sync after
+  falling back from hardlink to full copy, so there is no official tau2 retail
+  score yet.
+
+Do not claim a tau2 score on the resume until a real run writes simulation
+results. The fastest path is to run the same adapter under WSL2/Linux with a
+fresh Python 3.12+ tau2 environment.
+
 ## Why Not Put tau2 in pyproject
 
 The main app uses Python 3.11. tau2/tau3-bench requires Python `>=3.12,<3.14`.
@@ -65,7 +77,7 @@ GitHub CI remain fast and deterministic.
 
 | Candidate | Value | Difficulty | Workload | ROI | Recommendation |
 |---|---|---:|---:|---:|---|
-| tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Do first |
+| tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Do first; use WSL2/Linux if Windows uv stalls |
 | tau2 banking_knowledge | Tests RAG over unstructured knowledge with configurable retrieval | Medium-High | 2-4 days | High for RAG roles | Do after retail |
 | Berkeley Function Calling Leaderboard subset | Measures schema/tool-call correctness across many APIs | Medium | 2-3 days | Medium-High | Good separate mini-project |
 | ToolBench-style tool-use agent | Broad tool-use research benchmark | High | 1-2 weeks | Medium | Less aligned with e-commerce resume |

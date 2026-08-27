@@ -6,6 +6,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -384,7 +385,12 @@ def _score_case(case: LiveCase, result: dict, latency_ms: float, llm_client: Llm
         "case": case.name,
         "provider_mode": llm_client.mode,
         "model": llm_client.model,
+        "prompt_version": os.environ.get("PROMPT_VERSION", "local-prompts-v1"),
+        "evaluated_at": datetime.now(UTC).isoformat(),
         "latency_ms": round(latency_ms, 2),
+        "input_chars": len(case.message),
+        "answer_chars": len(answer),
+        "approx_turn_tokens": _approx_tokens(case.message + "\n" + answer),
         "expected_tasks": case.expected_tasks,
         "actual_tasks": tasks,
         "expected_tools": case.expected_tools,
@@ -438,6 +444,12 @@ def _summary_line(rows: list[dict]) -> str:
     for name in check_names:
         parts.append(f"{name}={sum(row['checks'][name] for row in rows) / len(rows):.2%}")
     return "; ".join(parts)
+
+
+def _approx_tokens(text: str) -> int:
+    ascii_chars = sum(1 for char in text if ord(char) < 128)
+    non_ascii_chars = len(text) - ascii_chars
+    return round(ascii_chars / 4 + non_ascii_chars * 1.5)
 
 
 if __name__ == "__main__":

@@ -42,4 +42,5 @@ jobs:
           uv run python -m evaluation.ops_decision_eval
           uv run python -m evaluation.tool_repair_eval
           uv run python -m evaluation.trajectory_eval
+          uv run python -m evaluation.route_drift_eval
           uv run python -m evaluation.agent_metrics_report

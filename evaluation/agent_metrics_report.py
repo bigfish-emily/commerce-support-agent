@@ -56,6 +56,7 @@ def main() -> None:
     metrics.extend(after_sales_ops_metrics())
     metrics.extend(e2e_metrics())
     metrics.extend(live_agent_metrics())
+    metrics.extend(route_drift_metrics())
     metrics.extend(answer_quality_metrics())
     metrics.extend(safety_metrics())
     metrics.extend(performance_and_ops_metrics())
@@ -563,7 +564,73 @@ def live_agent_metrics() -> list[Metric]:
             api_key="是",
         )
     )
+    approx_tokens = [
+        int(row["approx_turn_tokens"])
+        for row in rows
+        if isinstance(row.get("approx_turn_tokens"), int | float) and row["approx_turn_tokens"] > 0
+    ]
+    if approx_tokens:
+        metrics.append(
+            Metric(
+                "性能/成本",
+                "live approx p50 turn tokens",
+                str(round(_percentile([float(value) for value in approx_tokens], 50))),
+                str(len(approx_tokens)),
+                "单轮 live eval 的用户输入 + 最终回答粗略 token 量级，不含隐藏系统 prompt 和中间 LLM 调用。",
+                (
+                    "live_agent_eval 写入 approx_turn_tokens 后取 p50；"
+                    "用于低成本容量估算，不能替代 provider usage。"
+                ),
+                api_key="是",
+            )
+        )
+    else:
+        metrics.append(
+            Metric(
+                "性能/成本",
+                "live approx p50 turn tokens",
+                "not_recorded",
+                str(len(rows)),
+                "旧版 live eval 结果未记录 token 估算字段；下一次 live eval 会自动写入。",
+                "重新运行 evaluation.live_agent_eval 后按 approx_turn_tokens 取 p50。",
+                api_key="是",
+            )
+        )
     return metrics
+
+
+def route_drift_metrics() -> list[Metric]:
+    path = ROOT / "evaluation" / "live_agent_eval_results.jsonl"
+    if not path.exists():
+        return []
+    rows = load_jsonl(path)
+    if not rows:
+        return []
+    exact = sum(row.get("expected_tasks") == row.get("actual_tasks") for row in rows)
+    first_match = sum(
+        _first(row.get("expected_tasks", [])) == _first(row.get("actual_tasks", []))
+        for row in rows
+    )
+    return [
+        Metric(
+            "真实 LLM Agent",
+            "route drift first-intent match",
+            _pct(first_match, len(rows)),
+            str(len(rows)),
+            "同一 live 回归集上，LLM planner 首个业务意图是否偏离 pinned expectation。",
+            "first(actual_tasks) == first(expected_tasks)。",
+            api_key="是",
+        ),
+        Metric(
+            "真实 LLM Agent",
+            "route drift task-sequence match",
+            _pct(exact, len(rows)),
+            str(len(rows)),
+            "同一 live 回归集上，多任务序列是否偏离 pinned expectation，用于检测 prompt/model 版本漂移。",
+            "actual_tasks == expected_tasks。",
+            api_key="是",
+        ),
+    ]
 
 
 async def _run_trajectory_cases(graph, cases: list[dict]) -> list[dict]:
@@ -799,6 +866,10 @@ def _relative_order_ok(predicted: list[str], expected: list[str]) -> bool:
             return False
         position = next_position
     return True
+
+
+def _first(values: list[str]) -> str:
+    return values[0] if values else "none"
 
 
 def _is_sorted_desc(values: list[float]) -> bool:

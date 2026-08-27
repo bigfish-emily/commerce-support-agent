@@ -1,6 +1,6 @@
 # E-Commerce Support & Operations Agent
 
-面向电商客服/运营场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，而是展示生产级 Agent 开发中的关键能力：意图拆解、Agentic RAG、企业工具接入、HITL 副作用治理、可恢复执行、审计轨迹和可量化评测。
+面向电商客服/运营场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，而是展示生产级 Agent 开发中的关键能力：意图拆解、workflow-constrained RAG、企业工具接入、HITL 副作用治理、可恢复执行、审计轨迹和可量化评测。
 
 ## 业务场景
 
@@ -277,10 +277,12 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 | Category retrieval token_overlap | Top1 62.92%, Recall@3 66.67% | 能处理空格/连字符，但 compact alias、中文别名和未登录俗称仍会失败 |
 | Category retrieval adaptive_rewrite | Top1 92.08%, Recall@3 92.50% | 当前主链路使用，覆盖机械别名和已登录业务别名；noisy holdout Top1 10%，说明仍需 query log/embedding/reranker 补强 |
 | ResCommons hybrid retrieval | BM25 intent@5 81%, char-ngram intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
+| ResCommons baseline delta | BM25 intent@1/intent@5 64%/81% -> hybrid 77%/91% | 用公开客服对话语料验证 hybrid retrieval 比纯 BM25 更稳，不只报单点最高值 |
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
 | Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 12 条中文政策问题能命中正确 policy section，覆盖退款、补偿、取消、发票、改地址、人工确认等 |
 | After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
 | Live LLM Agent eval | 30/30, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
+| Route drift eval | first-intent/task-sequence match 100% | 读取 live eval 结果，比较 expected/actual 任务分布，用于发现 prompt/model 版本变更造成的路由漂移 |
 | Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
 | Layered metrics report | 79 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |

@@ -69,15 +69,18 @@
 | 真实 LLM Agent | live answer_keywords | 100.00% | 30 | 回答是否包含该业务问题必须出现的实体/政策/动作关键词或同义表达。 | live_agent_eval_results.jsonl 中 checks.answer_keywords=true 的比例。 | 是 |
 | 真实 LLM Agent | live p50 latency | 10830.09 ms | 30 | 包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p50。 | 按 live_agent_eval 每条 case latency_ms 取 p50。 | 是 |
 | 真实 LLM Agent | live p95 latency | 26052.12 ms | 30 | 包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p95。 | 按 live_agent_eval 每条 case latency_ms 取 p95。 | 是 |
+| 性能/成本 | live approx p50 turn tokens | not_recorded | 30 | 旧版 live eval 结果未记录 token 估算字段；下一次 live eval 会自动写入。 | 重新运行 evaluation.live_agent_eval 后按 approx_turn_tokens 取 p50。 | 是 |
+| 真实 LLM Agent | route drift first-intent match | 100.00% | 30 | 同一 live 回归集上，LLM planner 首个业务意图是否偏离 pinned expectation。 | first(actual_tasks) == first(expected_tasks)。 | 是 |
+| 真实 LLM Agent | route drift task-sequence match | 100.00% | 30 | 同一 live 回归集上，多任务序列是否偏离 pinned expectation，用于检测 prompt/model 版本漂移。 | actual_tasks == expected_tasks。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
 | 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 100% | 3 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 category_risk、policy_boundary、multi_intent_hitl。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
-| 性能/成本 | order_status_lookup p95 延迟 | 0.001 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.274 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.744 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.824 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 46.291 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 1951 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

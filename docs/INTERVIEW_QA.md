@@ -82,7 +82,7 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 - Policy KB：按 markdown section 切块，检索退款、补偿、取消、发票、升级边界。
 - 客服对话 hybrid retrieval：ResCommons train corpus 做 BM25 + char-ngram vector + rerank，给 QA/policy 生成补充上下文。
 
-准确说，当前不是完全自主 Agentic RAG，而是 workflow-constrained RAG：planner 决定任务类型，LangGraph executor 决定是否检索和检索哪个源。不是每轮都检索，订单精确查询就直接走事实工具。
+准确说，当前不是完全自主 Agentic RAG，而是 workflow-constrained RAG：planner 决定任务类型，LangGraph executor 决定是否检索和检索哪个源。不是每轮都检索，订单精确查询就直接走事实工具。如果面试官问“Agentic 在哪里”，不要硬吹；正确说法是当前落地的是受控 RAG，后续让 Agent 自主决定检索轮次需要增加检索置信度、反思节点、预算上限和退出条件。
 
 ### 10. RAG 为什么不用 embedding / reranker？
 
@@ -92,6 +92,12 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 - 类目名是短实体，规则归一化更可解释；
 - policy KB 规模小，关键词/section 检索足够作为 baseline；
 - 个人项目要控制成本和可复现性，不能把基础 CI 依赖外部 embedding 服务。
+
+当前 hybrid 公式是 BM25 候选 + char 4-gram vector + RRF 风格融合：
+
+```text
+score(doc) = 0.2 / (bm25_rank + 20) + 2.0 / (vector_rank + 20)
+```
 
 生产化会替换为 Elasticsearch/BM25 + vector DB + learned reranker，并评估 Recall@K、MRR、nDCG、faithfulness 和 answer relevance。
 
@@ -111,27 +117,39 @@ Policy 检索：没有足够匹配章节时，回答“未命中明确政策，�
 
 ## MCP 与工具治理
 
-### 13. 为什么 MCP 没接进主执行路径？
+### 13. MCP 写在技术栈里，正文怎么支撑？
+
+项目同时做了 MCP server 和 client adapter。`app/mcp_server.py` 把本地业务能力暴露成 `get_order_status`、`search_category_risk`、`generate_after_sales_priority_report`、`draft_escalation` 四个 MCP tools；`app/mcp_client.py` 支持 stdio 和 Streamable HTTP client；`app/stripe_mcp.py` 是 Stripe sandbox/remote MCP 的可选 adapter。
+
+简历里不能只写 MCP 不解释。推荐回答：我没有把 MCP 当装饰词，而是用它表达企业工具边界。默认 demo 走本地 service，保证无凭证可跑；生产里把 `OlistService` 换成 OMS/CRM/refund/coupon MCP tools，LangGraph、HITL、幂等、trace 不变。
+
+### 14. 为什么 MCP 没接进主执行路径？
 
 当前主路径直接调用本地 deterministic service，是为了让评测和 demo 在无外部凭证时稳定可跑。MCP 已经作为 server 暴露本项目工具，也有 client adapter，可接 Stripe/数据库/CRM 等外部 MCP。
 
 生产中应该把 `OlistService` 后面的实现替换成外部 MCP/内部 RPC：Graph 和工具 schema 不变，只替换 tool adapter。也就是说 MCP 是工具接入层，不应该侵入业务 planner 的核心语义。
 
-### 14. 为什么别人要调你的 MCP，不直接查库？
+### 15. 为什么别人要调你的 MCP，不直接查库？
 
 不是“别人必须调我的 MCP”，而是 MCP server 提供了标准化工具边界。直接查库只适合内部工程服务；Agent 或外部系统需要的是带 schema、权限、审计、幂等和业务语义的工具，例如 `draft_escalation(order_id)`，而不是裸 SQL。
 
 MCP 的价值是把数据库/RPC 封装成 Agent 可安全调用的业务工具，让调用方不需要知道表结构、连接池、权限细节和副作用规则。
 
-### 15. MCP 和 function calling 有什么区别？
+### 16. MCP 和 function calling 有什么区别？
 
 Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM provider 协议内。MCP 是 Agent 与外部工具服务器之间的上下文/工具协议，通常基于 JSON-RPC，支持 stdio、Streamable HTTP 等传输。
 
 本项目里 function calling/structured output 负责让 planner 输出结构化任务；MCP server 负责把订单查询、风险检索、售后草稿暴露给外部 Agent 客户端。两者可以组合：LLM 先决定调用哪个 tool，再由 MCP client 真正发起工具调用。
 
-### 16. 真实退款/取消订单如何保证幂等？
+### 17. 真实退款/取消订单如何保证幂等？
 
-不能用“订单号 + 文本哈希”当生产级幂等。真实方案应该用业务粒度 key：
+不能用“订单号 + 文本哈希”当生产级幂等。当前项目已经把 key 改成业务粒度：
+
+```text
+olist-demo:{action_type}:{order_id}:{reason_code}
+```
+
+真实系统会进一步加 tenant/user/amount/campaign 等字段：
 
 - refund：`tenant_id + order_id + refund_type + amount + reason_code`
 - cancel：`tenant_id + order_id + cancel_reason + requested_by`
@@ -141,43 +159,43 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 ## HITL 与副作用
 
-### 17. 为什么 escalation 要停在 HITL？
+### 18. 为什么 escalation 要停在 HITL？
 
 因为 escalation 下游可能是创建工单、提交退款/补偿、取消订单、改地址、发票申请。它们会改变业务状态、产生财务或履约影响。HITL 的作用不是自动提权，而是把模型生成的草稿和理由交给用户/坐席确认。
 
 用户确认后，系统调用对应工具；用户取消后清理 pending state；用户发起无关新任务时，当前实现会要求先确认/取消或换 session，避免一个 session 里悬挂副作用被误触发。
 
-### 18. HITL 超时怎么做？
+### 19. HITL 超时怎么做？
 
 当前已经落地在主 `/chat` 入口和 LangGraph checkpoint 里。副作用草稿生成时，`pending_side_effect` 会写入 `created_at`、`expires_at` 和 `timeout_seconds`，默认 `HITL_TIMEOUT_SECONDS=900`。用户在过期后再回复 yes，服务端不会执行旧工具调用，而是 resume graph 并取消旧 interrupt。
 
 代码落点：`app/agent/actions.py` 写入超时元数据；`app/main.py` 的 `_pending_confirmation_expired()` 在恢复 interrupt 前拦截过期确认；`tests/test_main.py` 覆盖“超时后 yes 不会创建 CASE”的行为。
 
-### 19. 用户回复“不要/算了”怎么处理？
+### 20. 用户回复“不要/算了”怎么处理？
 
 确认词表和取消词表都要显式建模。不能只把非 yes 当 cancel，也不能把任何中文短句都拦住。生产里应该使用一个小型 confirmation classifier，输入包括 pending action 摘要和用户回复，输出 confirm/cancel/unclear/new_task，并对 unclear 返回澄清。
 
 ## 评测与指标
 
-### 20. 公开 benchmark 和业务 eval 怎么区分？
+### 21. 公开 benchmark 和业务 eval 怎么区分？
 
 公开数据和标准 benchmark 是两回事。Olist/Bitext/ResCommons 能证明我的业务链路在公开数据上可评测，但它们没有统一的 agent leaderboard、用户模拟器和外部 reward function。标准 benchmark 更像 tau2/tau3-bench：它自己定义 retail policy、工具、任务、用户模拟和评分器，被测 agent 只提交策略。因此我在项目里把两层分开：主项目跑业务 eval，另加 `benchmark_adapters/tau2_retail_agent.py` 去接 tau2 retail subset。
 
 回答时可以说：我不会把 Olist 包装成 benchmark；Olist 是事实数据，tau2 retail 才是横向可比 benchmark。
 
-### 21. 为什么选择 tau2/tau3-bench retail？
+### 22. 为什么选择 tau2/tau3-bench retail？
 
 因为它和本项目重合度最高：都是客服/售后场景，都有订单查询、用户查询、退货、换货、取消、改地址、转人工等工具，也都有 policy compliance 和 write-action 风险。它比 BFCL 更业务化，比 SWE-bench 更贴电商 Agent。tau2 的接口要求实现 `HalfDuplexAgent.generate_next_message()`，我的 adapter 接收 tau2 的 tools 和 domain_policy，不复用 Olist 数据，避免自证循环。
 
-### 22. tau2 adapter 和当前 Olist Agent 是什么关系？
+### 23. tau2 adapter 和当前 Olist Agent 是什么关系？
 
 不是把 tau2 数据塞进 Olist，也不是把 Olist 服务伪装成 benchmark。关系是：Olist 项目证明我能做一个完整业务 Agent；tau2 adapter 证明同一套工程理念能进入外部评测环境。adapter 里 LLM 负责策略、tau2 tools 负责事实和副作用，tau2 scorer 负责最终 reward。
 
-### 23. 为什么现在还没有完整 tau2 分数？
+### 24. 为什么现在还没有完整 tau2 分数？
 
 因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，不能把它硬塞进服务依赖。项目已经落地了 adapter 和 runner：`scripts/run_tau2_retail_subset.py` 会在外部 tau2 checkout 中运行 subset。下一步低成本先跑 5-10 条 retail subset，确认协议和结果解析；稳定后跑 50+ 条并记录 pass@1、tool-error rate、cost 和失败案例。
 
-### 24. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
+### 25. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
 
 不是。LLM-as-Judge 只是事后答案质量评估。真正的主链路是：input guard -> LLM task planner -> LLM slot extractor/answer generator -> deterministic tools -> output guard。`IntentPlanner.plan()` 是有 key 时的第一步，规则 decomposer 只在 LLM 调用失败或输出非法时兜底。
 
@@ -185,11 +203,11 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulness、tool correctness、HITL correctness，但它不是核心能力证明。
 
-### 21. 之前“trajectory 100%”为什么有风险？
+### 26. 之前“trajectory 100%”为什么有风险？
 
 如果轨迹是按 expected intent 合成出来再评分，就是自证循环。现在应该跑真实 LangGraph offline graph，从 planner 到 executor 产生真实 `trajectory_events`，再评分。真实 90% 加失败分析比合成 100% 更可信。
 
-### 22. 评价 Agent/RAG 应该看哪些指标？
+### 27. 评价 Agent/RAG 应该看哪些指标？
 
 规划层：intent accuracy、multi-intent exact match、contains-all、side-effect detection、task order correctness。
 
@@ -205,7 +223,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 安全层：prompt injection rejection、PII redaction、权限越权拦截、多租户隔离。
 
-### 23. 现在的指标能证明真实 Agent 能力吗？
+### 28. 现在的指标能证明真实 Agent 能力吗？
 
 能证明一部分，但不能过度解释。离线指标证明数据加工、工具封装、RAG、状态机、HITL 和 trace 是稳定的；真实 LLM Agent eval 证明模型已经进入 planner、抽槽、生成和 guard 主链路；LLM-as-Judge 只做小样本答案质量检查。
 
@@ -217,7 +235,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 ## 安全、隐私、多租户
 
-### 24. trace 里会不会泄露用户隐私？
+### 29. trace 里会不会泄露用户隐私？
 
 会有风险。当前 trace 用于本地 demo，会记录用户消息和回答。生产必须做：
 
@@ -228,7 +246,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 - 可观测性接口鉴权；
 - 审计流和业务库分级保留。
 
-### 25. 多租户商家数据怎么隔离？
+### 30. 多租户商家数据怎么隔离？
 
 真实多租户至少三层隔离：
 
@@ -240,23 +258,23 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 ## 生产化追问
 
-### 26. LLM 挂了 fallback 还有意义吗？
+### 31. LLM 挂了 fallback 还有意义吗？
 
 有意义，但只限高确定性任务。LLM 挂了时，订单查询、类目风险、政策检索、运营报告仍可用，因为它们依赖确定性工具和检索。需要开放生成能力的任务会退化成模板回答或要求人工介入。fallback 的目标不是保持“智能感”，而是保持业务可用和不出错。
 
-### 27. 为什么最后回复没有再用 LLM rephrase？
+### 32. 为什么最后回复没有再用 LLM rephrase？
 
 有 LLM 时 QA/policy 会用模型生成；离线模式和副作用确认场景故意使用模板。原因是副作用确认文本必须稳定、可审计、不能被模型改写成“已经退款”这种误导表达。生产可以加一个 constrained rewriter，但必须保留动作、金额、订单号、审批状态等字段不被改写。
 
-### 28. OlistService 为什么要单独建？
+### 33. OlistService 为什么要单独建？
 
 它是业务事实服务边界。V1 用 Olist public dataset 实现，生产可以替换成 OMS/CRM/数据仓库/MCP adapter。把它隔离出来，是为了让 Agent graph 不直接依赖 CSV、SQL 或外部 API 细节。
 
-### 29. 如果接入真实 OMS/CRM，代码怎么改？
+### 34. 如果接入真实 OMS/CRM，代码怎么改？
 
 保留 `AgentActions`、state、HITL、trace、eval case 格式，把 `OlistService` 替换为接口实现，例如 `OrderServiceProtocol`、`RefundServiceProtocol`、`PolicyServiceProtocol`。工具调用可以走内部 RPC，也可以通过 MCP client。关键是 schema 和 side-effect contract 不变。
 
-### 30. 当前项目哪里还不完美？
+### 35. 当前项目哪里还不完美？
 
 主要缺口：
 
@@ -270,11 +288,11 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 回答时不要否认缺口，要强调这些是个人项目和生产系统之间的边界，并说明可落地的演进路径。
 
-### 31. 如果算法同学坚持全自主 Agent，你怎么推动工作流约束？
+### 36. 如果算法同学坚持全自主 Agent，你怎么推动工作流约束？
 
 用数据和风险说服：先定义副作用错误成本、token 成本、失败回放成本和 SLA。对低风险只读任务可以给模型更多自主权；对退款、取消、发券、改地址必须 workflow/HITL。折中方案是“planner 自主，executor 受限”：模型决定做什么，系统决定能不能做、按什么顺序做、是否需要审批。
 
-### 32. 面试官问“你这个项目我为什么不觉得高级”，怎么答？
+### 37. 面试官问“你这个项目我为什么不觉得高级”，怎么答？
 
 高级不在于用了多少框架，而在于把 Agent 落到生产问题：多意图拆解、工具参数修复、RAG 召回评测、副作用 HITL、真实轨迹 eval、trace 回放、MCP 边界和成本控制。这个项目不是一个大模型聊天 UI，而是一个可测试、可审计、可替换工具后端的业务 Agent skeleton。
 
