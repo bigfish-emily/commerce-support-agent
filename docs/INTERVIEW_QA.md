@@ -159,7 +159,25 @@ Function calling 是模型输出工具调用 JSON 的能力，发生在 LLM prov
 
 ## 评测与指标
 
-### 20. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
+### 20. 公开 benchmark 和业务 eval 怎么区分？
+
+公开数据和标准 benchmark 是两回事。Olist/Bitext/ResCommons 能证明我的业务链路在公开数据上可评测，但它们没有统一的 agent leaderboard、用户模拟器和外部 reward function。标准 benchmark 更像 tau2/tau3-bench：它自己定义 retail policy、工具、任务、用户模拟和评分器，被测 agent 只提交策略。因此我在项目里把两层分开：主项目跑业务 eval，另加 `benchmark_adapters/tau2_retail_agent.py` 去接 tau2 retail subset。
+
+回答时可以说：我不会把 Olist 包装成 benchmark；Olist 是事实数据，tau2 retail 才是横向可比 benchmark。
+
+### 21. 为什么选择 tau2/tau3-bench retail？
+
+因为它和本项目重合度最高：都是客服/售后场景，都有订单查询、用户查询、退货、换货、取消、改地址、转人工等工具，也都有 policy compliance 和 write-action 风险。它比 BFCL 更业务化，比 SWE-bench 更贴电商 Agent。tau2 的接口要求实现 `HalfDuplexAgent.generate_next_message()`，我的 adapter 接收 tau2 的 tools 和 domain_policy，不复用 Olist 数据，避免自证循环。
+
+### 22. tau2 adapter 和当前 Olist Agent 是什么关系？
+
+不是把 tau2 数据塞进 Olist，也不是把 Olist 服务伪装成 benchmark。关系是：Olist 项目证明我能做一个完整业务 Agent；tau2 adapter 证明同一套工程理念能进入外部评测环境。adapter 里 LLM 负责策略、tau2 tools 负责事实和副作用，tau2 scorer 负责最终 reward。
+
+### 23. 为什么现在还没有完整 tau2 分数？
+
+因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，不能把它硬塞进服务依赖。项目已经落地了 adapter 和 runner：`scripts/run_tau2_retail_subset.py` 会在外部 tau2 checkout 中运行 subset。下一步低成本先跑 5-10 条 retail subset，确认协议和结果解析；稳定后跑 50+ 条并记录 pass@1、tool-error rate、cost 和失败案例。
+
+### 24. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
 
 不是。LLM-as-Judge 只是事后答案质量评估。真正的主链路是：input guard -> LLM task planner -> LLM slot extractor/answer generator -> deterministic tools -> output guard。`IntentPlanner.plan()` 是有 key 时的第一步，规则 decomposer 只在 LLM 调用失败或输出非法时兜底。
 

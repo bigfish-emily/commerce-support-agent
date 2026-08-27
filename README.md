@@ -285,6 +285,27 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
 | Layered metrics report | 75 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
 
+外部 benchmark 适配：
+
+本项目的 Olist/Bitext/ResCommons 评测属于公开数据驱动的业务评测，不等价于 leaderboard-style benchmark。为补充横向可比性，项目新增 tau2/tau3-bench retail adapter：
+
+- `benchmark_adapters/tau2_retail_agent.py`：实现 tau2 `HalfDuplexAgent` 接口，运行时接收 tau2 retail policy 与工具。
+- `scripts/run_tau2_retail_subset.py`：在外部 tau2-bench checkout 中运行 retail subset，并记录可复现 manifest。
+- `docs/BENCHMARK_PROJECTS.md`：说明 tau2 retail、banking_knowledge、BFCL、SWE-bench Lite 等 benchmark 的价值、难度和 ROI。
+
+tau2/tau3-bench 当前需要 Python `>=3.12,<3.14`，而本项目服务端使用 Python 3.11，因此 benchmark 在独立环境中运行，不进入主应用依赖：
+
+```bash
+python scripts/run_tau2_retail_subset.py \
+  --tau2-root D:/benchmarks/tau2-bench \
+  --agent-llm openai/gpt-4.1-mini \
+  --user-llm openai/gpt-4.1-mini \
+  --num-tasks 5 \
+  --dry-run
+```
+
+去掉 `--dry-run` 并配置 API key 后即可运行真实 retail subset；结果由 tau2 写入 `data/simulations/`。
+
 真实 LLM Agent 主链路评测：
 
 ```bash
