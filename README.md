@@ -145,11 +145,11 @@ flowchart LR
 
 当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/运营场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到售后升级、退款、取消订单、改地址、发票等副作用任务时进入 HITL。HITL 不表示自动提权；它只是把“模型草稿”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address` 和 `invoice_request`。
 
-## Agentic RAG
+## RAG 与检索策略
 
-项目里有两条 RAG：
+项目里有三条检索链路。严格说，当前实现是 workflow-constrained RAG，而不是完全自主的 Agentic RAG：LLM 可以做意图拆解、抽槽和答案生成，是否检索、检索哪个源、何时进入 HITL 由 LangGraph 业务流程控制。
 
-1. **结构化实体 RAG**：面向 Olist 类目/订单。类目检索先做 query rewriting，把 `health beauty`、`health-beauty`、`healthbeauty` 等用户写法统一到真实类目 `health_beauty`，再用 token overlap fallback 处理弱匹配。
+1. **结构化实体检索**：面向 Olist 类目/订单。订单查询是精确事实工具，不包装成 RAG；类目检索先做 query rewriting，把 `health beauty`、`health-beauty`、`healthbeauty` 等用户写法统一到真实类目 `health_beauty`，再结合业务别名词表和 token overlap fallback。
 2. **政策文档 RAG**：面向 `data/knowledge_base/support_policy.md`。按 markdown section 切分，检索退款、取消、补偿、发票、配送、人工审核等规则，回答时只允许使用命中的政策段落。
 3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。默认本地实现用 BM25 召回候选、字符 ngram 向量分数做 rerank，并在 test query 上评估 intent/capability 命中。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可替换为 Elasticsearch/BM25 + vector DB + learned reranker。
 
@@ -249,7 +249,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\ruff.exe check app evaluation scripts tests
+.\.venv\Scripts\ruff.exe check app evaluation scripts tests benchmark_adapters
 .\.venv\Scripts\python.exe -m evaluation.intent_eval
 .\.venv\Scripts\python.exe -m evaluation.multi_intent_eval
 .\.venv\Scripts\python.exe -m evaluation.task_eval
@@ -268,14 +268,14 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 53 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、幂等 duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
+| Unit/Integration Tests | 55 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
 | Multi-intent decomposition | exact/contains/order/side-effect 均为 100% | 验证一句话多意图拆解，不漏副作用任务，不重复执行同类任务；取消订单等副作用动作优先进入 HITL |
-| Category RAG exact_underscore | Top1 41.67% | 只支持原始下划线类目名，真实用户写法容易失败 |
-| Category RAG token_overlap | Top1 77.22%, Recall@3 80.56% | 能处理空格/连字符，但 compact alias 仍会失败 |
-| Category RAG adaptive_rewrite | Top1 100% | 当前主链路使用，覆盖下划线/空格/连字符/紧凑写法 |
+| Category retrieval exact_underscore | Top1 32.08% | 只支持原始下划线类目名，真实用户写法容易失败 |
+| Category retrieval token_overlap | Top1 62.92%, Recall@3 66.67% | 能处理空格/连字符，但 compact alias、中文别名和未登录俗称仍会失败 |
+| Category retrieval adaptive_rewrite | Top1 92.08%, Recall@3 92.50% | 当前主链路使用，覆盖机械别名和已登录业务别名；noisy holdout Top1 10%，说明仍需 query log/embedding/reranker 补强 |
 | ResCommons hybrid retrieval | BM25 intent@5 81%, char-ngram intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
 | Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 12 条中文政策问题能命中正确 policy section，覆盖退款、补偿、取消、发票、改地址、人工确认等 |
@@ -283,7 +283,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 | Live LLM Agent eval | 30/30, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
 | Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
-| Layered metrics report | 75 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
+| Layered metrics report | 79 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
 
 外部 benchmark 适配：
 
@@ -316,7 +316,7 @@ LIVE_AGENT_EVAL_LIMIT=30
 python -m evaluation.live_agent_eval
 ```
 
-最近一次 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p95 latency `26052.12ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分。
+最近一次 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p50 latency `10830.09ms`，p95 latency `26052.12ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分；但它仍是 30 条项目回归集，不能替代外部 benchmark 或线上 A/B。
 
 LLM planner 单项评测：
 
@@ -466,7 +466,7 @@ tests/
 容易被追问的问题和回答方向：
 
 - **为什么不用完全自主 Agent？** 客服/运营动作有权限、合规和副作用，完全自主会增加成本和不可控性；我选择 workflow-constrained Agent，把不确定性限制在路由、抽槽、改写、总结里。
-- **为什么 RAG 不一开始全用 embedding？** 订单 ID 查询必须走精确工具；类目名和政策章节需要可解释的 deterministic/hybrid retrieval；大量客服对话已经接入 ResCommons hybrid retrieval。生产版再把本地 BM25/字符向量替换为 ES + vector DB + learned reranker。
+- **为什么 RAG 不一开始全用 embedding？** 订单 ID 查询必须走精确工具；类目名和政策章节先用可解释 retrieval 与业务别名词表；大量客服对话已经接入 ResCommons hybrid retrieval。当前 noisy holdout 表明纯规则覆盖不足，生产版会把本地 BM25/字符向量替换为 ES + vector DB + learned reranker。
 - **MCP 和多 Agent 协议有什么区别？** MCP 解决 Agent 调工具和拿上下文；A2A/Agent Card 解决 Agent 之间能力发现、任务委托和状态协商。这个项目重点是企业工具接入，因此 MCP 是必要层。
 - **为什么接 Stripe MCP？** Stripe 不是最终 OMS，而是最适合个人项目验证真实外部 MCP + sandbox 副作用的 SaaS。它可以演示支付/退款类工具 schema、鉴权、HITL、幂等和 trace；生产里替换为企业内部退款/工单/优惠券 MCP。
 - **副作用怎么防重复？** 路由侧识别风险意图，图执行侧 interrupt 等人工确认，工具侧幂等 key 防止重复创建 case。

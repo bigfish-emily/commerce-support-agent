@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.olist.catalog import category_risks_by_name, full_orders_by_id, load_dataset, load_order_facts_index
 from app.olist.retrieval import adaptive_category_retrieval
@@ -210,15 +212,7 @@ class InMemoryCaseService:
             }
 
         digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
-        prefixes = {
-            "open_support_case": "CASE",
-            "refund_request": "REFUND",
-            "cancel_order": "CANCEL",
-            "change_address": "ADDR",
-            "invoice_request": "INV",
-        }
-        prefix = prefixes.get(action_type, "CASE")
-        case_id = f"{prefix}-{digest}"
+        case_id = f"{_case_prefix(action_type)}-{digest}"
         self._idempotency_index[idempotency_key] = case_id
         self._cases[case_id] = {
             "case_id": case_id,
@@ -244,12 +238,97 @@ class InMemoryCaseService:
         return self._cases.get(case_id)
 
 
+class SQLiteCaseService:
+    """Persistent side-effect case store with business-granularity idempotency."""
+
+    def __init__(self, path: str | Path = "data/cases.db") -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_schema()
+
+    def open_case(self, order_id: str, message_text: str) -> str:
+        result = self.execute_action(
+            action_type="open_support_case",
+            order_id=order_id,
+            message_text=message_text,
+        )
+        return str(result["result_id"])
+
+    def execute_action(self, action_type: str, order_id: str, message_text: str) -> dict[str, object]:
+        idempotency_key = _idempotency_key(action_type, order_id, message_text)
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            existing = conn.execute(
+                "SELECT * FROM cases WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing:
+                record = dict(existing)
+                return {
+                    "result_id": record["case_id"],
+                    "duplicate": True,
+                    "idempotency_key": idempotency_key,
+                    "record": record,
+                }
+
+            digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
+            case_id = f"{_case_prefix(action_type)}-{digest}"
+            conn.execute(
+                """
+                INSERT INTO cases (
+                    case_id, idempotency_key, action_type, order_id,
+                    message_text, status, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                """,
+                (case_id, idempotency_key, action_type, order_id, message_text, "opened"),
+            )
+            record = dict(
+                conn.execute(
+                    "SELECT * FROM cases WHERE case_id = ?",
+                    (case_id,),
+                ).fetchone()
+            )
+        return {
+            "result_id": case_id,
+            "duplicate": False,
+            "idempotency_key": idempotency_key,
+            "record": record,
+        }
+
+    def reset(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("DELETE FROM cases")
+
+    def get(self, case_id: str) -> dict | None:
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            return dict(row) if row else None
+
+    def _ensure_schema(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cases (
+                    case_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    action_type TEXT NOT NULL,
+                    order_id TEXT NOT NULL,
+                    message_text TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
+
 def _idempotency_key(action_type: str, order_id: str, message_text: str) -> str:
-    reason = _reason_code(message_text)
+    reason = _reason_code(action_type, message_text)
     return f"olist-demo:{action_type}:{order_id}:{reason}"
 
 
-def _reason_code(message_text: str) -> str:
+def _reason_code(action_type: str, message_text: str) -> str:
     lowered = message_text.lower()
     reasons = []
     if "delayed" in lowered or "延迟" in lowered:
@@ -259,9 +338,19 @@ def _reason_code(message_text: str) -> str:
     if "canceled" in lowered or "取消" in lowered:
         reasons.append("canceled")
     if not reasons:
-        digest = hashlib.sha1(message_text.encode()).hexdigest()[:8]
-        reasons.append(f"message_{digest}")
+        reasons.append("generic")
     return "+".join(sorted(reasons))
+
+
+def _case_prefix(action_type: str) -> str:
+    prefixes = {
+        "open_support_case": "CASE",
+        "refund_request": "REFUND",
+        "cancel_order": "CANCEL",
+        "change_address": "ADDR",
+        "invoice_request": "INV",
+    }
+    return prefixes.get(action_type, "CASE")
 
 
 def format_order_status(status: OrderStatusView | None) -> str:

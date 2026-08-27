@@ -41,6 +41,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.pytest.ini_options]
 addopts = "--basetemp=.pytest-tmp"
+norecursedirs = ["benchmark-tmp", "benchmark_runs", ".venv", ".git"]
 filterwarnings = [
     "ignore::DeprecationWarning:langchain_core.*",
 ]

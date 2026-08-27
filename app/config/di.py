@@ -11,7 +11,7 @@ from app.llm.guardrail import Guardrail
 from app.llm.intent_planner import IntentPlanner
 from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerator, QaResponseGenerator
 from app.olist.knowledge import MarkdownKnowledgeBase
-from app.olist.service import InMemoryCaseService, OlistService
+from app.olist.service import OlistService, SQLiteCaseService
 from app.retrieval.hybrid import HybridSupportRetriever
 
 load_dotenv()
@@ -19,7 +19,7 @@ load_dotenv()
 olist_service = OlistService()
 knowledge_base = MarkdownKnowledgeBase()
 support_retriever = HybridSupportRetriever()
-case_service = InMemoryCaseService()
+case_service = SQLiteCaseService()
 
 llm_client = LlmClient(
     api_key=os.environ.get("OPENAI_API_KEY", "offline"),

@@ -20,6 +20,34 @@ class RetrievalCase:
     query: str
     expected_category: str
     variant: str
+    group: str
+
+
+REALISTIC_ALIASES: dict[str, list[str]] = {
+    "health_beauty": ["beauty care", "cosmetics", "美妆个护", "健康美容"],
+    "bed_bath_table": ["home bedding", "bath and bedding", "床品家居", "床上用品"],
+    "furniture_decor": ["home decor", "furnitures decoration", "家具装饰", "软装"],
+    "computers_accessories": ["computer accessories", "pc accessories", "电脑配件", "外设"],
+    "sports_leisure": ["fitness gear", "sports outdoor", "运动户外", "健身用品"],
+    "watches_gifts": ["watch gift", "watches and presents", "手表礼品", "礼品手表"],
+    "toys": ["kids toys", "children toy", "儿童玩具", "玩具"],
+    "pet_shop": ["pet supplies", "pet store", "宠物用品", "猫狗用品"],
+    "auto": ["car accessories", "automotive parts", "汽车用品", "车品"],
+    "office_furniture": ["office chairs", "desk furniture", "办公家具", "工位桌椅"],
+}
+
+NOISY_HOLDOUT_ALIASES: dict[str, list[str]] = {
+    "health_beauty": ["beautycare", "makeup stuff"],
+    "bed_bath_table": ["bedroom bathroom things", "home linen"],
+    "furniture_decor": ["home deco", "living room decoration"],
+    "computers_accessories": ["computer peripherials", "keyboard mouse cables"],
+    "sports_leisure": ["sporting goods", "outdoor exercise"],
+    "watches_gifts": ["wristwatch presents", "gift watches"],
+    "toys": ["kids stuff", "children play items"],
+    "pet_shop": ["pet food and toys", "dog cat supplies"],
+    "auto": ["car parts", "vehicle accessories"],
+    "office_furniture": ["desk chair", "workstation furniture"],
+}
 
 
 def build_cases(limit_categories: int = 50) -> list[RetrievalCase]:
@@ -47,6 +75,29 @@ def build_cases(limit_categories: int = 50) -> list[RetrievalCase]:
                     query=f"{mention} 类目的订单主要有哪些物流和评价风险？",
                     expected_category=category,
                     variant=variant,
+                    group="mechanical_alias",
+                )
+            )
+    for category, aliases in REALISTIC_ALIASES.items():
+        for index, mention in enumerate(aliases):
+            cases.append(
+                RetrievalCase(
+                    case_id=f"realistic_alias-{category}-{index}",
+                    query=f"{mention} 相关商品最近售后、物流和评价表现怎么样？",
+                    expected_category=category,
+                    variant="realistic_alias",
+                    group="realistic_alias",
+                )
+            )
+    for category, aliases in NOISY_HOLDOUT_ALIASES.items():
+        for index, mention in enumerate(aliases):
+            cases.append(
+                RetrievalCase(
+                    case_id=f"noisy_holdout_alias-{category}-{index}",
+                    query=f"{mention} 这类商品有没有售后风险？",
+                    expected_category=category,
+                    variant="noisy_holdout_alias",
+                    group="noisy_holdout_alias",
                 )
             )
     return cases
@@ -80,6 +131,22 @@ def evaluate(name: str, retriever: Retriever, categories: list[str], cases: list
     }
 
 
+def evaluate_by_group(
+    name: str,
+    retriever: Retriever,
+    categories: list[str],
+    cases: list[RetrievalCase],
+) -> list[dict]:
+    groups = sorted({case.group for case in cases})
+    return [
+        {
+            "group": group,
+            **evaluate(name, retriever, categories, [case for case in cases if case.group == group]),
+        }
+        for group in groups
+    ]
+
+
 def main() -> None:
     categories = sorted(
         {
@@ -107,6 +174,16 @@ def main() -> None:
         )
         if result["failures"]:
             print("  sample_failures=" + ",".join(result["failures"][:5]))
+        for group_result in evaluate_by_group(name, retriever, categories, cases):
+            print(
+                "  group={group},cases={cases},top1={top1:.2%},recall@3={recall:.2%},mrr@3={mrr:.2%}".format(
+                    group=group_result["group"],
+                    cases=group_result["cases"],
+                    top1=group_result["top1"],
+                    recall=group_result["recall@3"],
+                    mrr=group_result["mrr@3"],
+                )
+            )
 
 
 if __name__ == "__main__":

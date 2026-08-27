@@ -250,7 +250,7 @@ WEB_CONSOLE_HTML = """
   </main>
   <script>
     const examples = [
-      { label: "类目运营风险", text: "health beauty 类目有什么运营风险？", desc: "Agentic RAG：query rewrite 后命中 health_beauty 统计。" },
+      { label: "类目运营风险", text: "health beauty 类目有什么运营风险？", desc: "检索策略：query rewrite 后命中 health_beauty 统计。" },
       { label: "订单事实查询", text: "帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态", desc: "确定性订单工具：状态、延迟、支付、评价。" },
       { label: "政策问答", text: "退款补偿能不能直接承诺？", desc: "政策 KB 检索和 grounded answer。" },
       { label: "多意图 + HITL", text: "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后生成售后升级话术", desc: "只读任务先执行，副作用停在确认门。" },

@@ -11,6 +11,20 @@ class RetrievalHit:
     reason: str
 
 
+CATEGORY_ALIAS_MAP: dict[str, set[str]] = {
+    "health_beauty": {"beauty care", "cosmetics", "美妆个护", "健康美容"},
+    "bed_bath_table": {"home bedding", "bath and bedding", "床品家居", "床上用品"},
+    "furniture_decor": {"home decor", "furniture decoration", "家具装饰", "软装"},
+    "computers_accessories": {"computer accessories", "pc accessories", "电脑配件", "外设"},
+    "sports_leisure": {"fitness gear", "sports outdoor", "运动户外", "健身用品"},
+    "watches_gifts": {"watch gift", "watches and presents", "手表礼品", "礼品手表"},
+    "toys": {"kids toys", "children toy", "儿童玩具", "玩具"},
+    "pet_shop": {"pet supplies", "pet store", "宠物用品", "猫狗用品"},
+    "auto": {"car accessories", "automotive parts", "汽车用品", "车品"},
+    "office_furniture": {"office chairs", "desk furniture", "办公家具", "工位桌椅"},
+}
+
+
 def exact_underscore_retrieval(query: str, categories: list[str], k: int = 4) -> list[RetrievalHit]:
     """Baseline: only matches the canonical category string used in the dataset."""
     normalized_query = query.lower()
@@ -57,6 +71,7 @@ def adaptive_category_retrieval(query: str, categories: list[str], k: int = 4) -
             category.lower().replace("_", "-"),
             category.lower().replace("_", ""),
         }
+        alias_forms.update(alias.lower() for alias in CATEGORY_ALIAS_MAP.get(category, set()))
         if any(alias and alias in normalized_query for alias in alias_forms):
             hits_by_category[category] = RetrievalHit(
                 category=category,

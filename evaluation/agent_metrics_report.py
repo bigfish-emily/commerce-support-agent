@@ -25,6 +25,7 @@ from app.retrieval.hybrid import HybridSupportRetriever
 from app.tools.repair import repair_order_id
 from evaluation.rag_retrieval_eval import build_cases as build_category_cases
 from evaluation.rag_retrieval_eval import evaluate as evaluate_category_retrieval
+from evaluation.rag_retrieval_eval import evaluate_by_group as evaluate_category_retrieval_by_group
 from evaluation.trajectory_eval import _build_offline_graph, _run_case, score_trajectory
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -283,6 +284,19 @@ def rag_metrics() -> list[Metric]:
                 "命中时累加 1/rank，未命中为 0。",
             )
         )
+        for group_result in evaluate_category_retrieval_by_group(name, retriever, categories, category_cases):
+            if group_result["group"] != "realistic_alias":
+                continue
+            metrics.append(
+                Metric(
+                    "RAG/检索",
+                    f"类目 RAG {name} realistic_alias Top1",
+                    _pct_value(group_result["top1"]),
+                    str(group_result["cases"]),
+                    "中文别名、行业俗称、英文近义表达等更接近真实用户说法的首位命中率。",
+                    "只在 realistic_alias 子集上计算 ranked[0] == expected_category。",
+                )
+            )
 
     kb = MarkdownKnowledgeBase()
     policy_cases = load_jsonl(ROOT / "data" / "knowledge_base" / "policy_eval_cases.jsonl")
@@ -527,6 +541,17 @@ def live_agent_metrics() -> list[Metric]:
             )
         )
     latencies = [float(row["latency_ms"]) for row in rows]
+    metrics.append(
+        Metric(
+            "真实 LLM Agent",
+            "live p50 latency",
+            f"{_percentile(latencies, 50):.2f} ms",
+            str(len(rows)),
+            "包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p50。",
+            "按 live_agent_eval 每条 case latency_ms 取 p50。",
+            api_key="是",
+        )
+    )
     metrics.append(
         Metric(
             "真实 LLM Agent",

@@ -74,7 +74,7 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 
 ## RAG 与知识库
 
-### 9. 怎么做 Agentic RAG？
+### 9. 怎么做 RAG 和检索？
 
 项目有三条检索链路：
 
@@ -82,7 +82,7 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 - Policy KB：按 markdown section 切块，检索退款、补偿、取消、发票、升级边界。
 - 客服对话 hybrid retrieval：ResCommons train corpus 做 BM25 + char-ngram vector + rerank，给 QA/policy 生成补充上下文。
 
-Agentic 的部分在于 planner 决定当前任务是否需要检索、检索哪类对象、是否需要结合已完成任务上下文生成答案。不是每轮都检索，订单精确查询就直接走事实工具。
+准确说，当前不是完全自主 Agentic RAG，而是 workflow-constrained RAG：planner 决定任务类型，LangGraph executor 决定是否检索和检索哪个源。不是每轮都检索，订单精确查询就直接走事实工具。
 
 ### 10. RAG 为什么不用 embedding / reranker？
 
@@ -207,7 +207,11 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 ### 23. 现在的指标能证明真实 Agent 能力吗？
 
-能分层证明，而不是只靠一个分数。离线指标证明数据、工具、RAG、状态机、HITL 和 trace 不会因为模型随机性而漂；真实 LLM Agent eval 证明模型已经进入 planner、抽槽、生成和 guard 主链路；LLM-as-Judge 证明小样本答案质量。当前总表有 75 项指标，其中“真实 LLM Agent”分组 5 条 live case 全过。
+能证明一部分，但不能过度解释。离线指标证明数据加工、工具封装、RAG、状态机、HITL 和 trace 是稳定的；真实 LLM Agent eval 证明模型已经进入 planner、抽槽、生成和 guard 主链路；LLM-as-Judge 只做小样本答案质量检查。
+
+不能把所有 100% 都当成模型能力。比如 Olist task eval 是事实工具验收，Bitext mapping 是映射表验收，policy retrieval 是小型政策库验收。真正更有区分度的指标是 ResCommons hybrid retrieval、realistic/noisy alias retrieval、live latency、外部 tau2 retail benchmark 和失败样本回归。
+
+现在项目已经把类目检索拆成 mechanical alias、realistic alias 和 noisy holdout：mechanical alias 高分说明字符串归一化有效，noisy holdout 低分说明规则覆盖仍不足，需要 query log、业务别名字典、embedding 和 reranker。
 
 如果面试官追问“30 条够不够”，回答要明确：30 条已经不是单点 smoke，覆盖了五类主路径和多意图 HITL；但它仍不是线上统计意义上的大样本。可信度来自可扩展的 eval harness，下一步可以按同一格式扩到 100+，并把失败样本进入回归集。
 
@@ -282,9 +286,9 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 |---|---:|---|---|
 | 业务完整度 | 8/10 | 覆盖客服查询、政策解释、售后升级、退款/取消/改地址/发票申请、售后运营决策 | 接入真实商家规则、库存/优惠券/CRM sandbox |
 | Agent 架构 | 8.5/10 | LangGraph plan-and-execute、LLM planner、结构化 fallback、HITL、HITL timeout、trace | 增加 checkpoint 持久化恢复 demo 和更完整状态回放 |
-| RAG 能力 | 7.5/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
-| 工具治理 | 8/10 | 参数修复、副作用 action_type、MCP server/client adapter、幂等模拟 | 持久化幂等表、真实外部 MCP sandbox |
+| RAG 能力 | 7.8/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
+| 工具治理 | 8.5/10 | 参数修复、副作用 action_type、MCP server/client adapter、SQLite 持久化幂等、duplicate 响应 | 真实外部 MCP sandbox 和业务权限 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
-| 评测体系 | 8.8/10 | 53 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、75 项总指标 | 扩大 live LLM eval 到 100+ 条，加入失败样本回归池 |
+| 评测体系 | 8.8/10 | 55 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标 | 扩大 live LLM eval 到 100+ 条，加入失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |
