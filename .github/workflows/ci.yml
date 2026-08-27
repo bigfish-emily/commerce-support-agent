@@ -44,3 +44,4 @@ jobs:
           uv run python -m evaluation.trajectory_eval
           uv run python -m evaluation.route_drift_eval
           uv run python -m evaluation.agent_metrics_report
+          uv run python scripts/run_bfcl_subset.py --bfcl-root benchmark-tmp --dry-run

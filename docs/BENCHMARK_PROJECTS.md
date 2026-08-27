@@ -4,6 +4,21 @@ This project already uses public data for business evaluation. The next step is
 to add horizontal, externally comparable benchmarks without weakening the main
 business project.
 
+## Correct Benchmark Direction
+
+The right move is not to invent more synthetic project metrics. The right move
+is to connect the existing Agent to official, externally comparable benchmarks:
+
+1. tau2/tau3-bench retail first.
+2. BFCL second, focused on function/tool-calling reliability.
+3. GAIA/AgentBench only if there is extra time, because the ROI is lower for an
+   e-commerce support resume project.
+
+The old `sierra-research/tau-bench` repository now warns that its airline and
+retail tasks are outdated. Use the actively updated `sierra-research/tau2-bench`
+repository, whose package name is still `tau2` and whose current release is
+described as tau3/τ³-bench.
+
 ## Current Position
 
 - Olist facts: 98,666 public marketplace orders and 73 category risk entries.
@@ -73,13 +88,43 @@ The main app uses Python 3.11. tau2/tau3-bench requires Python `>=3.12,<3.14`.
 Keeping the benchmark in an external checkout avoids dependency drift and lets
 GitHub CI remain fast and deterministic.
 
+## BFCL Scope
+
+BFCL is valuable, but it answers a different question.
+
+tau2/tau3 retail asks: can the full agent converse with a simulated customer,
+follow retail policy, call tools, and finish the business task?
+
+BFCL asks: can the model or adapter produce correct function calls across
+schemas, parallel calls, multi-turn calls, executable calls, relevance detection,
+and newer agentic categories?
+
+So BFCL should support the resume claim "tool-calling governance and schema
+robustness", not replace tau2 retail as the main e-commerce Agent benchmark.
+
+Implemented launcher:
+
+```bash
+python scripts/run_bfcl_subset.py \
+  --bfcl-root D:/benchmarks/bfcl \
+  --model gpt-4.1-mini-FC \
+  --test-category simple_python \
+  --test-category multiple_python \
+  --test-category parallel_python \
+  --dry-run
+```
+
+For low-cost smoke tests, use BFCL `--run-ids` in the external BFCL project and
+evaluate with `--partial-eval`. Do not compare partial scores against the
+leaderboard.
+
 ## Benchmark ROI
 
 | Candidate | Value | Difficulty | Workload | ROI | Recommendation |
 |---|---|---:|---:|---:|---|
 | tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Do first; use WSL2/Linux if Windows uv stalls |
 | tau2 banking_knowledge | Tests RAG over unstructured knowledge with configurable retrieval | Medium-High | 2-4 days | High for RAG roles | Do after retail |
-| Berkeley Function Calling Leaderboard subset | Measures schema/tool-call correctness across many APIs | Medium | 2-3 days | Medium-High | Good separate mini-project |
+| Berkeley Function Calling Leaderboard subset | Measures schema/tool-call correctness across many APIs | Medium | 1-2 days for AST subset, 3-5 days for multi-turn/agentic | Medium-High | Do second; supports tool-governance claims |
 | ToolBench-style tool-use agent | Broad tool-use research benchmark | High | 1-2 weeks | Medium | Less aligned with e-commerce resume |
 | SWE-bench Lite | Software engineering agent benchmark | High | 1-2 weeks | High for coding-agent roles, lower for e-commerce agent | Separate project only |
 | RAGAS/DeepEval retrieval QA benchmark | Easy quality metrics for RAG answers | Low-Medium | 1 day | Medium | Add as supporting eval, not core project |
@@ -91,9 +136,10 @@ Best answer:
 "I separated business eval from public benchmark eval. The Olist/Bitext/ResCommons
 suite proves my own product chain works on public data. tau2 retail gives an
 external comparable score because it owns the policy, tools, user simulator, and
-reward function. I did not merge tau2 into the app dependency graph because its
-Python/runtime requirements differ from the service. Instead I wrote a tau2
-adapter that implements the benchmark's agent interface."
+reward function. BFCL gives a separate tool-calling score for function schema and
+multi-turn tool-use reliability. I did not merge benchmark dependencies into the
+app dependency graph because their runtime requirements differ from the service.
+Instead I keep thin adapters and reproducible launch manifests."
 
 Weak answer to avoid:
 
