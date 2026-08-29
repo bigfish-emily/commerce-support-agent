@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_DIR = ROOT / "benchmark_runs" / "bfcl"
+SUMMARY = ROOT / "scripts" / "summarize_bfcl_results.py"
 
 
 def main() -> int:
@@ -31,6 +32,7 @@ def main() -> int:
     parser.add_argument("--generate", action="store_true", help="Run BFCL response generation.")
     parser.add_argument("--evaluate", action="store_true", help="Run BFCL evaluation.")
     parser.add_argument("--partial-eval", action="store_true", help="Evaluate only generated subset ids.")
+    parser.add_argument("--skip-summary", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -70,6 +72,7 @@ def main() -> int:
         "notes": [
             "Install BFCL externally, e.g. pip install bfcl-eval or editable upstream checkout.",
             "Use --partial-eval only for smoke/subset runs; do not compare partial scores to leaderboard.",
+            "Run scripts/summarize_bfcl_results.py after evaluation to extract score CSV/JSON.",
             (
                 "BFCL scores support the tool-governance claim, "
                 "not the end-to-end e-commerce task-success claim."
@@ -96,6 +99,17 @@ def main() -> int:
         completed = subprocess.run(command, cwd=bfcl_root, env=env, check=False)
         if completed.returncode != 0:
             return int(completed.returncode)
+    if not args.skip_summary and SUMMARY.exists():
+        score_root = bfcl_root / "score"
+        summary_command = [
+            sys.executable,
+            str(SUMMARY),
+            "--score-root",
+            str(score_root),
+            "--model",
+            args.model,
+        ]
+        return int(subprocess.run(summary_command, cwd=ROOT, check=False).returncode)
     return 0
 
 

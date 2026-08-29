@@ -13,7 +13,8 @@ Example:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+
+from pydantic import BaseModel, Field
 
 try:
     from tau2.agent.base_agent import HalfDuplexAgent, ValidAgentInputMessage
@@ -64,10 +65,9 @@ side effects, and write actions require a confirmation boundary.
 """
 
 
-@dataclass
-class RetailBenchmarkState:
+class RetailBenchmarkState(BaseModel):
     system_messages: list[SystemMessage]
-    messages: list[APICompatibleMessage] = field(default_factory=list)
+    messages: list[APICompatibleMessage] = Field(default_factory=list)
     turns: int = 0
 
 
@@ -110,6 +110,7 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
             model=self.llm,
             tools=self.tools,
             messages=state.system_messages + state.messages,
+            call_name="olist_policy_aware_retail_agent",
             **self.llm_args,
         )
         state.messages.append(response)
@@ -134,6 +135,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=300)
     parser.add_argument("--save-to", default="olist_agent_tau2_retail_subset")
     parser.add_argument("--max-concurrency", type=int, default=1)
+    parser.add_argument("--task-id", action="append", default=[])
+    parser.add_argument("--task-split-name", default="base")
+    parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("--auto-resume", action="store_true")
     args = parser.parse_args()
 
     registry.register_agent_factory(create_policy_aware_retail_agent, "olist_policy_aware_retail")
@@ -148,6 +153,10 @@ def main() -> None:
             seed=args.seed,
             save_to=args.save_to,
             max_concurrency=args.max_concurrency,
+            task_ids=args.task_id or None,
+            task_split_name=args.task_split_name,
+            timeout=args.timeout,
+            auto_resume=args.auto_resume,
         )
     )
     rewards = [run.reward_info.reward for run in results.simulations if run.reward_info]

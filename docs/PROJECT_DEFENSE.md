@@ -136,9 +136,9 @@ Olist/Bitext/ResCommons 是业务 eval，不是 leaderboard benchmark。外部�
 
 | Benchmark | 价值 | 当前状态 | 下一步 |
 |---|---|---|---|
-| tau2/tau3 retail | 最贴客服/售后、tool-use、policy compliance、副作用动作 | adapter 和 runner 已实现，dry-run 通过；Windows uv 在依赖 copy/sync 阶段长时间不退出，尚无正式分数 | 独立 Python 3.12 环境跑 5-10 条 subset，落盘 pass@1/tool error/latency |
+| tau2/tau3 retail | 最贴客服/售后、tool-use、policy compliance、副作用动作 | adapter、runner、summary parser 已实现，dry-run 与 summary 单测通过；Windows uv 在依赖 copy/sync 阶段长时间不退出，尚无正式分数 | 独立 Python 3.12 环境跑 5-10 条 subset，落盘 avg_reward/pass^k/tool error/latency |
 | tau2 banking_knowledge | 补非结构化政策 RAG 与多轮问答 | 未实现 adapter | retail 跑通后复用 HalfDuplexAgent prompt，加 knowledge retrieval 策略 |
-| BFCL subset | 横向验证 function/tool calling schema | launcher 已实现 dry-run，可在外部 BFCL 环境跑 AST/可执行/多轮子集 | 先跑 simple/multiple/parallel Python AST 子集，再扩 multi_turn_base |
+| BFCL subset | 横向验证 function/tool calling schema | launcher 与 score summary parser 已实现，dry-run 与 summary 单测通过 | 先跑 simple/multiple/parallel Python AST 子集，再扩 multi_turn_base |
 
 如果 tau2 在 Windows/uv 上继续卡住，建议使用 WSL2 或 Linux runner。原因不是 Agent 代码问题，而是 tau2 当前 Python 3.12+ 依赖环境与本项目 Python 3.11 服务环境不同。
 
@@ -147,7 +147,7 @@ Olist/Bitext/ResCommons 是业务 eval，不是 leaderboard benchmark。外部�
 简历上暂时只能写：
 
 ```text
-已实现 tau2/tau3 retail Agent adapter 和 BFCL subset launcher，用于把业务 Agent 接入外部客服/工具调用 benchmark；当前业务 eval 与 benchmark eval 分离，避免用自建数据冒充公开榜单。
+已实现 tau2/tau3 retail Agent adapter、结果 summary parser 和 BFCL subset launcher，用于把业务 Agent 接入外部客服/工具调用 benchmark；当前业务 eval 与 benchmark eval 分离，避免用自建数据冒充公开榜单。
 ```
 
 不能写：

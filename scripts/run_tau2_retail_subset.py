@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "benchmark_adapters" / "tau2_retail_agent.py"
+SUMMARY = ROOT / "scripts" / "summarize_tau2_results.py"
 RUN_DIR = ROOT / "benchmark_runs" / "tau2_retail"
 
 
@@ -28,12 +29,17 @@ def main() -> int:
     parser.add_argument("--num-trials", type=int, default=1)
     parser.add_argument("--seed", type=int, default=300)
     parser.add_argument("--save-to", default="olist_agent_tau2_retail_subset")
+    parser.add_argument("--task-id", action="append", default=[])
+    parser.add_argument("--task-split-name", default="base")
+    parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("--auto-resume", action="store_true")
+    parser.add_argument("--skip-summary", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     tau2_root = Path(args.tau2_root).expanduser().resolve()
     pyproject = tau2_root / "pyproject.toml"
-    if not pyproject.exists():
+    if not pyproject.exists() and not args.dry_run:
         raise SystemExit(f"Not a tau2-bench checkout: {tau2_root}")
     if not ADAPTER.exists():
         raise SystemExit(f"Missing adapter: {ADAPTER}")
@@ -56,7 +62,15 @@ def main() -> int:
         str(args.seed),
         "--save-to",
         args.save_to,
+        "--task-split-name",
+        args.task_split_name,
     ]
+    for task_id in args.task_id:
+        command.extend(["--task-id", task_id])
+    if args.timeout is not None:
+        command.extend(["--timeout", str(args.timeout)])
+    if args.auto_resume:
+        command.append("--auto-resume")
     manifest = {
         "benchmark": "tau2/tau3-bench retail",
         "tau2_root": str(tau2_root),
@@ -66,6 +80,7 @@ def main() -> int:
             "Runs in the tau2 Python 3.12+ environment.",
             "Results are saved by tau2 under tau2_root/data/simulations/.",
             "Use a cheap OpenAI-compatible model for subset smoke tests.",
+            "Run scripts/summarize_tau2_results.py after a real run to get pass^k and failure stats.",
         ],
     }
     (RUN_DIR / "last_manifest.json").write_text(
@@ -76,13 +91,24 @@ def main() -> int:
     print("Command:")
     print(" ".join(command))
     print(f"Manifest: {RUN_DIR / 'last_manifest.json'}")
+    if not pyproject.exists():
+        print(f"Note: tau2 checkout not found at {tau2_root}; dry-run only.")
     if args.dry_run:
         return 0
 
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(ROOT))
+    env.setdefault("UV_LINK_MODE", "copy")
     completed = subprocess.run(command, cwd=tau2_root, env=env, check=False)
-    return int(completed.returncode)
+    if completed.returncode != 0 or args.skip_summary:
+        return int(completed.returncode)
+
+    result_path = tau2_root / "data" / "simulations" / args.save_to
+    if result_path.exists() and SUMMARY.exists():
+        summary_command = [sys.executable, str(SUMMARY), "--results", str(result_path)]
+        return int(subprocess.run(summary_command, cwd=ROOT, check=False).returncode)
+    print(f"tau2 finished, but no result path was found at: {result_path}")
+    return 0
 
 
 if __name__ == "__main__":

@@ -70,6 +70,17 @@ python scripts/run_tau2_retail_subset.py \
 Run without `--dry-run` after configuring an API key in the tau2 environment.
 Results are written by tau2 under `tau2-root/data/simulations/`.
 
+After a real run, summarize the official result file or result directory:
+
+```bash
+python scripts/summarize_tau2_results.py \
+  --results D:/benchmarks/tau2-bench/data/simulations/olist_agent_tau2_retail_subset
+```
+
+The summary reports `avg_reward`, `pass^k`, termination counts, duration/cost
+statistics, and failed task IDs. This is the number that can be quoted in a
+resume after the benchmark has actually run.
+
 Current local status on Windows:
 
 - Adapter import/launcher dry-run passes from the main project.
@@ -77,6 +88,8 @@ Current local status on Windows:
 - `uv run python -c "import tau2"` still stalls during dependency copy/sync after
   falling back from hardlink to full copy, so there is no official tau2 retail
   score yet.
+- `scripts/summarize_tau2_results.py` is covered by unit tests, so official tau2
+  result files can be converted into resume/interview metrics once available.
 
 Do not claim a tau2 score on the resume until a real run writes simulation
 results. The fastest path is to run the same adapter under WSL2/Linux with a
@@ -117,6 +130,17 @@ python scripts/run_bfcl_subset.py \
 For low-cost smoke tests, use BFCL `--run-ids` in the external BFCL project and
 evaluate with `--partial-eval`. Do not compare partial scores against the
 leaderboard.
+
+After evaluation, summarize BFCL score files:
+
+```bash
+python scripts/summarize_bfcl_results.py \
+  --score-root D:/benchmarks/bfcl/score \
+  --model gpt-4.1-mini-FC
+```
+
+The summary reads BFCL category score JSON files and `data_*.csv` leaderboard
+exports. It is schema-tolerant across BFCL versions and is covered by unit tests.
 
 ## Benchmark ROI
 
