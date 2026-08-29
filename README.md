@@ -308,13 +308,13 @@ python scripts/run_tau2_retail_subset.py \
 
 去掉 `--dry-run` 并配置 API key 后即可运行真实 retail subset；结果由 tau2 写入 `data/simulations/`。
 
-当前已落盘的官方 benchmark smoke：
+当前已落盘的官方 benchmark subset：
 
 | Benchmark | 模型 | 范围 | 结果 |
 |---|---|---|---|
-| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | 10 tasks, 1 trial, serial concurrency | pass^1 100%，avg reward 100%，DB match 10/10，read action 61/64，write action 11/11，NL assertions 3/3，p95 28.29s，avg total cost `$0.006845`/conversation |
+| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | 30 tasks, 1 trial, serial concurrency | pass^1 96.67%，avg reward 96.67%，DB match 29/30，read action 163/170，write action 37/38，NL assertions 10/10，p95 28.78s，avg total cost `$0.001573`/conversation，failed task: `6` |
 
-证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是 official subset/smoke result，不是完整 leaderboard submission。
+证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是 official subset result，不是完整 leaderboard submission。
 
 真实 LLM Agent 主链路评测：
 

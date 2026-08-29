@@ -72,23 +72,23 @@
 | 性能/成本 | live approx p50 turn tokens | not_recorded | 30 | 旧版 live eval 结果未记录 token 估算字段；下一次 live eval 会自动写入。 | 重新运行 evaluation.live_agent_eval 后按 approx_turn_tokens 取 p50。 | 是 |
 | 真实 LLM Agent | route drift first-intent match | 100.00% | 30 | 同一 live 回归集上，LLM planner 首个业务意图是否偏离 pinned expectation。 | first(actual_tasks) == first(expected_tasks)。 | 是 |
 | 真实 LLM Agent | route drift task-sequence match | 100.00% | 30 | 同一 live 回归集上，多任务序列是否偏离 pinned expectation，用于检测 prompt/model 版本漂移。 | actual_tasks == expected_tasks。 | 是 |
-| 外部Benchmark | tau2/tau3 retail pass^1 | 100.00% | 10 tasks | 官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。 | tau2 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek 10-task subset smoke。 | 是 |
-| 外部Benchmark | tau2/tau3 retail avg reward | 100.00% | 10 | 官方 reward 均值，综合 DB/env/NL assertion 等检查。 | 读取 tau2 result reward_info.reward 后求平均。 | 是 |
-| 外部Benchmark | tau2/tau3 retail DB match | 10/10 (100.00%) | 10 | 副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。 | reward_info.db_check.db_match=true 的数量 / 有 DB check 的 simulation 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail read action match | 61/64 (95.31%) | 64 | 只读工具调用序列和参数是否匹配官方期望。 | reward_info.action_checks 中 tool_type=read 且 action_reward=1 的数量 / read action 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail write action match | 11/11 (100.00%) | 11 | 退款、退货、换货、改订单等写工具是否按官方期望执行。 | reward_info.action_checks 中 tool_type=write 且 action_reward=1 的数量 / write action 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail NL assertions | 3/3 (100.00%) | 3 | 自然语言回答是否满足官方任务断言。 | reward_info.nl_assertions 中 met=true 的数量 / NL assertion 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail p95 latency | 28.29s | 10 | 官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。 | 按 tau2 simulation duration 取 p95。 | 是 |
-| 外部Benchmark | tau2/tau3 retail avg total cost | $0.006845 | 10 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
+| 外部Benchmark | tau2/tau3 retail pass^1 | 96.67% | 30 tasks | 官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。 | tau2 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek 30-task official subset。 | 是 |
+| 外部Benchmark | tau2/tau3 retail avg reward | 96.67% | 30 | 官方 reward 均值，综合 DB/env/NL assertion 等检查。 | 读取 tau2 result reward_info.reward 后求平均。 | 是 |
+| 外部Benchmark | tau2/tau3 retail DB match | 29/30 (96.67%) | 30 | 副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。 | reward_info.db_check.db_match=true 的数量 / 有 DB check 的 simulation 数。 | 是 |
+| 外部Benchmark | tau2/tau3 retail read action match | 163/170 (95.88%) | 170 | 只读工具调用序列和参数是否匹配官方期望。 | reward_info.action_checks 中 tool_type=read 且 action_reward=1 的数量 / read action 数。 | 是 |
+| 外部Benchmark | tau2/tau3 retail write action match | 37/38 (97.37%) | 38 | 退款、退货、换货、改订单等写工具是否按官方期望执行。 | reward_info.action_checks 中 tool_type=write 且 action_reward=1 的数量 / write action 数。 | 是 |
+| 外部Benchmark | tau2/tau3 retail NL assertions | 10/10 (100.00%) | 10 | 自然语言回答是否满足官方任务断言。 | reward_info.nl_assertions 中 met=true 的数量 / NL assertion 数。 | 是 |
+| 外部Benchmark | tau2/tau3 retail p95 latency | 28.78s | 30 | 官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。 | 按 tau2 simulation duration 取 p95。 | 是 |
+| 外部Benchmark | tau2/tau3 retail avg total cost | $0.001573 | 30 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
 | 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 100% | 3 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 category_risk、policy_boundary、multi_intent_hitl。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
-| 性能/成本 | order_status_lookup p95 延迟 | 0.001 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.227 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.710 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.258 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.803 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 1951 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

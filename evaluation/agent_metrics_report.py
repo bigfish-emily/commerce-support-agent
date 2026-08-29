@@ -650,6 +650,7 @@ def benchmark_metrics() -> list[Metric]:
         ]
 
     summary = json.loads(path.read_text(encoding="utf-8"))
+    total_tasks = int(summary.get("total_tasks", 0) or 0)
     pass1 = summary.get("pass_hat_ks", {}).get("pass^1")
     db = summary.get("db_match") or {}
     actions = summary.get("action_match") or {}
@@ -659,9 +660,10 @@ def benchmark_metrics() -> list[Metric]:
             "外部Benchmark",
             "tau2/tau3 retail pass^1",
             _pct_value(float(pass1)) if pass1 is not None else "n/a",
-            f"{summary.get('total_tasks', 0)} tasks",
+            f"{total_tasks} tasks",
             "官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。",
-            "tau2 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek 10-task subset smoke。",
+            "tau2 对每个 task 的 reward>=1 计算 pass^1；"
+            f"当前是 DeepSeek {total_tasks}-task official subset。",
             api_key="是",
         ),
         Metric(
