@@ -84,6 +84,33 @@ def summarize(simulations: list[dict]) -> dict:
         for sim in evaluated
         if sim.get("agent_cost") is not None
     ]
+    user_costs = [
+        float(sim.get("user_cost", 0.0))
+        for sim in evaluated
+        if sim.get("user_cost") is not None
+    ]
+    action_totals: Counter[str] = Counter()
+    action_correct: Counter[str] = Counter()
+    db_total = 0
+    db_correct = 0
+    nl_total = 0
+    nl_correct = 0
+    for sim in evaluated:
+        reward_info = sim.get("reward_info") or {}
+        db_check = reward_info.get("db_check")
+        if db_check:
+            db_total += 1
+            if db_check.get("db_match"):
+                db_correct += 1
+        for action_check in reward_info.get("action_checks") or []:
+            tool_type = str(action_check.get("tool_type") or "unknown")
+            action_totals[tool_type] += 1
+            if float(action_check.get("action_reward", 0.0)) >= 1 - 1e-6:
+                action_correct[tool_type] += 1
+        for nl_check in reward_info.get("nl_assertions") or []:
+            nl_total += 1
+            if nl_check.get("met"):
+                nl_correct += 1
 
     return {
         "total_simulations": len(simulations),
@@ -95,6 +122,21 @@ def summarize(simulations: list[dict]) -> dict:
         "avg_duration_seconds": sum(durations) / len(durations) if durations else None,
         "p95_duration_seconds": _percentile(durations, 95) if durations else None,
         "avg_agent_cost": sum(agent_costs) / len(agent_costs) if agent_costs else None,
+        "avg_user_cost": sum(user_costs) / len(user_costs) if user_costs else None,
+        "avg_total_cost": (
+            (sum(agent_costs) + sum(user_costs)) / len(evaluated)
+            if evaluated and (agent_costs or user_costs)
+            else None
+        ),
+        "db_match": {"correct": db_correct, "total": db_total},
+        "action_match": {
+            tool_type: {
+                "correct": action_correct[tool_type],
+                "total": action_totals[tool_type],
+            }
+            for tool_type in sorted(action_totals)
+        },
+        "nl_assertions": {"correct": nl_correct, "total": nl_total},
         "failed_task_ids": [
             task_id
             for task_id, values in successes_by_task.items()
@@ -146,6 +188,30 @@ def render_markdown(path: Path, summary: dict) -> str:
         lines.append(f"| p95_duration_seconds | {summary['p95_duration_seconds']:.2f} |")
     if summary["avg_agent_cost"] is not None:
         lines.append(f"| avg_agent_cost | {summary['avg_agent_cost']:.6f} |")
+    if summary["avg_user_cost"] is not None:
+        lines.append(f"| avg_user_cost | {summary['avg_user_cost']:.6f} |")
+    if summary["avg_total_cost"] is not None:
+        lines.append(f"| avg_total_cost | {summary['avg_total_cost']:.6f} |")
+    db_match = summary.get("db_match", {})
+    if db_match.get("total"):
+        ratio = db_match["correct"] / db_match["total"]
+        lines.append(
+            f"| db_match | {db_match['correct']}/{db_match['total']} ({ratio:.2%}) |"
+        )
+    for tool_type, values in summary.get("action_match", {}).items():
+        if values["total"]:
+            ratio = values["correct"] / values["total"]
+            lines.append(
+                f"| {tool_type}_action_match | "
+                f"{values['correct']}/{values['total']} ({ratio:.2%}) |"
+            )
+    nl_assertions = summary.get("nl_assertions", {})
+    if nl_assertions.get("total"):
+        ratio = nl_assertions["correct"] / nl_assertions["total"]
+        lines.append(
+            f"| nl_assertions | "
+            f"{nl_assertions['correct']}/{nl_assertions['total']} ({ratio:.2%}) |"
+        )
     lines.extend(["", "## Termination Counts", "", "| reason | count |", "|---|---:|"])
     for reason, count in sorted(summary["termination_counts"].items()):
         lines.append(f"| {reason} | {count} |")

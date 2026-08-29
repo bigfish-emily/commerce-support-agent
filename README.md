@@ -268,7 +268,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 55 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承和售后运营决策 |
+| Unit/Integration Tests | 58 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、售后运营决策和 benchmark summary parser |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -307,6 +307,14 @@ python scripts/run_tau2_retail_subset.py \
 ```
 
 去掉 `--dry-run` 并配置 API key 后即可运行真实 retail subset；结果由 tau2 写入 `data/simulations/`。
+
+当前已落盘的官方 benchmark smoke：
+
+| Benchmark | 模型 | 范围 | 结果 |
+|---|---|---|---|
+| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | 10 tasks, 1 trial, serial concurrency | pass^1 100%，avg reward 100%，DB match 10/10，read action 61/64，write action 11/11，NL assertions 3/3，p95 28.29s，avg total cost `$0.006845`/conversation |
+
+证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是 official subset/smoke result，不是完整 leaderboard submission。
 
 真实 LLM Agent 主链路评测：
 

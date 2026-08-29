@@ -68,7 +68,10 @@ python scripts/run_tau2_retail_subset.py \
 ```
 
 Run without `--dry-run` after configuring an API key in the tau2 environment.
-Results are written by tau2 under `tau2-root/data/simulations/`.
+Results are written by tau2 under `tau2-root/data/simulations/`. The launcher
+accepts `--judge-llm` so tau2 natural-language assertions do not silently fall
+back to the default OpenAI model when using DeepSeek or another compatible
+provider.
 
 After a real run, summarize the official result file or result directory:
 
@@ -81,19 +84,22 @@ The summary reports `avg_reward`, `pass^k`, termination counts, duration/cost
 statistics, and failed task IDs. This is the number that can be quoted in a
 resume after the benchmark has actually run.
 
-Current local status on Windows:
+Current local tau2 result:
 
-- Adapter import/launcher dry-run passes from the main project.
-- The external `benchmark-tmp` checkout is present and sparse-cloned.
-- `uv run python -c "import tau2"` still stalls during dependency copy/sync after
-  falling back from hardlink to full copy, so there is no official tau2 retail
-  score yet.
-- `scripts/summarize_tau2_results.py` is covered by unit tests, so official tau2
-  result files can be converted into resume/interview metrics once available.
+- Environment: external `benchmark-tmp` tau2 checkout, Python 3.12.12,
+  DeepSeek `deepseek/deepseek-chat` for agent, user simulator, and NL assertion
+  judge.
+- Run: `olist_agent_tau2_retail_10_deepseek_final`, 10 retail tasks, 1 trial
+  each, serial concurrency, timeout 300s.
+- Result: `avg_reward=100.00%`, `pass^1=100.00%`, `db_match=10/10`,
+  `read_action_match=61/64`, `write_action_match=11/11`,
+  `nl_assertions=3/3`, `p95_duration=28.29s`, `avg_total_cost=$0.006845`.
+- Evidence: `benchmark_runs/tau2_retail/last_summary.md` and
+  `benchmark_runs/tau2_retail/last_summary.json`.
 
-Do not claim a tau2 score on the resume until a real run writes simulation
-results. The fastest path is to run the same adapter under WSL2/Linux with a
-fresh Python 3.12+ tau2 environment.
+This is a small official benchmark subset/smoke score, not a full leaderboard
+submission. It is safe to cite only with the subset size and model/provider
+clearly stated.
 
 ## Why Not Put tau2 in pyproject
 
@@ -146,7 +152,7 @@ exports. It is schema-tolerant across BFCL versions and is covered by unit tests
 
 | Candidate | Value | Difficulty | Workload | ROI | Recommendation |
 |---|---|---:|---:|---:|---|
-| tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Do first; use WSL2/Linux if Windows uv stalls |
+| tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Done for 10-task DeepSeek smoke; next expand to 30-50 tasks or full split |
 | tau2 banking_knowledge | Tests RAG over unstructured knowledge with configurable retrieval | Medium-High | 2-4 days | High for RAG roles | Do after retail |
 | Berkeley Function Calling Leaderboard subset | Measures schema/tool-call correctness across many APIs | Medium | 1-2 days for AST subset, 3-5 days for multi-turn/agentic | Medium-High | Do second; supports tool-governance claims |
 | ToolBench-style tool-use agent | Broad tool-use research benchmark | High | 1-2 weeks | Medium | Less aligned with e-commerce resume |
@@ -163,7 +169,9 @@ external comparable score because it owns the policy, tools, user simulator, and
 reward function. BFCL gives a separate tool-calling score for function schema and
 multi-turn tool-use reliability. I did not merge benchmark dependencies into the
 app dependency graph because their runtime requirements differ from the service.
-Instead I keep thin adapters and reproducible launch manifests."
+Instead I keep thin adapters and reproducible launch manifests. The current
+tau2 retail number is a 10-task DeepSeek smoke score, so I report it as a subset
+result, not as a leaderboard claim."
 
 Weak answer to avoid:
 

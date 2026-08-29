@@ -1,0 +1,36 @@
+{
+  "total_simulations": 10,
+  "evaluated_simulations": 10,
+  "total_tasks": 10,
+  "avg_reward": 1.0,
+  "pass_hat_ks": {
+    "pass^1": 1.0
+  },
+  "termination_counts": {
+    "user_stop": 10
+  },
+  "avg_duration_seconds": 22.794747519993688,
+  "p95_duration_seconds": 28.29338770004688,
+  "avg_agent_cost": 0.0056620127999999995,
+  "avg_user_cost": 0.0011833088,
+  "avg_total_cost": 0.0068453216,
+  "db_match": {
+    "correct": 10,
+    "total": 10
+  },
+  "action_match": {
+    "read": {
+      "correct": 61,
+      "total": 64
+    },
+    "write": {
+      "correct": 11,
+      "total": 11
+    }
+  },
+  "nl_assertions": {
+    "correct": 3,
+    "total": 3
+  },
+  "failed_task_ids": []
+}

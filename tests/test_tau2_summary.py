@@ -1,3 +1,5 @@
+import pytest
+
 from scripts.summarize_tau2_results import summarize
 
 
@@ -8,14 +10,32 @@ def test_tau2_summary_computes_pass_k_and_failures() -> None:
             "termination_reason": "user_stop",
             "duration": 10.0,
             "agent_cost": 0.01,
-            "reward_info": {"reward": 1.0},
+            "user_cost": 0.002,
+            "reward_info": {
+                "reward": 1.0,
+                "db_check": {"db_match": True},
+                "action_checks": [
+                    {"tool_type": "read", "action_reward": 1.0},
+                    {"tool_type": "write", "action_reward": 1.0},
+                ],
+                "nl_assertions": [{"met": True}],
+            },
         },
         {
             "task_id": "task_a",
             "termination_reason": "user_stop",
             "duration": 20.0,
             "agent_cost": 0.02,
-            "reward_info": {"reward": 0.0},
+            "user_cost": 0.003,
+            "reward_info": {
+                "reward": 0.0,
+                "db_check": {"db_match": False},
+                "action_checks": [
+                    {"tool_type": "read", "action_reward": 0.0},
+                    {"tool_type": "write", "action_reward": 1.0},
+                ],
+                "nl_assertions": [{"met": False}],
+            },
         },
         {
             "task_id": "task_b",
@@ -46,6 +66,15 @@ def test_tau2_summary_computes_pass_k_and_failures() -> None:
     assert result["avg_reward"] == 0.25
     assert result["pass_hat_ks"]["pass^1"] == 0.25
     assert result["pass_hat_ks"]["pass^2"] == 0.0
+    assert result["avg_agent_cost"] == 0.025
+    assert result["avg_user_cost"] == 0.0025
+    assert result["avg_total_cost"] == pytest.approx(0.02625)
+    assert result["db_match"] == {"correct": 1, "total": 2}
+    assert result["action_match"] == {
+        "read": {"correct": 1, "total": 2},
+        "write": {"correct": 2, "total": 2},
+    }
+    assert result["nl_assertions"] == {"correct": 1, "total": 2}
     assert result["termination_counts"] == {
         "agent_stop": 2,
         "infrastructure_error": 1,

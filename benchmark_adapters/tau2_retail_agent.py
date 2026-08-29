@@ -49,6 +49,10 @@ Execution policy:
 - Prefer read-only tools before any write tool.
 - For write tools, explain the exact planned mutation and wait for explicit
   user confirmation unless the domain policy says no confirmation is needed.
+- For multi-item write tools, confirm each item separately in the confirmation
+  message and execute only the item ids that the customer explicitly confirms
+  after that message. If the confirmation changes or narrows the scope, use the
+  latest confirmed scope.
 - If a required slot is missing or ambiguous, ask a concise clarification.
 - If a tool call fails, repair the parameter once when the error is recoverable;
   otherwise explain the limitation and follow the policy fallback.
@@ -130,6 +134,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run tau2 retail subset with this adapter.")
     parser.add_argument("--agent-llm", default="openai/gpt-4.1-mini")
     parser.add_argument("--user-llm", default="openai/gpt-4.1-mini")
+    parser.add_argument(
+        "--judge-llm",
+        default=None,
+        help="LLM for tau2 natural-language assertion review; defaults to --user-llm.",
+    )
     parser.add_argument("--num-tasks", type=int, default=5)
     parser.add_argument("--num-trials", type=int, default=1)
     parser.add_argument("--seed", type=int, default=300)
@@ -140,6 +149,11 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--auto-resume", action="store_true")
     args = parser.parse_args()
+    judge_llm = args.judge_llm or args.user_llm
+
+    import tau2.evaluator.evaluator_nl_assertions as nl_eval
+
+    nl_eval.DEFAULT_LLM_NL_ASSERTIONS = judge_llm
 
     registry.register_agent_factory(create_policy_aware_retail_agent, "olist_policy_aware_retail")
     results = run_domain(
@@ -157,6 +171,8 @@ def main() -> None:
             task_split_name=args.task_split_name,
             timeout=args.timeout,
             auto_resume=args.auto_resume,
+            review_model=judge_llm,
+            hallucination_retries=0,
         )
     )
     rewards = [run.reward_info.reward for run in results.simulations if run.reward_info]

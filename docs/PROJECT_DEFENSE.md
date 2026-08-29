@@ -11,7 +11,7 @@
 - 基于 Olist 公开电商数据构建 98,666 条订单事实与 73 个类目运营画像，离线加工配送延迟、低分率、取消率、支付金额、评价分等特征；结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 评测集，区分公开数据业务 eval 与外部 benchmark。
 - 实现 workflow-constrained RAG 与客服语料 hybrid retrieval：ResCommons 35k train 语料检索 100 条 test query，BM25 intent@1/intent@5 为 64%/81%，char-ngram rerank 后提升到 76%/91%，hybrid RRF 为 77%/91%；类目检索在 240 条别名/扰动评测中 adaptive rewrite Top1 为 92.08%，其中 realistic alias Top1 为 97.50%、noisy holdout Top1 为 10.00%。
 - 实现 MCP 企业工具接入边界：本地 MCP server 暴露 get_order_status、search_category_risk、generate_after_sales_priority_report、draft_escalation；client 侧支持 stdio 与 Streamable HTTP，预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter，保证工具 schema、鉴权、幂等和审计逻辑与 Agent graph 解耦。
-- 建立 CI 与多层评测：pytest 55 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s、route drift 和失败样本入口。
+- 建立 CI 与多层评测：pytest 58 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s；接入 tau2/tau3-bench retail 官方客服 benchmark，DeepSeek 10-task subset pass^1 100%、DB match 10/10、write action 11/11、p95 28.29s。
 ```
 
 这版故意不写“生产级闭环全完成”，也不把所有 100% 当模型能力。最值得强调的是基线提升、数据规模、MCP 代码落点、真实 LLM 主链路和延迟成本。
@@ -28,7 +28,7 @@
 | Hybrid retrieval formula | `app/retrieval/hybrid.py` | 本地 char-ngram vector baseline，不是线上 embedding/reranker |
 | Real LLM eval | `evaluation/live_agent_eval.py`, `evaluation/live_agent_eval_results.jsonl` | 30 条回归集，不是 leaderboard benchmark |
 | Route drift eval | `evaluation/route_drift_eval.py` | 比较 pinned eval expectation，不等于线上流量漂移 |
-| tau2 adapter | `benchmark_adapters/tau2_retail_agent.py`, `scripts/run_tau2_retail_subset.py` | tau2 需独立 Python 3.12+ 环境和 API key |
+| tau2 adapter | `benchmark_adapters/tau2_retail_agent.py`, `scripts/run_tau2_retail_subset.py`, `benchmark_runs/tau2_retail/last_summary.md` | 当前是 10-task DeepSeek subset smoke，不是 full leaderboard |
 
 ## Seven Hard Questions
 
@@ -136,7 +136,7 @@ Olist/Bitext/ResCommons 是业务 eval，不是 leaderboard benchmark。外部�
 
 | Benchmark | 价值 | 当前状态 | 下一步 |
 |---|---|---|---|
-| tau2/tau3 retail | 最贴客服/售后、tool-use、policy compliance、副作用动作 | adapter、runner、summary parser 已实现，dry-run 与 summary 单测通过；Windows uv 在依赖 copy/sync 阶段长时间不退出，尚无正式分数 | 独立 Python 3.12 环境跑 5-10 条 subset，落盘 avg_reward/pass^k/tool error/latency |
+| tau2/tau3 retail | 最贴客服/售后、tool-use、policy compliance、副作用动作 | 已在独立 Python 3.12 tau2 环境跑通 DeepSeek 10-task subset：pass^1 100%、avg_reward 100%、DB match 10/10、read action 61/64、write action 11/11、p95 28.29s | 扩到 30-50 条或完整 split，记录失败簇和 prompt/model 方差 |
 | tau2 banking_knowledge | 补非结构化政策 RAG 与多轮问答 | 未实现 adapter | retail 跑通后复用 HalfDuplexAgent prompt，加 knowledge retrieval 策略 |
 | BFCL subset | 横向验证 function/tool calling schema | launcher 与 score summary parser 已实现，dry-run 与 summary 单测通过 | 先跑 simple/multiple/parallel Python AST 子集，再扩 multi_turn_base |
 
@@ -144,16 +144,17 @@ Olist/Bitext/ResCommons 是业务 eval，不是 leaderboard benchmark。外部�
 
 ## Benchmark Resume Rule
 
-简历上暂时只能写：
+简历上可以谨慎写：
 
 ```text
-已实现 tau2/tau3 retail Agent adapter、结果 summary parser 和 BFCL subset launcher，用于把业务 Agent 接入外部客服/工具调用 benchmark；当前业务 eval 与 benchmark eval 分离，避免用自建数据冒充公开榜单。
+接入 tau2/tau3-bench retail 官方客服 benchmark，使用 DeepSeek 在 10-task subset smoke 中达到 pass^1 100%、DB match 10/10、write action 11/11、p95 28.29s；同时实现 BFCL subset launcher 与 score summary parser，用于补充工具调用横向评测。
 ```
 
 不能写：
 
 ```text
-tau2 retail pass^1 XX%，BFCL XX%
+tau2 retail 完整排行榜 pass^1 XX%，BFCL 完整榜单 XX%
 ```
 
-除非真实跑完并落盘官方结果文件。
+除非真实跑完完整 split 并落盘官方结果文件。当前 tau2 结果只能称为
+official subset/smoke result。

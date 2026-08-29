@@ -20,11 +20,33 @@ SUMMARY = ROOT / "scripts" / "summarize_tau2_results.py"
 RUN_DIR = ROOT / "benchmark_runs" / "tau2_retail"
 
 
+def tau2_python_command(tau2_root: Path) -> list[str]:
+    configured = os.environ.get("TAU2_PYTHON")
+    if configured:
+        return [configured]
+
+    candidates = [
+        tau2_root / ".venv-fresh" / "Scripts" / "python.exe",
+        tau2_root / ".venv" / "Scripts" / "python.exe",
+        tau2_root / ".venv-fresh" / "bin" / "python",
+        tau2_root / ".venv" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return [str(candidate)]
+    return ["uv", "run", "python"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run tau2 retail benchmark subset.")
     parser.add_argument("--tau2-root", required=True, help="Path to a local tau2-bench checkout.")
     parser.add_argument("--agent-llm", default="openai/gpt-4.1-mini")
     parser.add_argument("--user-llm", default="openai/gpt-4.1-mini")
+    parser.add_argument(
+        "--judge-llm",
+        default=None,
+        help="LLM for tau2 natural-language assertion checks; defaults to --user-llm.",
+    )
     parser.add_argument("--num-tasks", type=int, default=5)
     parser.add_argument("--num-trials", type=int, default=1)
     parser.add_argument("--seed", type=int, default=300)
@@ -46,14 +68,14 @@ def main() -> int:
 
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     command = [
-        "uv",
-        "run",
-        "python",
+        *tau2_python_command(tau2_root),
         str(ADAPTER),
         "--agent-llm",
         args.agent_llm,
         "--user-llm",
         args.user_llm,
+        "--judge-llm",
+        args.judge_llm or args.user_llm,
         "--num-tasks",
         str(args.num_tasks),
         "--num-trials",

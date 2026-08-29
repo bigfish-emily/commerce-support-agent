@@ -3,7 +3,12 @@
 .pytest_cache/
 .ruff_cache/
 benchmark-tmp/
-benchmark_runs/
+benchmark_runs/*
+!benchmark_runs/
+!benchmark_runs/tau2_retail/
+benchmark_runs/tau2_retail/*
+!benchmark_runs/tau2_retail/last_summary.json
+!benchmark_runs/tau2_retail/last_summary.md
 __pycache__/
 *.py[cod]
 fastapi-langgraph-agent.iml

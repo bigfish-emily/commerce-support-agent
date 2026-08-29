@@ -57,6 +57,7 @@ def main() -> None:
     metrics.extend(e2e_metrics())
     metrics.extend(live_agent_metrics())
     metrics.extend(route_drift_metrics())
+    metrics.extend(benchmark_metrics())
     metrics.extend(answer_quality_metrics())
     metrics.extend(safety_metrics())
     metrics.extend(performance_and_ops_metrics())
@@ -633,6 +634,102 @@ def route_drift_metrics() -> list[Metric]:
     ]
 
 
+def benchmark_metrics() -> list[Metric]:
+    path = ROOT / "benchmark_runs" / "tau2_retail" / "last_summary.json"
+    if not path.exists():
+        return [
+            Metric(
+                "外部Benchmark",
+                "tau2/tau3 retail subset status",
+                "not_run",
+                "0",
+                "官方客服 Agent benchmark 子集运行状态。",
+                "运行 scripts/run_tau2_retail_subset.py 后读取 last_summary.json。",
+                api_key="是",
+            )
+        ]
+
+    summary = json.loads(path.read_text(encoding="utf-8"))
+    pass1 = summary.get("pass_hat_ks", {}).get("pass^1")
+    db = summary.get("db_match") or {}
+    actions = summary.get("action_match") or {}
+    nl = summary.get("nl_assertions") or {}
+    return [
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail pass^1",
+            _pct_value(float(pass1)) if pass1 is not None else "n/a",
+            f"{summary.get('total_tasks', 0)} tasks",
+            "官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。",
+            "tau2 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek 10-task subset smoke。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail avg reward",
+            _pct_value(float(summary.get("avg_reward", 0.0))),
+            str(summary.get("evaluated_simulations", 0)),
+            "官方 reward 均值，综合 DB/env/NL assertion 等检查。",
+            "读取 tau2 result reward_info.reward 后求平均。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail DB match",
+            _ratio(db),
+            str(db.get("total", 0)),
+            "副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。",
+            "reward_info.db_check.db_match=true 的数量 / 有 DB check 的 simulation 数。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail read action match",
+            _ratio(actions.get("read") or {}),
+            str((actions.get("read") or {}).get("total", 0)),
+            "只读工具调用序列和参数是否匹配官方期望。",
+            "reward_info.action_checks 中 tool_type=read 且 action_reward=1 的数量 / read action 数。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail write action match",
+            _ratio(actions.get("write") or {}),
+            str((actions.get("write") or {}).get("total", 0)),
+            "退款、退货、换货、改订单等写工具是否按官方期望执行。",
+            "reward_info.action_checks 中 tool_type=write 且 action_reward=1 的数量 / write action 数。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail NL assertions",
+            _ratio(nl),
+            str(nl.get("total", 0)),
+            "自然语言回答是否满足官方任务断言。",
+            "reward_info.nl_assertions 中 met=true 的数量 / NL assertion 数。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail p95 latency",
+            f"{float(summary.get('p95_duration_seconds') or 0.0):.2f}s",
+            str(summary.get("evaluated_simulations", 0)),
+            "官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。",
+            "按 tau2 simulation duration 取 p95。",
+            api_key="是",
+        ),
+        Metric(
+            "外部Benchmark",
+            "tau2/tau3 retail avg total cost",
+            f"${float(summary.get('avg_total_cost') or 0.0):.6f}",
+            str(summary.get("evaluated_simulations", 0)),
+            "官方用户模拟器 + Agent + judge 的平均单会话模型成本。",
+            "summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。",
+            api_key="是",
+        ),
+    ]
+
+
 async def _run_trajectory_cases(graph, cases: list[dict]) -> list[dict]:
     return [await _run_case(graph, case) for case in cases]
 
@@ -941,6 +1038,14 @@ def _pct(numerator: int | float, denominator: int | float) -> str:
 
 def _pct_value(value: float) -> str:
     return f"{value:.2%}"
+
+
+def _ratio(values: dict) -> str:
+    total = int(values.get("total") or 0)
+    correct = int(values.get("correct") or 0)
+    if not total:
+        return "n/a"
+    return f"{correct}/{total} ({correct / total:.2%})"
 
 
 def render_report(metrics: list[Metric]) -> str:
