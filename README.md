@@ -38,6 +38,23 @@
 | 输出风控 | 输出 guard 拒绝空输出、占位符、traceback；失败记录 trace | 防止坏结果直接返回用户 |
 | 审计追踪 | 正常、输入拒绝、输出拒绝都写入 SQLite trace | 方便复盘、评测飞轮和线上排障 |
 
+## Tool Call Framework
+
+主 `/chat` 链路中的确定性业务工具统一经过 `ToolCallManager`，而不是在节点里裸调函数。它覆盖：
+
+| 能力 | 当前实现 |
+|---|---|
+| 参数校验 | 每个工具声明 Pydantic input schema，非法参数返回 `schema_validation_failed` |
+| 权限检查 | `ToolCallContext(role, tenant_id, user_id, session_id)` + tool allowed role 白名单 |
+| 缓存检查 | 只读工具使用 `sha256(tool+args)` 做 TTL cache；副作用工具不缓存 |
+| 异步执行 | async manager 统一调度 sync/async handler，sync handler 通过 `asyncio.to_thread` 执行 |
+| 超时/重试/退避 | 每个 `ToolSpec` 配置 timeout、retry count 和 exponential backoff |
+| 降级策略 | 工具可配置 fallback；例如事实/检索工具失败时返回安全降级结果 |
+| 结果格式化 | 所有工具返回标准 `ToolCallResult(ok/data/cached/attempts/latency/error)` |
+| 审计日志 | 每次调用记录 who/when/tool/args_hash/redacted_args/result/latency，不保存明文长消息 |
+
+代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。
+
 ## 数据来源
 
 项目使用两类公开数据，不把手写小样本当作真实数据。
@@ -268,7 +285,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 58 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、售后运营决策和 benchmark summary parser |
+| Unit/Integration Tests | 63 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、售后运营决策和 benchmark summary parser |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |

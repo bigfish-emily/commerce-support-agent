@@ -11,7 +11,7 @@
 - 基于 Olist 公开电商数据构建 98,666 条订单事实与 73 个类目运营画像，离线加工配送延迟、低分率、取消率、支付金额、评价分等特征；结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 评测集，区分公开数据业务 eval 与外部 benchmark。
 - 实现 workflow-constrained RAG 与客服语料 hybrid retrieval：ResCommons 35k train 语料检索 100 条 test query，BM25 intent@1/intent@5 为 64%/81%，char-ngram rerank 后提升到 76%/91%，hybrid RRF 为 77%/91%；类目检索在 240 条别名/扰动评测中 adaptive rewrite Top1 为 92.08%，其中 realistic alias Top1 为 97.50%、noisy holdout Top1 为 10.00%。
 - 实现 MCP 企业工具接入边界：本地 MCP server 暴露 get_order_status、search_category_risk、generate_after_sales_priority_report、draft_escalation；client 侧支持 stdio 与 Streamable HTTP，预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter，保证工具 schema、鉴权、幂等和审计逻辑与 Agent graph 解耦。
-- 建立 CI 与多层评测：pytest 58 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s；接入 tau2/tau3-bench retail 官方客服 benchmark，DeepSeek 30-task subset pass^1 96.67%、DB match 29/30、write action 37/38、NL assertions 10/10、p95 28.78s。
+- 建立 CI 与多层评测：pytest 63 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s；接入 tau2/tau3-bench retail 官方客服 benchmark，DeepSeek 30-task subset pass^1 96.67%、DB match 29/30、write action 37/38、NL assertions 10/10、p95 28.78s。
 ```
 
 这版故意不写“生产级闭环全完成”，也不把所有 100% 当模型能力。最值得强调的是基线提升、数据规模、MCP 代码落点、真实 LLM 主链路和延迟成本。
@@ -24,6 +24,7 @@
 | LLM first step | `app/llm/intent_planner.py` | LLM 失败时才进入 deterministic fallback |
 | HITL + resume | `interrupt()` in `AgentActions.await_confirmation`, checkpoint in `/chat` | HITL 是确认门，不是自动提权 |
 | MCP support | `app/mcp_server.py`, `app/mcp_client.py`, `app/stripe_mcp.py` | 主 demo 默认用本地 service 保证无凭证可跑 |
+| Tool call governance | `app/tool_call/framework.py`, `app/agent/actions.py`, `tests/test_tool_call_framework.py` | 当前是进程内 TTL cache 和角色白名单，不是企业 IAM/Redis |
 | Persistent idempotency | `SQLiteCaseService` in `app/olist/service.py` | 个人项目模拟企业工具，不产生真实退款 |
 | Hybrid retrieval formula | `app/retrieval/hybrid.py` | 本地 char-ngram vector baseline，不是线上 embedding/reranker |
 | Real LLM eval | `evaluation/live_agent_eval.py`, `evaluation/live_agent_eval_results.jsonl` | 30 条回归集，不是 leaderboard benchmark |

@@ -157,6 +157,14 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 工具端必须持久化 request_id、状态、结果和外部系统返回码。重复请求返回已有结果，而不是重复执行。
 
+### 17.1 工具调用框架做完整了吗？
+
+主链路已经接入 `ToolCallManager`，不是裸函数散落调用。它把八件事集中起来：Pydantic schema 参数校验、角色白名单、只读工具 TTL cache、sync/async handler 统一异步执行、timeout/retry/backoff、fallback、标准 `ToolCallResult` 输出，以及审计事件。
+
+代码落点是 `app/tool_call/framework.py`；`app/agent/actions.py` 的订单查询、类目风险、运营报告、政策检索、客服样例检索、售后草稿和确认后的副作用执行都经过它。单测 `tests/test_tool_call_framework.py` 覆盖 schema fail、permission denied、cache hit、timeout fallback、幂等 duplicate 和 audit redaction。
+
+边界也要说清楚：当前鉴权是 demo 级 RBAC 白名单，不是企业 IAM/OAuth；缓存是进程内 TTL，不是 Redis；审计事件是内存事件 + 主 trace，不是 Kafka 审计流。生产里会把 `ToolCallContext` 接登录态、租户、OAuth scopes 和工具 registry，把 cache 换成 Redis，把 audit 写入不可变事件流。
+
 ## HITL 与副作用
 
 ### 18. 为什么 escalation 要停在 HITL？
@@ -307,7 +315,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 | 业务完整度 | 8/10 | 覆盖客服查询、政策解释、售后升级、退款/取消/改地址/发票申请、售后运营决策 | 接入真实商家规则、库存/优惠券/CRM sandbox |
 | Agent 架构 | 8.5/10 | LangGraph plan-and-execute、LLM planner、结构化 fallback、HITL、HITL timeout、trace | 增加 checkpoint 持久化恢复 demo 和更完整状态回放 |
 | RAG 能力 | 7.8/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
-| 工具治理 | 8.5/10 | 参数修复、副作用 action_type、MCP server/client adapter、SQLite 持久化幂等、duplicate 响应 | 真实外部 MCP sandbox 和业务权限 |
+| 工具治理 | 9/10 | ToolCallManager 覆盖 schema、角色白名单、cache、async、timeout/retry/backoff、fallback、标准输出、audit；另有 MCP server/client adapter、SQLite 持久化幂等和 duplicate 响应 | 接企业 IAM/OAuth、Redis cache 和不可变审计流 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
 | 评测体系 | 9/10 | 58 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、tau2 30-task official subset pass^1 96.67% | 复盘 tau2 failed task `6`，扩大 live LLM eval 到 100+ 条，加入失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |

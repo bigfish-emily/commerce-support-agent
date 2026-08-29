@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from app.intent.decomposer import decompose_business_message
 from app.intent.mapping import map_intent
 from app.llm.guardrail import _heuristic_input_guard
@@ -20,8 +22,9 @@ from app.olist.retrieval import (
     exact_underscore_retrieval,
     token_overlap_retrieval,
 )
-from app.olist.service import OlistService
+from app.olist.service import InMemoryCaseService, OlistService
 from app.retrieval.hybrid import HybridSupportRetriever
+from app.tool_call import ToolCallContext, ToolCallManager, ToolSpec, build_business_tool_manager
 from app.tools.repair import repair_order_id
 from evaluation.rag_retrieval_eval import build_cases as build_category_cases
 from evaluation.rag_retrieval_eval import evaluate as evaluate_category_retrieval
@@ -41,6 +44,10 @@ class Metric:
     meaning: str
     calculation: str
     api_key: str = "否"
+
+
+class _EmptyArgs(BaseModel):
+    pass
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -187,6 +194,8 @@ def tool_metrics() -> list[Metric]:
     action_ids = [service.escalation_draft("203096f03d82e0dffbc41ebc2e2bcfb7") for _ in action_types]
     action_dispatch_passed = sum(1 for draft in action_ids if draft is not None)
 
+    framework_checks = asyncio.run(_tool_framework_checks())
+
     return [
         Metric(
             "工具/参数",
@@ -236,7 +245,82 @@ def tool_metrics() -> list[Metric]:
             "退款、取消、改地址、发票、工单五类动作是否都有工具落点。",
             "五类 action_type 是否都有可执行的幂等工具模拟。",
         ),
+        Metric(
+            "工具/参数",
+            "ToolCallManager 治理项覆盖率",
+            _pct(framework_checks["passed"], framework_checks["total"]),
+            str(framework_checks["total"]),
+            "验证 schema、角色权限、只读缓存、timeout fallback、副作用幂等和审计脱敏是否可用。",
+            "运行一个无 LLM mini harness，逐项检查 ToolCallManager 的治理能力。",
+        ),
     ]
+
+
+async def _tool_framework_checks() -> dict[str, int]:
+    manager = build_business_tool_manager(
+        olist_service=OlistService(),
+        knowledge_base=MarkdownKnowledgeBase(),
+        support_retriever=HybridSupportRetriever(),
+        case_service=InMemoryCaseService(),
+    )
+    checks = []
+
+    schema = await manager.call("get_order_status", {"order_id": "short"}, ToolCallContext())
+    checks.append((not schema.ok) and schema.error_code == "schema_validation_failed")
+
+    permission = await manager.call(
+        "generate_after_sales_priority_report",
+        {"query": "生成售后运营日报"},
+        ToolCallContext(role="support_agent"),
+    )
+    checks.append((not permission.ok) and permission.error_code == "permission_denied")
+
+    query = {"query": "health beauty 类目有什么运营风险？"}
+    first = await manager.call("search_category_risk", query, ToolCallContext())
+    second = await manager.call("search_category_risk", query, ToolCallContext())
+    checks.append(first.ok and second.ok and (not first.cached) and second.cached)
+
+    async def slow_call(*args, **kwargs):
+        await asyncio.sleep(0.01)
+        return {"answer": "late"}
+
+    slow_manager = ToolCallManager(
+        [
+            ToolSpec(
+                name="slow_tool",
+                description="slow",
+                input_model=_EmptyArgs,
+                handler=slow_call,
+                timeout_seconds=0.001,
+                fallback=lambda args, ctx, exc: {"answer": "fallback"},
+            )
+        ]
+    )
+    fallback = await slow_manager.call("slow_tool", {}, ToolCallContext())
+    checks.append(fallback.ok and fallback.error_code == "fallback_used")
+
+    action_args = {
+        "action_type": "refund_request",
+        "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
+        "message_text": "delivery delayed by 11 day(s); low review score 2",
+    }
+    first_action = await manager.call("execute_side_effect", action_args, ToolCallContext())
+    second_action = await manager.call("execute_side_effect", action_args, ToolCallContext())
+    checks.append(
+        first_action.ok
+        and second_action.ok
+        and first_action.data["result"]["duplicate"] is False
+        and second_action.data["result"]["duplicate"] is True
+    )
+
+    audit = manager.audit_events[-1]
+    checks.append(
+        audit["tool_name"] == "execute_side_effect"
+        and audit["redacted_args"]["order_id"] == "203096...cfb7"
+        and "sha256" in audit["redacted_args"]["message_text"]
+    )
+
+    return {"passed": sum(bool(check) for check in checks), "total": len(checks)}
 
 
 def rag_metrics() -> list[Metric]:

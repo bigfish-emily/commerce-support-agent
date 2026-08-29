@@ -11,9 +11,9 @@ from app.olist.service import (
     InMemoryCaseService,
     OlistService,
     format_after_sales_report,
-    format_order_status,
 )
 from app.retrieval.hybrid import HybridSupportRetriever
+from app.tool_call import ToolCallContext, ToolCallManager, build_business_tool_manager
 from app.tools.repair import repair_order_id
 
 
@@ -30,6 +30,7 @@ class AgentActions:
         knowledge_base: MarkdownKnowledgeBase,
         support_retriever: HybridSupportRetriever,
         case_service: InMemoryCaseService,
+        tool_manager: ToolCallManager | None = None,
     ) -> None:
         self._intent_planner = intent_planner
         self._qa_generator = qa_generator
@@ -39,6 +40,12 @@ class AgentActions:
         self._knowledge_base = knowledge_base
         self._support_retriever = support_retriever
         self._case_service = case_service
+        self._tool_manager = tool_manager or build_business_tool_manager(
+            olist_service=olist_service,
+            knowledge_base=knowledge_base,
+            support_retriever=support_retriever,
+            case_service=case_service,
+        )
 
     async def plan_tasks(self, state: AgentState) -> dict:
         last_message: str = state["messages"][-1]["content"]
@@ -94,12 +101,12 @@ class AgentActions:
             text = str(task.get("text") or _latest_user_task_message(state))
             event_details: dict[str, object] = {"task_index": idx, "text": text[:300]}
             if intent == "order_status":
-                answer = await self._answer_order_status(text)
+                answer = await self._answer_order_status(text, state)
                 answers.append(f"[订单查询]\n{answer}")
                 event_details["tool"] = "get_order_status"
             elif intent == "qa":
-                insights = self._olist_service.category_insights(text)
-                support_docs = self._search_support_docs(text)
+                insights = await self._category_insights(text, state)
+                support_docs = await self._search_support_docs(text, state)
                 retrieved_insights.extend(insights)
                 retrieved_support_docs.extend(support_docs)
                 answer = await self._qa_generator.generate(text, insights, support_docs)
@@ -108,24 +115,15 @@ class AgentActions:
                 event_details["hit_count"] = len(insights)
                 event_details["support_doc_count"] = len(support_docs)
             elif intent == "ops_decision":
-                report = self._olist_service.after_sales_priority_report(text)
+                report = await self._after_sales_priority_report(text, state)
                 answers.append(f"[售后运营决策]\n{format_after_sales_report(report)}")
                 retrieved_insights.extend(report.get("high_risk_categories", []))
                 event_details["tool"] = "generate_after_sales_priority_report"
                 event_details["category_count"] = len(report.get("high_risk_categories", []))
                 event_details["order_count"] = len(report.get("priority_orders", []))
             elif intent == "policy":
-                hits = self._knowledge_base.search(text, k=3)
-                sections = [
-                    {
-                        "source": hit.source,
-                        "section_title": hit.section_title,
-                        "text": hit.text,
-                        "score": hit.score,
-                    }
-                    for hit in hits
-                ]
-                support_docs = self._search_support_docs(text)
+                sections = await self._search_policy_knowledge(text, state)
+                support_docs = await self._search_support_docs(text, state)
                 retrieved_policy.extend(sections)
                 retrieved_support_docs.extend(support_docs)
                 answer = await self._policy_generator.generate(
@@ -141,7 +139,7 @@ class AgentActions:
             elif intent == "escalation":
                 action_type = str(task.get("action_type") or self._infer_action_type(text))
                 slot_text = _with_order_context(text, state["messages"][-1]["content"])
-                draft_answer, draft = await self._prepare_escalation_from_text(slot_text, action_type)
+                draft_answer, draft = await self._prepare_escalation_from_text(slot_text, action_type, state)
                 answers.append(f"[售后升级]\n{draft_answer}")
                 if draft is not None:
                     draft["task_index"] = idx
@@ -246,7 +244,7 @@ class AgentActions:
 
     async def check_order_status(self, state: AgentState) -> dict:
         user_message: str = state["messages"][-1]["content"]
-        answer = await self._answer_order_status(user_message)
+        answer = await self._answer_order_status(user_message, state)
         return {
             "final_answer": answer,
             "messages": [*state["messages"], {"role": "assistant", "content": answer}],
@@ -257,6 +255,7 @@ class AgentActions:
         answer, draft = await self._prepare_escalation_from_text(
             user_message,
             self._infer_action_type(user_message),
+            state,
         )
         if draft is None:
             return {
@@ -280,17 +279,25 @@ class AgentActions:
             "messages": [*state["messages"], {"role": "assistant", "content": answer}],
         }
 
-    async def _answer_order_status(self, user_message: str) -> str:
+    async def _answer_order_status(self, user_message: str, state: AgentState) -> str:
         task = await self._task_extractor.extract(user_message)
         repair = repair_order_id(task.order_id or user_message)
         if not repair.ok:
             return repair.message
-        return format_order_status(self._olist_service.get_order_status(repair.value))
+        result = await self._tool_manager.call(
+            "get_order_status",
+            {"order_id": repair.value},
+            self._tool_context(state),
+        )
+        if result.ok:
+            return str(result.data.get("answer", "订单事实工具没有返回结果。"))
+        return f"订单事实工具调用失败：{result.error_message}"
 
     async def _prepare_escalation_from_text(
         self,
         user_message: str,
         action_type: str,
+        state: AgentState,
     ) -> tuple[str, dict[str, object] | None]:
         task = await self._task_extractor.extract(user_message)
         repair = repair_order_id(task.order_id or user_message)
@@ -298,7 +305,12 @@ class AgentActions:
             return repair.message, None
         order_id = repair.value
 
-        draft = self._olist_service.escalation_draft(order_id)
+        result = await self._tool_manager.call(
+            "prepare_side_effect",
+            {"order_id": order_id},
+            self._tool_context(state),
+        )
+        draft = result.data.get("draft") if result.ok else None
         if draft is None:
             return "没有找到该订单，无法生成升级处理草稿。", None
         draft["action_type"] = action_type
@@ -319,7 +331,7 @@ class AgentActions:
             "messages": [*state["messages"], {"role": "user", "content": user_response}],
         }
 
-    def finalize_escalation(self, state: AgentState) -> dict:
+    async def finalize_escalation(self, state: AgentState) -> dict:
         user_response: str = state.get("user_response", "")
         confirmed: bool = user_response.lower().strip() in (
             "yes",
@@ -337,10 +349,19 @@ class AgentActions:
         task_index = _maybe_int(pending.get("task_index") or draft.get("task_index"))
         if confirmed and draft:
             action_type = str(draft.get("action_type", "open_support_case"))
-            result = self._case_service.execute_action(
-                action_type=action_type,
-                order_id=str(draft["order_id"]),
-                message_text=str(draft["message_text"]),
+            tool_result = await self._tool_manager.call(
+                "execute_side_effect",
+                {
+                    "action_type": action_type,
+                    "order_id": str(draft["order_id"]),
+                    "message_text": str(draft["message_text"]),
+                },
+                self._tool_context(state),
+            )
+            result = (
+                tool_result.data["result"]
+                if tool_result.ok
+                else {"result_id": "FAILED", "duplicate": False}
             )
             action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
             duplicate_hint = "（重复请求，已返回已有结果）" if result["duplicate"] else ""
@@ -397,17 +418,53 @@ class AgentActions:
             return "invoice_request"
         return "open_support_case"
 
-    def _search_support_docs(self, query: str, k: int = 3) -> list[dict[str, object]]:
-        return [
-            {
-                "doc_id": hit.doc.get("doc_id", ""),
-                "intent": hit.doc.get("intent", ""),
-                "capability": hit.doc.get("capability", ""),
-                "text": hit.doc.get("text", ""),
-                "score": hit.score,
-            }
-            for hit in self._support_retriever.hybrid_search(query, k=k)
-        ]
+    async def _category_insights(self, query: str, state: AgentState) -> list[dict[str, object]]:
+        result = await self._tool_manager.call(
+            "search_category_risk",
+            {"query": query},
+            self._tool_context(state),
+        )
+        return list(result.data.get("insights", [])) if result.ok else []
+
+    async def _after_sales_priority_report(self, query: str, state: AgentState) -> dict[str, object]:
+        result = await self._tool_manager.call(
+            "generate_after_sales_priority_report",
+            {"query": query},
+            self._tool_context(state, role="ops_manager"),
+        )
+        if result.ok:
+            return dict(result.data.get("report", {}))
+        return {"high_risk_categories": [], "priority_orders": []}
+
+    async def _search_policy_knowledge(
+        self,
+        query: str,
+        state: AgentState,
+        k: int = 3,
+    ) -> list[dict[str, object]]:
+        result = await self._tool_manager.call(
+            "search_policy_knowledge",
+            {"query": query, "k": k},
+            self._tool_context(state),
+        )
+        return list(result.data.get("sections", [])) if result.ok else []
+
+    async def _search_support_docs(
+        self,
+        query: str,
+        state: AgentState,
+        k: int = 3,
+    ) -> list[dict[str, object]]:
+        result = await self._tool_manager.call(
+            "search_support_examples",
+            {"query": query, "k": k},
+            self._tool_context(state),
+        )
+        return list(result.data.get("docs", [])) if result.ok else []
+
+    @staticmethod
+    def _tool_context(state: AgentState, role: str = "support_agent") -> ToolCallContext:
+        return ToolCallContext(session_id=state.get("session_id", "unknown"), role=role)
 
 
 _ACTION_LABELS = {
