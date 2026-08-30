@@ -15,7 +15,7 @@
 | 工具/参数 | 澄清返回正确率 | 100.00% | 3 | 缺失/不完整/多订单号时，系统是否返回可执行澄清而不是盲目重试。 | 非法参数 case 中 result.ok=false 且 message 非空。 | 否 |
 | 工具/参数 | 副作用任务 HITL 覆盖率 | 100.00% | 120 | 售后/退款/取消等副作用任务是否全部进入人工确认门。 | expected_intent=escalation 的 case 是否都要求确认。 | 否 |
 | 工具/参数 | 副作用 action_type 分发覆盖率 | 100.00% | 5 | 退款、取消、改地址、发票、工单五类动作是否都有工具落点。 | 五类 action_type 是否都有可执行的幂等工具模拟。 | 否 |
-| 工具/参数 | ToolCallManager 治理项覆盖率 | 100.00% | 6 | 验证 schema、角色权限、只读缓存、timeout fallback、副作用幂等和审计脱敏是否可用。 | 运行一个无 LLM mini harness，逐项检查 ToolCallManager 的治理能力。 | 否 |
+| 工具/参数 | ToolCallManager 治理项覆盖率 | 100.00% | 8 | 验证 schema、角色权限、只读缓存、租户隔离、Redis backend、timeout fallback、副作用幂等和审计脱敏是否可用。 | 运行一个无 LLM mini harness，逐项检查 ToolCallManager 的治理能力。 | 否 |
 | RAG/检索 | 类目 RAG exact_underscore Top1 | 32.08% | 240 | 首位召回是否命中正确类目。 | ranked[0] == expected_category。 | 否 |
 | RAG/检索 | 类目 RAG exact_underscore Recall@3 | 32.08% | 240 | Top3 是否包含正确类目，衡量召回能力。 | expected_category in ranked[:3]。 | 否 |
 | RAG/检索 | 类目 RAG exact_underscore MRR@3 | 32.08% | 240 | 正确类目越靠前分数越高。 | 命中时累加 1/rank，未命中为 0。 | 否 |
@@ -87,9 +87,9 @@
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
-| 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.263 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.698 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | order_status_lookup p95 延迟 | 0.001 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.249 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.964 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 1951 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

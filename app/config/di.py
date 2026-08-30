@@ -13,6 +13,7 @@ from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerat
 from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import OlistService, SQLiteCaseService
 from app.retrieval.hybrid import HybridSupportRetriever
+from app.tool_call import build_business_tool_manager, build_tool_cache_from_env
 
 load_dotenv()
 
@@ -20,6 +21,14 @@ olist_service = OlistService()
 knowledge_base = MarkdownKnowledgeBase()
 support_retriever = HybridSupportRetriever()
 case_service = SQLiteCaseService()
+tool_cache = build_tool_cache_from_env()
+tool_manager = build_business_tool_manager(
+    olist_service=olist_service,
+    knowledge_base=knowledge_base,
+    support_retriever=support_retriever,
+    case_service=case_service,
+    cache_backend=tool_cache,
+)
 
 llm_client = LlmClient(
     api_key=os.environ.get("OPENAI_API_KEY", "offline"),
@@ -47,6 +56,7 @@ actions = AgentActions(
     knowledge_base=knowledge_base,
     support_retriever=support_retriever,
     case_service=case_service,
+    tool_manager=tool_manager,
 )
 
 agent_graph_builder = AgentGraph(actions=actions)

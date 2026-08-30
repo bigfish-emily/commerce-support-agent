@@ -4,10 +4,11 @@ import asyncio
 import hashlib
 import inspect
 import json
+import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +44,62 @@ class ToolCallResult(BaseModel):
     latency_ms: float = 0.0
     error_code: str | None = None
     error_message: str | None = None
+
+
+class ToolCacheBackend(Protocol):
+    async def get(self, key: str) -> ToolCallResult | None:
+        """Return cached tool result, or None on miss/expiry."""
+
+    async def set(self, key: str, result: ToolCallResult, ttl_seconds: float) -> None:
+        """Persist a successful read-only tool result with TTL."""
+
+
+class InMemoryToolCache:
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[float, ToolCallResult]] = {}
+
+    async def get(self, key: str) -> ToolCallResult | None:
+        cached = self._store.get(key)
+        if not cached:
+            return None
+        expires_at, result = cached
+        if expires_at < time.time():
+            self._store.pop(key, None)
+            return None
+        return result
+
+    async def set(self, key: str, result: ToolCallResult, ttl_seconds: float) -> None:
+        self._store[key] = (time.time() + ttl_seconds, result)
+
+
+class RedisToolCache:
+    """Redis-backed cache for multi-worker tool-call deployments."""
+
+    def __init__(self, client: Any, prefix: str = "olist-agent:tool-cache") -> None:
+        self._client = client
+        self._prefix = prefix.rstrip(":")
+
+    @classmethod
+    def from_url(cls, url: str, prefix: str = "olist-agent:tool-cache") -> RedisToolCache:
+        try:
+            from redis import asyncio as redis_asyncio
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
+            raise RuntimeError("Install redis support with `pip install .[redis]`.") from exc
+        return cls(redis_asyncio.from_url(url, decode_responses=True), prefix=prefix)
+
+    async def get(self, key: str) -> ToolCallResult | None:
+        raw = await self._client.get(self._namespaced(key))
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        return ToolCallResult.model_validate_json(raw)
+
+    async def set(self, key: str, result: ToolCallResult, ttl_seconds: float) -> None:
+        await self._client.set(self._namespaced(key), result.model_dump_json(), ex=max(int(ttl_seconds), 1))
+
+    def _namespaced(self, key: str) -> str:
+        return f"{self._prefix}:{key}"
 
 
 class OrderStatusArgs(BaseModel):
@@ -96,9 +153,13 @@ class ToolCallManager:
     timeout/retry/backoff, fallback, normalized output, and audit events.
     """
 
-    def __init__(self, specs: list[ToolSpec]) -> None:
+    def __init__(
+        self,
+        specs: list[ToolSpec],
+        cache_backend: ToolCacheBackend | None = None,
+    ) -> None:
         self._specs = {spec.name: spec for spec in specs}
-        self._cache: dict[str, tuple[float, ToolCallResult]] = {}
+        self._cache = cache_backend or InMemoryToolCache()
         self.audit_events: list[dict[str, Any]] = []
 
     def list_tools(self) -> list[str]:
@@ -128,20 +189,20 @@ class ToolCallManager:
             return result
 
         cache_key = (
-            self._cache_key(name, validated)
+            self._cache_key(name, validated, context.tenant_id)
             if spec.cache_ttl_seconds and not spec.side_effect
             else None
         )
         if cache_key:
-            cached = self._cache.get(cache_key)
-            if cached and cached[0] >= time.time():
-                result = cached[1].model_copy(update={"cached": True})
+            cached = await self._cache.get(cache_key)
+            if cached:
+                result = cached.model_copy(update={"cached": True})
                 self._audit(context, name, validated, result)
                 return result
 
         result = await self._execute(spec, validated, context, started)
         if cache_key and result.ok:
-            self._cache[cache_key] = (time.time() + float(spec.cache_ttl_seconds), result)
+            await self._cache.set(cache_key, result, float(spec.cache_ttl_seconds))
         self._audit(context, name, validated, result)
         return result
 
@@ -228,6 +289,7 @@ class ToolCallManager:
                 "role": context.role,
                 "tool_name": name,
                 "args_hash": self._cache_key(name, arguments),
+                "cache_key": self._cache_key(name, arguments, context.tenant_id),
                 "redacted_args": _redact_args(arguments),
                 "ok": result.ok,
                 "cached": result.cached,
@@ -239,8 +301,12 @@ class ToolCallManager:
         )
 
     @staticmethod
-    def _cache_key(name: str, arguments: dict[str, Any]) -> str:
-        payload = json.dumps({"tool": name, "args": arguments}, ensure_ascii=False, sort_keys=True)
+    def _cache_key(name: str, arguments: dict[str, Any], tenant_id: str | None = None) -> str:
+        payload = json.dumps(
+            {"tenant_id": tenant_id, "tool": name, "args": arguments},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -263,6 +329,7 @@ def build_business_tool_manager(
     knowledge_base: MarkdownKnowledgeBase,
     support_retriever: HybridSupportRetriever,
     case_service: InMemoryCaseService,
+    cache_backend: ToolCacheBackend | None = None,
 ) -> ToolCallManager:
     support_roles = frozenset({"support_agent", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
@@ -381,8 +448,22 @@ def build_business_tool_manager(
                     )
                 },
             ),
-        ]
+        ],
+        cache_backend=cache_backend,
     )
+
+
+def build_tool_cache_from_env() -> ToolCacheBackend:
+    backend = os.environ.get("TOOL_CACHE_BACKEND", "memory").strip().lower()
+    if backend in {"memory", "inmemory", "local", ""}:
+        return InMemoryToolCache()
+    if backend == "redis":
+        url = os.environ.get("REDIS_URL")
+        if not url:
+            raise RuntimeError("TOOL_CACHE_BACKEND=redis requires REDIS_URL.")
+        prefix = os.environ.get("TOOL_CACHE_PREFIX", "olist-agent:tool-cache")
+        return RedisToolCache.from_url(url, prefix=prefix)
+    raise RuntimeError(f"Unsupported TOOL_CACHE_BACKEND: {backend}")
 
 
 def _error_code(exc: Exception) -> str:

@@ -6,7 +6,13 @@ from pydantic import BaseModel
 from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import InMemoryCaseService, OlistService
 from app.retrieval.hybrid import HybridSupportRetriever
-from app.tool_call import ToolCallContext, ToolCallManager, ToolSpec, build_business_tool_manager
+from app.tool_call import (
+    RedisToolCache,
+    ToolCallContext,
+    ToolCallManager,
+    ToolSpec,
+    build_business_tool_manager,
+)
 
 
 class EmptyArgs(BaseModel):
@@ -59,6 +65,70 @@ async def test_tool_call_cache_for_read_only_tools(manager) -> None:
     assert second.ok
     assert not first.cached
     assert second.cached
+
+
+@pytest.mark.anyio
+async def test_tool_call_cache_is_tenant_scoped(manager) -> None:
+    args = {"query": "health beauty 类目有什么运营风险？"}
+    first = await manager.call(
+        "search_category_risk",
+        args,
+        ToolCallContext(role="support_agent", tenant_id="tenant-a"),
+    )
+    second = await manager.call(
+        "search_category_risk",
+        args,
+        ToolCallContext(role="support_agent", tenant_id="tenant-b"),
+    )
+    third = await manager.call(
+        "search_category_risk",
+        args,
+        ToolCallContext(role="support_agent", tenant_id="tenant-a"),
+    )
+
+    assert first.ok and second.ok and third.ok
+    assert not first.cached
+    assert not second.cached
+    assert third.cached
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.values = {}
+        self.ttls = {}
+
+    async def get(self, key: str):
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int) -> None:
+        self.values[key] = value
+        self.ttls[key] = ex
+
+
+@pytest.mark.anyio
+async def test_redis_tool_cache_serializes_result() -> None:
+    fake = FakeRedis()
+    cache = RedisToolCache(fake, prefix="test-cache")
+    manager = build_business_tool_manager(
+        olist_service=OlistService(),
+        knowledge_base=MarkdownKnowledgeBase(),
+        support_retriever=HybridSupportRetriever(),
+        case_service=InMemoryCaseService(),
+        cache_backend=cache,
+    )
+    args = {"query": "health beauty 类目有什么运营风险？"}
+
+    first = await manager.call("search_category_risk", args, ToolCallContext(role="support_agent"))
+    second = await manager.call("search_category_risk", args, ToolCallContext(role="support_agent"))
+
+    assert first.ok
+    assert second.ok
+    assert second.cached
+    assert len(fake.values) == 1
+    redis_key = next(iter(fake.values))
+    redis_value = next(iter(fake.values.values()))
+    assert redis_key.startswith("test-cache:")
+    assert redis_value.startswith('{"tool_name":"search_category_risk"')
 
 
 @pytest.mark.anyio

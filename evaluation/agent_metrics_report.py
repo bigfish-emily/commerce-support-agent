@@ -24,7 +24,13 @@ from app.olist.retrieval import (
 )
 from app.olist.service import InMemoryCaseService, OlistService
 from app.retrieval.hybrid import HybridSupportRetriever
-from app.tool_call import ToolCallContext, ToolCallManager, ToolSpec, build_business_tool_manager
+from app.tool_call import (
+    RedisToolCache,
+    ToolCallContext,
+    ToolCallManager,
+    ToolSpec,
+    build_business_tool_manager,
+)
 from app.tools.repair import repair_order_id
 from evaluation.rag_retrieval_eval import build_cases as build_category_cases
 from evaluation.rag_retrieval_eval import evaluate as evaluate_category_retrieval
@@ -250,7 +256,8 @@ def tool_metrics() -> list[Metric]:
             "ToolCallManager 治理项覆盖率",
             _pct(framework_checks["passed"], framework_checks["total"]),
             str(framework_checks["total"]),
-            "验证 schema、角色权限、只读缓存、timeout fallback、副作用幂等和审计脱敏是否可用。",
+            "验证 schema、角色权限、只读缓存、租户隔离、Redis backend、"
+            "timeout fallback、副作用幂等和审计脱敏是否可用。",
             "运行一个无 LLM mini harness，逐项检查 ToolCallManager 的治理能力。",
         ),
     ]
@@ -279,6 +286,35 @@ async def _tool_framework_checks() -> dict[str, int]:
     first = await manager.call("search_category_risk", query, ToolCallContext())
     second = await manager.call("search_category_risk", query, ToolCallContext())
     checks.append(first.ok and second.ok and (not first.cached) and second.cached)
+
+    tenant_a_first = await manager.call(
+        "search_category_risk",
+        query,
+        ToolCallContext(tenant_id="tenant-a"),
+    )
+    tenant_b = await manager.call(
+        "search_category_risk",
+        query,
+        ToolCallContext(tenant_id="tenant-b"),
+    )
+    tenant_a_second = await manager.call(
+        "search_category_risk",
+        query,
+        ToolCallContext(tenant_id="tenant-a"),
+    )
+    checks.append(tenant_a_first.ok and (not tenant_b.cached) and tenant_a_second.cached)
+
+    fake_redis = _FakeRedis()
+    redis_manager = build_business_tool_manager(
+        olist_service=OlistService(),
+        knowledge_base=MarkdownKnowledgeBase(),
+        support_retriever=HybridSupportRetriever(),
+        case_service=InMemoryCaseService(),
+        cache_backend=RedisToolCache(fake_redis, prefix="eval-cache"),
+    )
+    redis_first = await redis_manager.call("search_category_risk", query, ToolCallContext())
+    redis_second = await redis_manager.call("search_category_risk", query, ToolCallContext())
+    checks.append(redis_first.ok and redis_second.cached and len(fake_redis.values) == 1)
 
     async def slow_call(*args, **kwargs):
         await asyncio.sleep(0.01)
@@ -321,6 +357,17 @@ async def _tool_framework_checks() -> dict[str, int]:
     )
 
     return {"passed": sum(bool(check) for check in checks), "total": len(checks)}
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int) -> None:
+        self.values[key] = value
 
 
 def rag_metrics() -> list[Metric]:

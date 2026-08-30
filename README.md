@@ -46,7 +46,7 @@
 |---|---|
 | 参数校验 | 每个工具声明 Pydantic input schema，非法参数返回 `schema_validation_failed` |
 | 权限检查 | `ToolCallContext(role, tenant_id, user_id, session_id)` + tool allowed role 白名单 |
-| 缓存检查 | 只读工具使用 `sha256(tool+args)` 做 TTL cache；副作用工具不缓存 |
+| 缓存检查 | 只读工具使用 `tenant_id + sha256(tool+args)` 做 TTL cache，支持 in-memory/Redis backend；副作用工具不缓存 |
 | 异步执行 | async manager 统一调度 sync/async handler，sync handler 通过 `asyncio.to_thread` 执行 |
 | 超时/重试/退避 | 每个 `ToolSpec` 配置 timeout、retry count 和 exponential backoff |
 | 降级策略 | 工具可配置 fallback；例如事实/检索工具失败时返回安全降级结果 |
@@ -54,6 +54,15 @@
 | 审计日志 | 每次调用记录 who/when/tool/args_hash/redacted_args/result/latency，不保存明文长消息 |
 
 代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。
+
+默认本地启动使用进程内缓存；多 worker 部署时可以切 Redis：
+
+```bash
+pip install ".[redis]"
+set TOOL_CACHE_BACKEND=redis
+set REDIS_URL=redis://localhost:6379/0
+uvicorn app.main:app --reload
+```
 
 ## 数据来源
 
@@ -285,7 +294,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 63 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、售后运营决策和 benchmark summary parser |
+| Unit/Integration Tests | 65 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis cache backend 序列化、租户级 cache 隔离、售后运营决策和 benchmark summary parser |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
