@@ -11,7 +11,7 @@
 - 基于 Olist 公开电商数据构建 98,666 条订单事实与 73 个类目运营画像，离线加工配送延迟、低分率、取消率、支付金额、评价分等特征；结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 评测集，区分公开数据业务 eval 与外部 benchmark。
 - 实现 workflow-constrained RAG 与客服语料 hybrid retrieval：ResCommons 35k train 语料检索 100 条 test query，BM25 intent@1/intent@5 为 64%/81%，char-ngram rerank 后提升到 76%/91%，hybrid RRF 为 77%/91%；类目检索在 240 条别名/扰动评测中 adaptive rewrite Top1 为 92.08%，其中 realistic alias Top1 为 97.50%、noisy holdout Top1 为 10.00%。
 - 实现 MCP 企业工具接入边界：本地 MCP server 暴露 get_order_status、search_category_risk、generate_after_sales_priority_report、draft_escalation；client 侧支持 stdio 与 Streamable HTTP，预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter，保证工具 schema、鉴权、幂等和审计逻辑与 Agent graph 解耦。
-- 建立 CI 与多层评测：pytest 76 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s；接入 tau2/tau3-bench retail 官方客服 benchmark，DeepSeek retail base split 114 tasks pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；将 task `0/6/19/20/22/29` 沉淀为 bad-case regression，修复确认范围漂移、variant fallback、尺码保持、金额总计、地址回滚和跨订单误写问题。
+- 建立 CI 与多层评测：pytest 76 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s；接入 τ-bench retail（`tau2-bench` v1.0.1）客服 benchmark，DeepSeek retail base split 114 tasks pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；将 task `0/6/19/20/22/29` 沉淀为 bad-case regression，修复确认范围漂移、variant fallback、尺码保持、金额总计、地址回滚和跨订单误写问题。
 ```
 
 这版故意不写“生产级闭环全完成”，也不把所有 100% 当模型能力。最值得强调的是基线提升、数据规模、MCP 代码落点、真实 LLM 主链路和延迟成本。
@@ -29,7 +29,7 @@
 | Hybrid retrieval formula | `app/retrieval/hybrid.py` | 本地 char-ngram vector baseline，不是线上 embedding/reranker |
 | Real LLM eval | `evaluation/live_agent_eval.py`, `evaluation/live_agent_eval_results.jsonl` | 30 条回归集，不是 leaderboard benchmark |
 | Route drift eval | `evaluation/route_drift_eval.py` | 比较 pinned eval expectation，不等于线上流量漂移 |
-| tau2 adapter | `benchmark_adapters/tau2_retail_agent.py`, `scripts/run_tau2_retail_subset.py`, `benchmark_runs/tau2_retail/last_summary.md` | 当前是 retail base split 114-task local run，不是 public leaderboard |
+| tau2 adapter | `benchmark_adapters/tau2_retail_agent.py`, `scripts/run_tau2_retail_subset.py`, `benchmark_runs/tau2_retail/last_summary.md` | 当前是 τ-bench retail base split 114-task local run，不是 public leaderboard |
 
 ## Seven Hard Questions
 
@@ -137,7 +137,7 @@ Olist/Bitext/ResCommons 是业务 eval，不是 leaderboard benchmark。外部�
 
 | Benchmark | 价值 | 当前状态 | 下一步 |
 |---|---|---|---|
-| tau2/tau3 retail | 最贴客服/售后、tool-use、policy compliance、副作用动作 | 已在独立 Python 3.12 tau2 环境跑通 DeepSeek retail base split 114 tasks：pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；30-task subset 作为 smoke regression 达到 30/30，task `0/6/19/20/22/29` 已进入 bad-case 回归池 | 继续针对 full split 失败簇做 targeted regression；若预算允许，补多 trial 方差 |
+| τ-bench retail (`tau2-bench` v1.0.1) | 最贴客服/售后、tool-use、policy compliance、副作用动作 | 已在独立 Python 3.12 tau2 环境跑通 DeepSeek retail base split 114 tasks：pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；30-task subset 仅作为 smoke regression 达到 30/30，task `0/6/19/20/22/29` 已进入 bad-case 回归池 | 继续针对 full split 失败簇做 targeted regression；若预算允许，补多 trial 方差 |
 | tau2 banking_knowledge | 补非结构化政策 RAG 与多轮问答 | 未实现 adapter | retail 跑通后复用 HalfDuplexAgent prompt，加 knowledge retrieval 策略 |
 | BFCL subset | 横向验证 function/tool calling schema | launcher 与 score summary parser 已实现，dry-run 与 summary 单测通过 | 先跑 simple/multiple/parallel Python AST 子集，再扩 multi_turn_base |
 
@@ -148,7 +148,7 @@ Olist/Bitext/ResCommons 是业务 eval，不是 leaderboard benchmark。外部�
 简历上可以谨慎写：
 
 ```text
-接入 tau2/tau3-bench retail 官方客服 benchmark，使用 DeepSeek 在 retail base split 114 tasks 中达到 pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；同时实现 BFCL subset launcher 与 score summary parser，用于补充工具调用横向评测。
+接入 τ-bench retail（`tau2-bench` v1.0.1）客服 benchmark，使用 DeepSeek 在 retail base split 114 tasks 中达到 pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；同时实现 BFCL subset launcher 与 score summary parser，用于补充工具调用横向评测。
 ```
 
 不能写：

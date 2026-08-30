@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tau2/tau3-bench retail adapter for this project.
+"""τ-bench retail adapter for this project.
 
 Run this file inside a separate tau2-bench checkout, because tau2 requires
 Python 3.12+ while the main project intentionally stays on Python 3.11.

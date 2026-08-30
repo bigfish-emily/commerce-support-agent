@@ -1,4 +1,4 @@
-# tau2/tau3 Retail Benchmark Summary
+# τ-bench Retail Benchmark Summary
 
 results: `D:\研三\项目\agent-business-project\benchmark-tmp\data\simulations\olist_agent_tau2_retail_full_base_deepseek_v2`
 

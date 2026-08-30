@@ -1,4 +1,4 @@
-"""Prepare and run a tau2/tau3-bench retail subset in an external checkout.
+"""Prepare and run a τ-bench retail subset in an external tau2 checkout.
 
 The main project targets Python 3.11. tau2-bench currently requires Python
 3.12+, so this script intentionally executes the benchmark in a separate
@@ -94,7 +94,7 @@ def main() -> int:
     if args.auto_resume:
         command.append("--auto-resume")
     manifest = {
-        "benchmark": "tau2/tau3-bench retail",
+        "benchmark": "τ-bench retail",
         "tau2_root": str(tau2_root),
         "adapter": str(ADAPTER),
         "command": command,

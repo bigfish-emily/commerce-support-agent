@@ -187,11 +187,11 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 ### 21. 公开 benchmark 和业务 eval 怎么区分？
 
-公开数据和标准 benchmark 是两回事。Olist/Bitext/ResCommons 能证明我的业务链路在公开数据上可评测，但它们没有统一的 agent leaderboard、用户模拟器和外部 reward function。标准 benchmark 更像 tau2/tau3-bench：它自己定义 retail policy、工具、任务、用户模拟和评分器，被测 agent 只提交策略。因此我在项目里把两层分开：主项目跑业务 eval，另加 `benchmark_adapters/tau2_retail_agent.py` 去接 tau2 retail subset。
+公开数据和标准 benchmark 是两回事。Olist/Bitext/ResCommons 能证明我的业务链路在公开数据上可评测，但它们没有统一的 agent leaderboard、用户模拟器和外部 reward function。标准 benchmark 更像 τ-bench retail：它自己定义 retail policy、工具、任务、用户模拟和评分器，被测 agent 只提交策略。因此我在项目里把两层分开：主项目跑业务 eval，另加 `benchmark_adapters/tau2_retail_agent.py` 去接 `sierra-research/tau2-bench` v1.0.1。
 
 回答时可以说：我不会把 Olist 包装成 benchmark；Olist 是事实数据，tau2 retail 才是横向可比 benchmark。
 
-### 22. 为什么选择 tau2/tau3-bench retail？
+### 22. 为什么选择 τ-bench retail？
 
 因为它和本项目重合度最高：都是客服/售后场景，都有订单查询、用户查询、退货、换货、取消、改地址、转人工等工具，也都有 policy compliance 和 write-action 风险。它比 BFCL 更业务化，比 SWE-bench 更贴电商 Agent。tau2 的接口要求实现 `HalfDuplexAgent.generate_next_message()`，我的 adapter 接收 tau2 的 tools 和 domain_policy，不复用 Olist 数据，避免自证循环。
 
@@ -201,11 +201,11 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 ### 24. tau2 现在跑到什么程度？为什么还不是完整 leaderboard？
 
-因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，所以我把 benchmark 放在外部 checkout，通过 `scripts/run_tau2_retail_subset.py` 调用 adapter。现在已经用 DeepSeek `deepseek/deepseek-chat` 跑完 retail `base` split 114 条任务：`pass^1=91.23%`（104/114），DB match `105/114`，read action `346/357`，write action `162/176`，NL assertions `58/61`，p95 `32.77s`，平均总成本约 `$0.006036`/conversation（61/114 cost-complete samples）。
+因为 `tau2-bench` v1.0.1 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，所以我把 benchmark 放在外部 checkout，通过 `scripts/run_tau2_retail_subset.py` 调用 adapter。现在已经用 DeepSeek `deepseek/deepseek-chat` 跑完 retail `base` split 114 条任务：`pass^1=91.23%`（104/114），DB match `105/114`，read action `346/357`，write action `162/176`，NL assertions `58/61`，p95 `32.77s`，平均总成本约 `$0.006036`/conversation（61/114 cost-complete samples）。
 
-这个结果比 30 条 subset 更适合面试，因为它暴露了真实失败簇：复杂退换货确认范围、地址状态推断、最终答复金额绑定，以及少量 benchmark/user-simulator 边界。第一轮 30-task subset 是 `96.67%`，失败 task `6` 的根因是多商品写操作的确认范围漂移，修复后 30-task smoke regression 达到 `30/30`。后续 task `0/19/20/22/29` 进入 bad-case 回归池，对应补充了 fallback variant、同尺码写工具修复器、金额总计、默认地址回滚和跨订单误写约束。
+这个结果比 30 条 smoke subset 更适合面试，因为它暴露了真实失败簇：复杂退换货确认范围、地址状态推断、最终答复金额绑定，以及少量 benchmark/user-simulator 边界。早期 smoke run 失败 task `6` 的根因是多商品写操作的确认范围漂移，修复后 30-task smoke regression 达到 `30/30`，但我不会把这个 100% 当主结果写进简历。后续 task `0/19/20/22/29` 进入 bad-case 回归池，对应补充了 fallback variant、同尺码写工具修复器、金额总计、默认地址回滚和跨订单误写约束。
 
-它还不是公开 leaderboard，因为没有多 trial、pass^k 方差和官方提交流程。面试里我会把它称为“tau2 retail base split local run + failed-case regression”，不会说成榜单成绩。
+它还不是公开 leaderboard，因为没有多 trial、pass^k 方差和官方提交流程。面试里我会把它称为“τ-bench retail base split local run + failed-case regression”，不会说成榜单成绩。
 
 ### 25. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
 
@@ -296,7 +296,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 - policy KB 不是企业真实 SOP；
 - hybrid retrieval 是本地 baseline，还不是 ES + vector DB + reranker；
 - 可观测性是 SQLite 和简单接口，不是 OpenTelemetry + dashboard；
-- tau2 目前已跑 retail base split 114 tasks，pass^1 91.23%；完整 leaderboard 仍需要多 trial、固定提交环境和成本预算。
+- τ-bench retail 目前已跑 `tau2-bench` v1.0.1 base split 114 tasks，pass^1 91.23%；完整 leaderboard 仍需要多 trial、固定提交环境和成本预算。
 
 回答时不要否认缺口，要强调这些是个人项目和生产系统之间的边界，并说明可落地的演进路径。
 
@@ -319,6 +319,6 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 | RAG 能力 | 7.8/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
 | 工具治理 | 9/10 | ToolCallManager 覆盖 schema、角色白名单、in-memory/Redis cache backend、async、timeout/retry/backoff、fallback、标准输出、audit；另有 MCP server/client adapter、SQLite 持久化幂等和 duplicate 响应 | 接企业 IAM/OAuth 和不可变审计流 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
-| 评测体系 | 9/10 | 76 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、tau2 retail base split 114 tasks pass^1 91.23%、bad-case regression 覆盖 task `0/6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累 full split 失败样本回归池 |
+| 评测体系 | 9/10 | 76 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、τ-bench retail base split 114 tasks pass^1 91.23%、bad-case regression 覆盖 task `0/6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累 full split 失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |

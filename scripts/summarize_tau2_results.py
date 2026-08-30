@@ -1,4 +1,4 @@
-"""Summarize tau2/tau3-bench results without importing tau2.
+"""Summarize τ-bench/tau2 result files without importing tau2.
 
 tau2 can save either a single JSON file or a directory containing results.json
 and per-simulation JSON files. This script reads both formats and writes a small
@@ -18,7 +18,7 @@ OUT_DIR = ROOT / "benchmark_runs" / "tau2_retail"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize tau2/tau3 result files.")
+    parser = argparse.ArgumentParser(description="Summarize tau2 result files.")
     parser.add_argument("--results", required=True, help="tau2 result JSON or result directory.")
     parser.add_argument("--out", default=str(OUT_DIR / "last_summary.md"))
     args = parser.parse_args()
@@ -169,7 +169,7 @@ def _percentile(values: list[float], percentile: int) -> float:
 
 def render_markdown(path: Path, summary: dict) -> str:
     lines = [
-        "# tau2/tau3 Retail Benchmark Summary",
+        "# τ-bench Retail Benchmark Summary",
         "",
         f"results: `{path}`",
         "",

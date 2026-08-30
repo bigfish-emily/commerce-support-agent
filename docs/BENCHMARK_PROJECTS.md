@@ -9,15 +9,14 @@ business project.
 The right move is not to invent more synthetic project metrics. The right move
 is to connect the existing Agent to official, externally comparable benchmarks:
 
-1. tau2/tau3-bench retail first.
+1. τ-bench retail first, using the `sierra-research/tau2-bench` package.
 2. BFCL second, focused on function/tool-calling reliability.
 3. GAIA/AgentBench only if there is extra time, because the ROI is lower for an
    e-commerce support resume project.
 
 The old `sierra-research/tau-bench` repository now warns that its airline and
 retail tasks are outdated. Use the actively updated `sierra-research/tau2-bench`
-repository, whose package name is still `tau2` and whose current release is
-described as tau3/τ³-bench.
+repository. The installed package name is `tau2`; this local run used v1.0.1.
 
 ## Current Position
 
@@ -31,9 +30,9 @@ These are useful project-level evaluations, but they are not leaderboard-style
 benchmarks. In interviews, describe them as "public-data-driven business evals",
 not as a standard benchmark.
 
-## Why tau2/tau3-bench Retail
+## Why τ-bench Retail
 
-tau2/tau3-bench is the closest external benchmark to this project because it
+τ-bench retail is the closest external benchmark to this project because it
 evaluates customer-service agents in simulated real-world domains. A domain
 contains a policy, tools, tasks, and a user simulator. The retail domain covers
 order lookup, product/user lookup, cancellation, return, exchange, address
@@ -115,7 +114,7 @@ model/provider, latency, cost coverage, and failed-task count clearly stated.
 
 ## Why Not Put tau2 in pyproject
 
-The main app uses Python 3.11. tau2/tau3-bench requires Python `>=3.12,<3.14`.
+The main app uses Python 3.11. The `tau2` package requires Python `>=3.12,<3.14`.
 Keeping the benchmark in an external checkout avoids dependency drift and lets
 GitHub CI remain fast and deterministic.
 
@@ -123,7 +122,7 @@ GitHub CI remain fast and deterministic.
 
 BFCL is valuable, but it answers a different question.
 
-tau2/tau3 retail asks: can the full agent converse with a simulated customer,
+τ-bench retail asks: can the full agent converse with a simulated customer,
 follow retail policy, call tools, and finish the business task?
 
 BFCL asks: can the model or adapter produce correct function calls across
@@ -164,7 +163,7 @@ exports. It is schema-tolerant across BFCL versions and is covered by unit tests
 
 | Candidate | Value | Difficulty | Workload | ROI | Recommendation |
 |---|---|---:|---:|---:|---|
-| tau2/tau3-bench retail | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Full retail base split done: pass^1 91.23% on 114 tasks; 30-task subset retained as bad-case smoke regression |
+| τ-bench retail (`tau2-bench` v1.0.1) | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Full retail base split done: pass^1 91.23% on 114 tasks; 30-task subset retained only as bad-case smoke regression |
 | tau2 banking_knowledge | Tests RAG over unstructured knowledge with configurable retrieval | Medium-High | 2-4 days | High for RAG roles | Do after retail |
 | Berkeley Function Calling Leaderboard subset | Measures schema/tool-call correctness across many APIs | Medium | 1-2 days for AST subset, 3-5 days for multi-turn/agentic | Medium-High | Do second; supports tool-governance claims |
 | ToolBench-style tool-use agent | Broad tool-use research benchmark | High | 1-2 weeks | Medium | Less aligned with e-commerce resume |

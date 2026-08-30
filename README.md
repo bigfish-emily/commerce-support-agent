@@ -330,13 +330,13 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 外部 benchmark 适配：
 
-本项目的 Olist/Bitext/ResCommons 评测属于公开数据驱动的业务评测，不等价于 leaderboard-style benchmark。为补充横向可比性，项目新增 tau2/tau3-bench retail adapter：
+本项目的 Olist/Bitext/ResCommons 评测属于公开数据驱动的业务评测，不等价于 leaderboard-style benchmark。为补充横向可比性，项目新增 τ-bench retail adapter（`sierra-research/tau2-bench` v1.0.1）：
 
 - `benchmark_adapters/tau2_retail_agent.py`：实现 tau2 `HalfDuplexAgent` 接口，运行时接收 tau2 retail policy 与工具。
 - `scripts/run_tau2_retail_subset.py`：在外部 tau2-bench checkout 中运行 retail subset，并记录可复现 manifest。
 - `docs/BENCHMARK_PROJECTS.md`：说明 tau2 retail、banking_knowledge、BFCL、SWE-bench Lite 等 benchmark 的价值、难度和 ROI。
 
-tau2/tau3-bench 当前需要 Python `>=3.12,<3.14`，而本项目服务端使用 Python 3.11，因此 benchmark 在独立环境中运行，不进入主应用依赖：
+τ-bench 当前 `tau2` package 需要 Python `>=3.12,<3.14`，而本项目服务端使用 Python 3.11，因此 benchmark 在独立环境中运行，不进入主应用依赖：
 
 ```bash
 python scripts/run_tau2_retail_subset.py \
@@ -353,11 +353,11 @@ python scripts/run_tau2_retail_subset.py \
 
 | Benchmark | 模型 | 范围 | 结果 |
 |---|---|---|---|
-| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | base split 114 tasks, 1 trial, serial concurrency | pass^1 91.23%（104/114），avg reward 91.23%，DB match 105/114，read action 346/357，write action 162/176，NL assertions 58/61，p95 32.77s，avg total cost `$0.006036`/conversation（61/114 cost-complete samples），failed tasks: 10 |
+| τ-bench retail (`tau2-bench` v1.0.1) | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | `base` split, 114 tasks, 1 trial, serial concurrency | pass^1 91.23%（104/114），avg reward 91.23%，DB match 105/114，read action 346/357，write action 162/176，NL assertions 58/61，p95 32.77s，avg total cost `$0.006036`/conversation（61/114 cost-complete samples），failed tasks: 10 |
 
 证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是本地 full-base 运行结果，不是公开 leaderboard submission。
 
-说明：这是 tau2 retail `base` split 的 full local run，不是公开 leaderboard submission。之前 30-task official subset 在 bad-case 修复后达到 30/30，作为快速回归证据保留；full run 暴露的失败集中在复杂退换货、地址状态推断、最终答复金额绑定和 benchmark/user-simulator 边界，已记录到 `docs/BAD_CASE_REGRESSION.md`。
+说明：这是 τ-bench retail `base` split 的本地完整运行，不是公开 leaderboard submission。之前 30-task 自选 smoke subset 在 bad-case 修复后达到 30/30，只作为快速回归证据保留；full run 暴露的失败集中在复杂退换货、地址状态推断、最终答复金额绑定和 benchmark/user-simulator 边界，已记录到 `docs/BAD_CASE_REGRESSION.md`。
 
 真实 LLM Agent 主链路评测：
 
