@@ -294,7 +294,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 65 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis cache backend 序列化、租户级 cache 隔离、售后运营决策和 benchmark summary parser |
+| Unit/Integration Tests | 71 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis cache backend 序列化、租户级 cache 隔离、售后运营决策、benchmark summary parser 和 tau2 bad-case guard |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -338,9 +338,11 @@ python scripts/run_tau2_retail_subset.py \
 
 | Benchmark | 模型 | 范围 | 结果 |
 |---|---|---|---|
-| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | 30 tasks, 1 trial, serial concurrency | pass^1 96.67%，avg reward 96.67%，DB match 29/30，read action 163/170，write action 37/38，NL assertions 10/10，p95 28.78s，avg total cost `$0.001573`/conversation，failed task: `6` |
+| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | 30 tasks, 1 trial, serial concurrency | pass^1 100.00%，avg reward 100.00%，DB match 30/30，read action 165/170，write action 38/38，NL assertions 10/10，p95 31.17s，avg total cost `$0.004248`/conversation，failed task: None |
 
 证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是 official subset result，不是完整 leaderboard submission。
+
+失败样本已进入回归池：task `6` 暴露“多商品副作用确认范围漂移”，task `20` 暴露“鞋类 variant 选择忽略默认保留尺码”，task `19/22/29` 暴露金额汇总、地址变更顺序和跨订单引用误执行问题。新增 confirmation-scope guard、footwear same-size preflight repair 和策略约束后，failed-4 targeted regression 4/4 通过，并完成最终 30-task 复评。证据文件：`benchmark_runs/tau2_retail/failed4_policy_regression_summary.md` 和 `docs/BAD_CASE_REGRESSION.md`。
 
 真实 LLM Agent 主链路评测：
 

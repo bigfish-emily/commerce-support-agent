@@ -15,6 +15,11 @@ from __future__ import annotations
 import argparse
 
 from pydantic import BaseModel, Field
+from tau2_confirmation_guard import (
+    CONFIRMATION_SCOPE_CLARIFICATION,
+    needs_item_scope_clarification,
+)
+from tau2_variant_guard import repair_same_size_variant_selection
 
 try:
     from tau2.agent.base_agent import HalfDuplexAgent, ValidAgentInputMessage
@@ -67,6 +72,21 @@ Execution policy:
   eligible pending orders, ask for explicit confirmation for the default address
   and each eligible order address. Once confirmed, execute those address updates
   before handling any later reversal request.
+- If the customer asks to change their default address and all possible order
+  addresses, first update the default address, then inspect all orders, then
+  update every eligible pending order address. If the customer later regrets the
+  default-address change, only revert the default user address unless they also
+  explicitly ask to revert order addresses.
+- For footwear variants, preserve the original shoe size by default. Only change
+  shoe size when the customer explicitly asks for a different size; otherwise
+  optimize price or other preferences within the same size.
+- When a user references an item in another pending order as the desired variant,
+  treat that order only as a lookup source. Do not modify, cancel, or otherwise
+  mutate the referenced pending order unless the user explicitly asks to change
+  that order too.
+- When comparing multiple refund/exchange/cancellation options, always state
+  each individual amount and the combined total for any grouped option, using
+  the exact arithmetic expression when possible.
 - If a required slot is missing or ambiguous, ask a concise clarification.
 - If a tool call fails, repair the parameter once when the error is recoverable;
   otherwise explain the limitation and follow the policy fallback.
@@ -113,6 +133,12 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
             messages=list(message_history) if message_history else [],
         )
 
+    def _last_assistant_text(self, state: RetailBenchmarkState) -> str:
+        for historic_message in reversed(state.messages):
+            if getattr(historic_message, "role", None) == "assistant":
+                return str(getattr(historic_message, "content", "") or "")
+        return ""
+
     def generate_next_message(
         self,
         message: ValidAgentInputMessage,
@@ -124,6 +150,14 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
         else:
             state.messages.append(message)
 
+        if not isinstance(message, MultiToolMessage) and needs_item_scope_clarification(
+            str(getattr(message, "content", "") or ""),
+            self._last_assistant_text(state),
+        ):
+            response = AssistantMessage.text(CONFIRMATION_SCOPE_CLARIFICATION)
+            state.messages.append(response)
+            return response, state
+
         response = generate(
             model=self.llm,
             tools=self.tools,
@@ -131,6 +165,7 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
             call_name="olist_policy_aware_retail_agent",
             **self.llm_args,
         )
+        repair_same_size_variant_selection(response, state.messages)
         state.messages.append(response)
         return response, state
 

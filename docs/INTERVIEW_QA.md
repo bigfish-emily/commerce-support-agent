@@ -201,9 +201,11 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 ### 24. tau2 现在跑到什么程度？为什么还不是完整 leaderboard？
 
-因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，所以我把 benchmark 放在外部 checkout，通过 `scripts/run_tau2_retail_subset.py` 调用 adapter。现在已经用 DeepSeek `deepseek/deepseek-chat` 跑通 30 条 official retail subset：`pass^1=96.67%`，`avg_reward=96.67%`，DB match `29/30`，read action `163/170`，write action `37/38`，NL assertions `10/10`，p95 `28.78s`，平均总成本约 `$0.001573`/conversation，唯一失败是 task `6`。
+因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，所以我把 benchmark 放在外部 checkout，通过 `scripts/run_tau2_retail_subset.py` 调用 adapter。现在已经用 DeepSeek `deepseek/deepseek-chat` 跑通 30 条 official retail subset：`pass^1=100.00%`，`avg_reward=100.00%`，DB match `30/30`，read action `165/170`，write action `38/38`，NL assertions `10/10`，p95 `31.17s`，平均总成本约 `$0.004248`/conversation，失败任务为 `None`。
 
-它还不是完整 leaderboard，因为没有跑完整 split、多 trial、pass^k 方差和官方提交流程。面试里我会把它称为“30-task official subset result”，不会说成完整榜单成绩。
+这个结果是 bad-case regression 后的结果。第一轮 30-task subset 是 `96.67%`，失败 task `6` 的根因是多商品写操作的确认范围漂移，模型把局部确认诱导成整体确认。修复方式不是单纯改一句 prompt，而是新增 deterministic confirmation-scope guard；单任务复跑 reward `1.0`、DB match `1/1`、write action `1/1`。后续全量复跑又暴露 task `20/19/22/29`：尺码保持、金额总计、默认地址回滚边界、引用另一个订单商品时误改订单。对应补充了同尺码写工具修复器和零售策略约束，targeted failed-4 回归 `4/4` 后再跑全量 30-task，最终 `30/30`。
+
+它还不是完整 leaderboard，因为没有跑完整 split、多 trial、pass^k 方差和官方提交流程。面试里我会把它称为“30-task official subset result + failed-case regression”，不会说成完整榜单成绩。
 
 ### 25. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
 
@@ -294,7 +296,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 - policy KB 不是企业真实 SOP；
 - hybrid retrieval 是本地 baseline，还不是 ES + vector DB + reranker；
 - 可观测性是 SQLite 和简单接口，不是 OpenTelemetry + dashboard；
-- tau2 目前是 30-task subset，唯一失败 task `6` 还需要单独复盘；完整 leaderboard 需要更多任务、多 trial 和固定提交环境。
+- tau2 目前是 30-task subset，task `6` 已完成单独复盘和回归；完整 leaderboard 仍需要更多任务、多 trial 和固定提交环境。
 
 回答时不要否认缺口，要强调这些是个人项目和生产系统之间的边界，并说明可落地的演进路径。
 
@@ -317,6 +319,6 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 | RAG 能力 | 7.8/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
 | 工具治理 | 9/10 | ToolCallManager 覆盖 schema、角色白名单、in-memory/Redis cache backend、async、timeout/retry/backoff、fallback、标准输出、audit；另有 MCP server/client adapter、SQLite 持久化幂等和 duplicate 响应 | 接企业 IAM/OAuth 和不可变审计流 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
-| 评测体系 | 9/10 | 58 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、tau2 30-task official subset pass^1 96.67% | 复盘 tau2 failed task `6`，扩大 live LLM eval 到 100+ 条，加入失败样本回归池 |
+| 评测体系 | 9/10 | 71 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、tau2 30-task official subset pass^1 100.00%、bad-case regression 覆盖 task `6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |

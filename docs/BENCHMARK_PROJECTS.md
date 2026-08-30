@@ -89,15 +89,23 @@ Current local tau2 result:
 - Environment: external `benchmark-tmp` tau2 checkout, Python 3.12.12,
   DeepSeek `deepseek/deepseek-chat` for agent, user simulator, and NL assertion
   judge.
-- Run: `olist_agent_tau2_retail_30_deepseek_final`, 30 retail tasks, 1 trial
+- Run: `olist_agent_tau2_retail_30_deepseek_final_regression`, 30 retail tasks, 1 trial
   each, serial concurrency, timeout 300s.
-- Result: `avg_reward=96.67%`, `pass^1=96.67%`, `db_match=29/30`,
-  `read_action_match=163/170`, `write_action_match=37/38`,
-  `nl_assertions=10/10`, `p95_duration=28.78s`,
-  `avg_total_cost=$0.001573`.
-- Failed task IDs: `6`.
+- Result: `avg_reward=100.00%`, `pass^1=100.00%`, `db_match=30/30`,
+  `read_action_match=165/170`, `write_action_match=38/38`,
+  `nl_assertions=10/10`, `p95_duration=31.17s`,
+  `avg_total_cost=$0.004248`.
+- Failed task IDs: `None`.
 - Evidence: `benchmark_runs/tau2_retail/last_summary.md` and
   `benchmark_runs/tau2_retail/last_summary.json`.
+- Bad-case regression: an earlier run failed task `6`; a later regression run
+  exposed task `19/20/22/29`. The fixes cover confirmation scope, same-size
+  footwear variants, exact amount totals, default-address rollback, and
+  cross-order reference writes. Evidence:
+  `benchmark_runs/tau2_retail/task6_scope_guard_summary.md`,
+  `benchmark_runs/tau2_retail/task20_user_only_size_guard_summary.md`,
+  `benchmark_runs/tau2_retail/failed4_policy_regression_summary.md`; write-up:
+  `docs/BAD_CASE_REGRESSION.md`.
 
 This is an official benchmark subset score, not a full leaderboard
 submission. It is safe to cite only with the subset size and model/provider
@@ -154,7 +162,7 @@ exports. It is schema-tolerant across BFCL versions and is covered by unit tests
 
 | Candidate | Value | Difficulty | Workload | ROI | Recommendation |
 |---|---|---:|---:|---:|---|
-| tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Done for 30-task DeepSeek official subset; next fix failed task `6`, then expand to 50 tasks or full split |
+| tau2/tau3-bench retail subset | Directly comparable customer-service agent score; closest to this project | Medium | 1-2 days for subset, 3-5 days for stronger agent | High | Done for 30-task DeepSeek official subset: pass^1 100.00%; task `6/19/20/22/29` bad-case regression passed; next expand to 50 tasks or full split |
 | tau2 banking_knowledge | Tests RAG over unstructured knowledge with configurable retrieval | Medium-High | 2-4 days | High for RAG roles | Do after retail |
 | Berkeley Function Calling Leaderboard subset | Measures schema/tool-call correctness across many APIs | Medium | 1-2 days for AST subset, 3-5 days for multi-turn/agentic | Medium-High | Do second; supports tool-governance claims |
 | ToolBench-style tool-use agent | Broad tool-use research benchmark | High | 1-2 weeks | Medium | Less aligned with e-commerce resume |
@@ -173,7 +181,7 @@ multi-turn tool-use reliability. I did not merge benchmark dependencies into the
 app dependency graph because their runtime requirements differ from the service.
 Instead I keep thin adapters and reproducible launch manifests. The current
 tau2 retail number is a 30-task DeepSeek official subset score, so I report it
-with task count, model, latency, cost, and failed task id, not as a full
+with task count, model, latency, cost, and failed-task status, not as a full
 leaderboard claim."
 
 Weak answer to avoid:
