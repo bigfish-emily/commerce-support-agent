@@ -3,7 +3,7 @@ from benchmark_adapters.tau2_confirmation_guard import (
     is_broad_confirmation,
     needs_item_scope_clarification,
 )
-from benchmark_adapters.tau2_variant_guard import repair_same_size_variant_selection
+from benchmark_adapters.tau2_variant_guard import repair_same_size_variant_selection, repair_variant_selection
 
 
 def test_tau2_task6_broad_multi_item_confirmation_needs_clarification() -> None:
@@ -183,3 +183,77 @@ def test_assistant_variant_description_does_not_count_as_user_size_change() -> N
 
     assert repair_same_size_variant_selection(Assistant(), history)
     assert ToolCall.arguments["new_item_ids"] == ["4107812777"]
+
+
+def test_tau2_task0_keyboard_no_backlight_fallback_is_repaired() -> None:
+    class ToolCall:
+        name = "exchange_delivered_order_items"
+        arguments = {
+            "order_id": "#W2378156",
+            "item_ids": ["1151293680", "4983901480"],
+            "new_item_ids": ["6342039236", "7747408585"],
+            "payment_method_id": "credit_card_9513926",
+        }
+
+    class Assistant:
+        tool_calls = [ToolCall()]
+
+    history = [
+        {
+            "role": "user",
+            "content": (
+                "I want the mechanical keyboard with clicky switches, RGB backlight, "
+                "full size. If that is not available, I will go for no backlight."
+            ),
+        },
+        {
+            "role": "tool",
+            "content": """{
+                "order_id": "#W2378156",
+                "items": [
+                    {
+                        "name": "Mechanical Keyboard",
+                        "product_id": "1656367028",
+                        "item_id": "1151293680",
+                        "options": {"switch type": "linear", "backlight": "RGB", "size": "full size"}
+                    },
+                    {
+                        "name": "Smart Thermostat",
+                        "product_id": "4896585277",
+                        "item_id": "4983901480",
+                        "options": {"compatibility": "Apple HomeKit", "color": "black"}
+                    }
+                ]
+            }""",
+        },
+        {
+            "role": "tool",
+            "content": """{
+                "name": "Mechanical Keyboard",
+                "product_id": "1656367028",
+                "variants": {
+                    "7706410293": {
+                        "item_id": "7706410293",
+                        "options": {"switch type": "clicky", "backlight": "none", "size": "full size"},
+                        "available": true,
+                        "price": 269.16
+                    },
+                    "6342039236": {
+                        "item_id": "6342039236",
+                        "options": {"switch type": "clicky", "backlight": "white", "size": "full size"},
+                        "available": true,
+                        "price": 244.91
+                    },
+                    "2299424241": {
+                        "item_id": "2299424241",
+                        "options": {"switch type": "clicky", "backlight": "RGB", "size": "80%"},
+                        "available": true,
+                        "price": 237.48
+                    }
+                }
+            }""",
+        },
+    ]
+
+    assert repair_variant_selection(Assistant(), history)
+    assert ToolCall.arguments["new_item_ids"] == ["7706410293", "7747408585"]

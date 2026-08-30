@@ -67,8 +67,11 @@ def test_tau2_summary_computes_pass_k_and_failures() -> None:
     assert result["pass_hat_ks"]["pass^1"] == 0.25
     assert result["pass_hat_ks"]["pass^2"] == 0.0
     assert result["avg_agent_cost"] == 0.025
+    assert result["agent_cost_coverage"] == {"count": 4, "total": 4}
     assert result["avg_user_cost"] == 0.0025
-    assert result["avg_total_cost"] == pytest.approx(0.02625)
+    assert result["user_cost_coverage"] == {"count": 2, "total": 4}
+    assert result["avg_total_cost"] == pytest.approx(0.0175)
+    assert result["total_cost_coverage"] == {"count": 2, "total": 4}
     assert result["db_match"] == {"correct": 1, "total": 2}
     assert result["action_match"] == {
         "read": {"correct": 1, "total": 2},

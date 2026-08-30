@@ -135,6 +135,26 @@ Regression evidence:
 - `benchmark_runs/tau2_retail/failed4_policy_regression_summary.md`
 - targeted failed set `19/20/22/29`: `4/4` passed.
 
+## tau2 Retail Task 0: Keyboard Fallback Variant Drift
+
+### Symptom
+
+The full-base smoke check for task `0` initially selected a full-size clicky
+keyboard with white backlight after the exact RGB target was unavailable. The
+task expected the user's explicit fallback preference: if RGB is not available,
+choose the same full-size clicky keyboard with no backlight.
+
+### Fix
+
+The variant preflight now treats explicit fallback preferences as hard
+constraints when choosing replacement variants. It inspects product variants
+from prior tool outputs and repairs keyboard replacements before the write tool
+call leaves the adapter.
+
+Regression evidence:
+
+- isolated task `0`: reward `1.0`, DB match `1/1`, write action match `1/1`.
+
 ## Current Regression Result
 
 After the targeted fixes, the 30-task tau2 retail subset was rerun from scratch:
@@ -157,4 +177,35 @@ Evidence:
 Local validation:
 
 - `ruff check .`
-- `python -m pytest`: `71 passed`
+- `python -m pytest`: `76 passed`
+
+## Full Base Split Result
+
+The project now has one full local run of tau2 retail `base` split:
+
+- `pass^1 = 91.23%`, `104/114`;
+- `avg_reward = 91.23%`;
+- DB match `105/114`;
+- read action match `346/357`;
+- write action match `162/176`;
+- NL assertions `58/61`;
+- p95 duration `32.77s`;
+- average total cost `$0.006036` on 61/114 cost-complete samples;
+- failed task ids: `25/34/37/41/44/72/76/86/105/109`.
+
+Failure clusters:
+
+- complex cancellation/return confirmation scope still has misses in tasks
+  `25/34/76`;
+- pending-order item/address mutation ordering still has misses in tasks
+  `37/41/72/86/109`;
+- final response must bind exact monetary amounts from tool outputs, exposed by
+  task `44`;
+- task `105` exposes a benchmark/user-simulator boundary where the customer
+  changed from exchanging both kettles to one kettle, while the expected
+  assertion still required both.
+
+Evidence:
+
+- `benchmark_runs/tau2_retail/last_summary.md`
+- `benchmark_runs/tau2_retail/last_summary.json`

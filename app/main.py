@@ -1,3 +1,4 @@
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from langgraph.graph import StateGraph
 from langgraph.types import Command
 
 from app.agent.state import AgentState
-from app.config.di import agent_graph_builder, guardrail, runtime_status
+from app.config.di import agent_graph_builder, guardrail, runtime_status, runtime_store
 from app.logger import format_state, setup_logger
 from app.models import (
     ChatRequest,
@@ -53,6 +54,24 @@ async def chat(request: ChatRequest) -> ChatResponse:
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("REQUEST | session=%s | message=%s", session_id, request.message[:100])
 
+    rate_limit = await _check_rate_limit(session_id)
+    if rate_limit is not None and not rate_limit.allowed:
+        result = {
+            "route_intent": "rate_limited",
+            "final_answer": (
+                "当前请求过于频繁，请稍后再试。"
+                f"预计 {rate_limit.reset_after_seconds} 秒后恢复。"
+            ),
+        }
+        record_trace(
+            session_id=session_id,
+            user_message=request.message,
+            result=result,
+            latency_ms=(time.perf_counter() - t_start) * 1000,
+            status="rate_limited",
+        )
+        return ChatResponse(answer=str(result["final_answer"]), session_id=session_id, sources=[])
+
     # Check if there's a pending interrupt for this session
     snapshot = await agent.aget_state(config)
     has_interrupt = bool(snapshot.next)
@@ -93,7 +112,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
     # Invoke graph - resume from interrupt or start new run
     t_graph = time.perf_counter()
     if has_interrupt:
-        if _pending_confirmation_expired(snapshot.values):
+        if await _pending_confirmation_expired(session_id, snapshot.values):
             logger.info("GRAPH RESUME | pending side effect expired, canceling")
             result = await agent.ainvoke(Command(resume="__hitl_timeout__"), config)
             record_trace(
@@ -253,12 +272,31 @@ def _pending_confirmation_response(state: dict) -> dict[str, object]:
     }
 
 
-def _pending_confirmation_expired(state: dict) -> bool:
+async def _check_rate_limit(session_id: str):
+    limit = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 1000)
+    if limit <= 0:
+        return None
+    key = "tenant:olist-demo:user:demo-user:minute"
+    return await runtime_store.check_rate_limit(key, limit=limit, window_seconds=60)
+
+
+async def _pending_confirmation_expired(session_id: str, state: dict) -> bool:
     pending = state.get("pending_side_effect", {}) if state else {}
     if not pending.get("requires_confirmation"):
         return False
+    if os.environ.get("RUNTIME_STORE_STRICT_HITL_TTL", "1").strip().lower() not in {"0", "false", "no"}:
+        runtime_pending = await runtime_store.get_pending_confirmation(session_id)
+        if runtime_pending is None:
+            return True
     expires_at = pending.get("expires_at")
     return isinstance(expires_at, (int, float)) and time.time() >= float(expires_at)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
 
 
 @app.get("/observability/summary", response_model=TraceSummaryResponse)

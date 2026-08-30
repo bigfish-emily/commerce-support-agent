@@ -21,6 +21,20 @@ _EXPLICIT_SIZE_CHANGE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _FOOTWEAR_RE = re.compile(r"\b(shoe|shoes|sneaker|sneakers|boot|boots)\b", re.IGNORECASE)
+_NO_BACKLIGHT_KEYBOARD_RE = re.compile(
+    r"\b(clicky|switch(?:es)?)\b.{0,180}\b(no backlight|without backlight)\b|"
+    r"\b(no backlight|without backlight)\b.{0,180}\b(clicky|switch(?:es)?)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_KEYBOARD_RE = re.compile(r"\bkeyboard\b", re.IGNORECASE)
+
+
+def repair_variant_selection(assistant_message: Any, history: Iterable[Any]) -> bool:
+    """Apply deterministic preflight repairs to outgoing variant write calls."""
+
+    repaired = repair_same_size_variant_selection(assistant_message, history)
+    repaired = _repair_keyboard_no_backlight_fallback(assistant_message, history) or repaired
+    return repaired
 
 
 def repair_same_size_variant_selection(assistant_message: Any, history: Iterable[Any]) -> bool:
@@ -63,6 +77,41 @@ def repair_same_size_variant_selection(assistant_message: Any, history: Iterable
                 new_item_ids[index] = replacement
                 repaired = True
 
+    return repaired
+
+
+def _repair_keyboard_no_backlight_fallback(assistant_message: Any, history: Iterable[Any]) -> bool:
+    user_history_text = _history_text(history, role="user")
+    if not _NO_BACKLIGHT_KEYBOARD_RE.search(user_history_text):
+        return False
+
+    products, item_to_product_id = _collect_product_catalog(history)
+    if not products:
+        return False
+
+    repaired = False
+    for tool_call in getattr(assistant_message, "tool_calls", None) or []:
+        if getattr(tool_call, "name", None) not in WRITE_ITEM_TOOLS:
+            continue
+        arguments = getattr(tool_call, "arguments", None)
+        if not isinstance(arguments, dict):
+            continue
+        item_ids = arguments.get("item_ids")
+        new_item_ids = arguments.get("new_item_ids")
+        if not isinstance(item_ids, list) or not isinstance(new_item_ids, list):
+            continue
+
+        for index, old_item_id in enumerate(item_ids):
+            if index >= len(new_item_ids):
+                continue
+            replacement = _keyboard_no_backlight_replacement(
+                str(old_item_id),
+                products,
+                item_to_product_id,
+            )
+            if replacement and replacement != new_item_ids[index]:
+                new_item_ids[index] = replacement
+                repaired = True
     return repaired
 
 
@@ -109,6 +158,41 @@ def _same_size_replacement(
     if not candidates:
         return None
 
+    best = max(candidates, key=lambda variant: float(variant.get("price") or 0))
+    return str(best["item_id"])
+
+
+def _keyboard_no_backlight_replacement(
+    old_item_id: str,
+    products: dict[str, dict[str, Any]],
+    item_to_product_id: dict[str, str],
+) -> str | None:
+    product_id = item_to_product_id.get(old_item_id)
+    if not product_id:
+        return None
+    product = products.get(product_id)
+    if not product or not _KEYBOARD_RE.search(str(product.get("name", ""))):
+        return None
+
+    variants = product.get("variants") or {}
+    old_variant = variants.get(old_item_id)
+    old_size = str(((old_variant or {}).get("options") or {}).get("size", ""))
+    candidates = []
+    for variant in variants.values():
+        options = variant.get("options") or {}
+        if not variant.get("available"):
+            continue
+        if str(options.get("switch type", "")).lower() != "clicky":
+            continue
+        if str(options.get("backlight", "")).lower() != "none":
+            continue
+        if old_size and str(options.get("size", "")) != old_size:
+            continue
+        if str(variant.get("item_id")) == old_item_id:
+            continue
+        candidates.append(variant)
+    if not candidates:
+        return None
     best = max(candidates, key=lambda variant: float(variant.get("price") or 0))
     return str(best["item_id"])
 

@@ -265,6 +265,26 @@ async def test_off_topic_rejected_by_guardrail(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_chat_rate_limit_uses_runtime_store(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    import app.main as main_module
+    from app.tool_call import InMemoryRuntimeStore
+
+    monkeypatch.setattr(main_module, "runtime_store", InMemoryRuntimeStore())
+    monkeypatch.setenv("AGENT_RATE_LIMIT_PER_MINUTE", "1")
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("policy"), _mock_policy_answer("LLM: policy answer"):
+        first = await client.post("/chat", json={"message": "退款政策是什么？", "session_id": "rate-s1"})
+        second = await client.post("/chat", json={"message": "退款政策是什么？", "session_id": "rate-s2"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert "请求过于频繁" in second.json()["answer"]
+
+
+@pytest.mark.anyio
 async def test_empty_message_rejected_by_pydantic(client: AsyncClient) -> None:
     response = await client.post("/chat", json={"message": ""})
     assert response.status_code == 422

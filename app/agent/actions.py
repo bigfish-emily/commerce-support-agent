@@ -13,7 +13,7 @@ from app.olist.service import (
     format_after_sales_report,
 )
 from app.retrieval.hybrid import HybridSupportRetriever
-from app.tool_call import ToolCallContext, ToolCallManager, build_business_tool_manager
+from app.tool_call import RuntimeStore, ToolCallContext, ToolCallManager, build_business_tool_manager
 from app.tools.repair import repair_order_id
 
 
@@ -31,6 +31,7 @@ class AgentActions:
         support_retriever: HybridSupportRetriever,
         case_service: InMemoryCaseService,
         tool_manager: ToolCallManager | None = None,
+        runtime_store: RuntimeStore | None = None,
     ) -> None:
         self._intent_planner = intent_planner
         self._qa_generator = qa_generator
@@ -40,11 +41,13 @@ class AgentActions:
         self._knowledge_base = knowledge_base
         self._support_retriever = support_retriever
         self._case_service = case_service
+        self._runtime_store = runtime_store
         self._tool_manager = tool_manager or build_business_tool_manager(
             olist_service=olist_service,
             knowledge_base=knowledge_base,
             support_retriever=support_retriever,
             case_service=case_service,
+            runtime_store=runtime_store,
         )
 
     async def plan_tasks(self, state: AgentState) -> dict:
@@ -187,7 +190,7 @@ class AgentActions:
             created_at = time.time()
             timeout_seconds = _hitl_timeout_seconds()
             update["escalation_draft"] = escalation_draft
-            update["pending_side_effect"] = {
+            pending_side_effect = {
                 "type": escalation_draft.get("action_type", "open_support_case"),
                 "requires_confirmation": True,
                 "task_intent": "escalation",
@@ -196,6 +199,13 @@ class AgentActions:
                 "expires_at": created_at + timeout_seconds,
                 "timeout_seconds": timeout_seconds,
             }
+            update["pending_side_effect"] = pending_side_effect
+            if self._runtime_store is not None:
+                await self._runtime_store.put_pending_confirmation(
+                    str(state.get("session_id", "unknown")),
+                    pending_side_effect,
+                    timeout_seconds,
+                )
         return update
 
     def search_marketplace_insights(self, state: AgentState) -> dict:
@@ -264,17 +274,24 @@ class AgentActions:
             }
         created_at = time.time()
         timeout_seconds = _hitl_timeout_seconds()
+        pending_side_effect = {
+            "type": draft.get("action_type", "open_support_case"),
+            "requires_confirmation": True,
+            "task_intent": "escalation",
+            "task_index": draft.get("task_index"),
+            "created_at": created_at,
+            "expires_at": created_at + timeout_seconds,
+            "timeout_seconds": timeout_seconds,
+        }
+        if self._runtime_store is not None:
+            await self._runtime_store.put_pending_confirmation(
+                str(state.get("session_id", "unknown")),
+                pending_side_effect,
+                timeout_seconds,
+            )
         return {
             "escalation_draft": draft,
-            "pending_side_effect": {
-                "type": draft.get("action_type", "open_support_case"),
-                "requires_confirmation": True,
-                "task_intent": "escalation",
-                "task_index": draft.get("task_index"),
-                "created_at": created_at,
-                "expires_at": created_at + timeout_seconds,
-                "timeout_seconds": timeout_seconds,
-            },
+            "pending_side_effect": pending_side_effect,
             "final_answer": answer,
             "messages": [*state["messages"], {"role": "assistant", "content": answer}],
         }
@@ -380,6 +397,8 @@ class AgentActions:
         completed = list(state.get("completed_tasks", []))
         if task_index is not None:
             completed = _upsert_task_status(completed, task_index, "escalation", status)
+        if self._runtime_store is not None:
+            await self._runtime_store.clear_pending_confirmation(str(state.get("session_id", "unknown")))
 
         return {
             "final_answer": answer,

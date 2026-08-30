@@ -1,13 +1,31 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
   marketplace-agent:
     build: .
+    depends_on:
+      - redis
     ports:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      RUNTIME_STORE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PREFIX: olist-agent
+      AGENT_RATE_LIMIT_PER_MINUTE: 120
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./app:/app/app
       - ./data:/app/data
       - ./evaluation:/app/evaluation
       - ./scripts:/app/scripts
+
+volumes:
+  redis-data:

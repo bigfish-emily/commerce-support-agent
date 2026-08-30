@@ -161,9 +161,9 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 主链路已经接入 `ToolCallManager`，不是裸函数散落调用。它把八件事集中起来：Pydantic schema 参数校验、角色白名单、只读工具 TTL cache、sync/async handler 统一异步执行、timeout/retry/backoff、fallback、标准 `ToolCallResult` 输出，以及审计事件。
 
-代码落点是 `app/tool_call/framework.py`；`app/agent/actions.py` 的订单查询、类目风险、运营报告、政策检索、客服样例检索、售后草稿和确认后的副作用执行都经过它。单测 `tests/test_tool_call_framework.py` 覆盖 schema fail、permission denied、cache hit、timeout fallback、幂等 duplicate 和 audit redaction。
+代码落点是 `app/tool_call/framework.py`；`app/agent/actions.py` 的订单查询、类目风险、运营报告、政策检索、客服样例检索、售后草稿和确认后的副作用执行都经过它。单测 `tests/test_tool_call_framework.py` 覆盖 schema fail、permission denied、cache hit、timeout fallback、幂等 duplicate、audit redaction、Redis runtime、限流、HITL TTL 和副作用锁。
 
-边界也要说清楚：当前鉴权是 demo 级 RBAC 白名单，不是企业 IAM/OAuth；缓存已经抽象成 backend，默认 in-memory，设置 `TOOL_CACHE_BACKEND=redis` 和 `REDIS_URL` 后可以切 Redis；审计事件是内存事件 + 主 trace，不是 Kafka 审计流。生产里会把 `ToolCallContext` 接登录态、租户、OAuth scopes 和工具 registry，把 audit 写入不可变事件流。
+边界也要说清楚：当前鉴权是 demo 级 RBAC 白名单，不是企业 IAM/OAuth；Redis 已从单纯 cache backend 升级为 runtime store，负责只读工具缓存、`/chat` 固定窗口限流、HITL pending TTL 和副作用分布式锁；最终 case 幂等记录、LangGraph checkpoint 和 trace 仍落 SQLite。生产里会把 `ToolCallContext` 接登录态、租户、OAuth scopes 和工具 registry，把 audit 写入 Kafka/Pulsar 这类不可变事件流。
 
 ## HITL 与副作用
 
@@ -175,9 +175,9 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 ### 19. HITL 超时怎么做？
 
-当前已经落地在主 `/chat` 入口和 LangGraph checkpoint 里。副作用草稿生成时，`pending_side_effect` 会写入 `created_at`、`expires_at` 和 `timeout_seconds`，默认 `HITL_TIMEOUT_SECONDS=900`。用户在过期后再回复 yes，服务端不会执行旧工具调用，而是 resume graph 并取消旧 interrupt。
+当前已经落地在主 `/chat` 入口、LangGraph checkpoint 和 Redis runtime store 里。副作用草稿生成时，`pending_side_effect` 会写入 `created_at`、`expires_at` 和 `timeout_seconds`，默认 `HITL_TIMEOUT_SECONDS=900`；同时写入 `hitl:{session_id}` 并设置 Redis TTL。用户在过期后再回复 yes，服务端不会执行旧工具调用，而是 resume graph 并取消旧 interrupt。
 
-代码落点：`app/agent/actions.py` 写入超时元数据；`app/main.py` 的 `_pending_confirmation_expired()` 在恢复 interrupt 前拦截过期确认；`tests/test_main.py` 覆盖“超时后 yes 不会创建 CASE”的行为。
+代码落点：`app/agent/actions.py` 写入超时元数据和 runtime pending；`app/main.py` 的 `_pending_confirmation_expired()` 在恢复 interrupt 前同时检查 checkpoint 时间和 Redis TTL；`tests/test_main.py` 覆盖“超时后 yes 不会创建 CASE”的行为。
 
 ### 20. 用户回复“不要/算了”怎么处理？
 
@@ -201,11 +201,11 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 ### 24. tau2 现在跑到什么程度？为什么还不是完整 leaderboard？
 
-因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，所以我把 benchmark 放在外部 checkout，通过 `scripts/run_tau2_retail_subset.py` 调用 adapter。现在已经用 DeepSeek `deepseek/deepseek-chat` 跑通 30 条 official retail subset：`pass^1=100.00%`，`avg_reward=100.00%`，DB match `30/30`，read action `165/170`，write action `38/38`，NL assertions `10/10`，p95 `31.17s`，平均总成本约 `$0.004248`/conversation，失败任务为 `None`。
+因为 tau2/tau3-bench 要独立 Python 3.12+ 环境和真实 LLM key；当前主项目是 Python 3.11，所以我把 benchmark 放在外部 checkout，通过 `scripts/run_tau2_retail_subset.py` 调用 adapter。现在已经用 DeepSeek `deepseek/deepseek-chat` 跑完 retail `base` split 114 条任务：`pass^1=91.23%`（104/114），DB match `105/114`，read action `346/357`，write action `162/176`，NL assertions `58/61`，p95 `32.77s`，平均总成本约 `$0.006036`/conversation（61/114 cost-complete samples）。
 
-这个结果是 bad-case regression 后的结果。第一轮 30-task subset 是 `96.67%`，失败 task `6` 的根因是多商品写操作的确认范围漂移，模型把局部确认诱导成整体确认。修复方式不是单纯改一句 prompt，而是新增 deterministic confirmation-scope guard；单任务复跑 reward `1.0`、DB match `1/1`、write action `1/1`。后续全量复跑又暴露 task `20/19/22/29`：尺码保持、金额总计、默认地址回滚边界、引用另一个订单商品时误改订单。对应补充了同尺码写工具修复器和零售策略约束，targeted failed-4 回归 `4/4` 后再跑全量 30-task，最终 `30/30`。
+这个结果比 30 条 subset 更适合面试，因为它暴露了真实失败簇：复杂退换货确认范围、地址状态推断、最终答复金额绑定，以及少量 benchmark/user-simulator 边界。第一轮 30-task subset 是 `96.67%`，失败 task `6` 的根因是多商品写操作的确认范围漂移，修复后 30-task smoke regression 达到 `30/30`。后续 task `0/19/20/22/29` 进入 bad-case 回归池，对应补充了 fallback variant、同尺码写工具修复器、金额总计、默认地址回滚和跨订单误写约束。
 
-它还不是完整 leaderboard，因为没有跑完整 split、多 trial、pass^k 方差和官方提交流程。面试里我会把它称为“30-task official subset result + failed-case regression”，不会说成完整榜单成绩。
+它还不是公开 leaderboard，因为没有多 trial、pass^k 方差和官方提交流程。面试里我会把它称为“tau2 retail base split local run + failed-case regression”，不会说成榜单成绩。
 
 ### 25. LLM 是怎么进入主链路的？不是只有 LLM-as-Judge 吧？
 
@@ -296,7 +296,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 - policy KB 不是企业真实 SOP；
 - hybrid retrieval 是本地 baseline，还不是 ES + vector DB + reranker；
 - 可观测性是 SQLite 和简单接口，不是 OpenTelemetry + dashboard；
-- tau2 目前是 30-task subset，task `6` 已完成单独复盘和回归；完整 leaderboard 仍需要更多任务、多 trial 和固定提交环境。
+- tau2 目前已跑 retail base split 114 tasks，pass^1 91.23%；完整 leaderboard 仍需要多 trial、固定提交环境和成本预算。
 
 回答时不要否认缺口，要强调这些是个人项目和生产系统之间的边界，并说明可落地的演进路径。
 
@@ -319,6 +319,6 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 | RAG 能力 | 7.8/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
 | 工具治理 | 9/10 | ToolCallManager 覆盖 schema、角色白名单、in-memory/Redis cache backend、async、timeout/retry/backoff、fallback、标准输出、audit；另有 MCP server/client adapter、SQLite 持久化幂等和 duplicate 响应 | 接企业 IAM/OAuth 和不可变审计流 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
-| 评测体系 | 9/10 | 71 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、tau2 30-task official subset pass^1 100.00%、bad-case regression 覆盖 task `6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累失败样本回归池 |
+| 评测体系 | 9/10 | 76 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、tau2 retail base split 114 tasks pass^1 91.23%、bad-case regression 覆盖 task `0/6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累 full split 失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |

@@ -55,14 +55,29 @@
 
 代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。
 
-默认本地启动使用进程内缓存；多 worker 部署时可以切 Redis：
+### Redis Runtime Store
+
+默认本地启动使用进程内 runtime store；多 worker 部署时可以切 Redis。Redis 不替代 SQLite，而是承担短生命周期运行时治理：
+
+| 能力 | Redis key 语义 | 说明 |
+|---|---|---|
+| 工具缓存 | `tool-cache:{sha256}` | 只缓存只读工具成功结果，按 tenant 隔离并设置 TTL |
+| 请求限流 | `rate:{tenant}:{user}:{window}` | `/chat` 入口固定窗口计数，超限返回可恢复错误并写 trace |
+| HITL TTL | `hitl:{session_id}` | 副作用确认草稿双写 LangGraph checkpoint + Redis TTL，过期后拒绝旧 yes |
+| 副作用锁 | `lock:side-effect:{sha256}` | 多 worker 并发确认同一退款/取消/改地址时，只允许一个执行者进入工具 |
+
+SQLite 仍负责最终 case 幂等记录和 trace 审计，避免 Redis 过期、重启或淘汰导致业务证据丢失。
 
 ```bash
 pip install ".[redis]"
-set TOOL_CACHE_BACKEND=redis
+set RUNTIME_STORE_BACKEND=redis
 set REDIS_URL=redis://localhost:6379/0
+set REDIS_PREFIX=olist-agent
+set AGENT_RATE_LIMIT_PER_MINUTE=120
 uvicorn app.main:app --reload
 ```
+
+Docker Compose 会启动 `redis:7-alpine` 并让 Agent 默认使用 Redis runtime store。
 
 ## 数据来源
 
@@ -294,7 +309,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 71 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis cache backend 序列化、租户级 cache 隔离、售后运营决策、benchmark summary parser 和 tau2 bad-case guard |
+| Unit/Integration Tests | 76 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、租户级 cache 隔离、售后运营决策、benchmark summary parser 和 tau2 bad-case guard |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -334,15 +349,15 @@ python scripts/run_tau2_retail_subset.py \
 
 去掉 `--dry-run` 并配置 API key 后即可运行真实 retail subset；结果由 tau2 写入 `data/simulations/`。
 
-当前已落盘的官方 benchmark subset：
+当前已落盘的官方 benchmark：
 
 | Benchmark | 模型 | 范围 | 结果 |
 |---|---|---|---|
-| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | 30 tasks, 1 trial, serial concurrency | pass^1 100.00%，avg reward 100.00%，DB match 30/30，read action 165/170，write action 38/38，NL assertions 10/10，p95 31.17s，avg total cost `$0.004248`/conversation，failed task: None |
+| tau2/tau3-bench retail | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | base split 114 tasks, 1 trial, serial concurrency | pass^1 91.23%（104/114），avg reward 91.23%，DB match 105/114，read action 346/357，write action 162/176，NL assertions 58/61，p95 32.77s，avg total cost `$0.006036`/conversation（61/114 cost-complete samples），failed tasks: 10 |
 
-证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是 official subset result，不是完整 leaderboard submission。
+证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是本地 full-base 运行结果，不是公开 leaderboard submission。
 
-失败样本已进入回归池：task `6` 暴露“多商品副作用确认范围漂移”，task `20` 暴露“鞋类 variant 选择忽略默认保留尺码”，task `19/22/29` 暴露金额汇总、地址变更顺序和跨订单引用误执行问题。新增 confirmation-scope guard、footwear same-size preflight repair 和策略约束后，failed-4 targeted regression 4/4 通过，并完成最终 30-task 复评。证据文件：`benchmark_runs/tau2_retail/failed4_policy_regression_summary.md` 和 `docs/BAD_CASE_REGRESSION.md`。
+说明：这是 tau2 retail `base` split 的 full local run，不是公开 leaderboard submission。之前 30-task official subset 在 bad-case 修复后达到 30/30，作为快速回归证据保留；full run 暴露的失败集中在复杂退换货、地址状态推断、最终答复金额绑定和 benchmark/user-simulator 边界，已记录到 `docs/BAD_CASE_REGRESSION.md`。
 
 真实 LLM Agent 主链路评测：
 

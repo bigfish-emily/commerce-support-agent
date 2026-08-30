@@ -19,7 +19,7 @@ from tau2_confirmation_guard import (
     CONFIRMATION_SCOPE_CLARIFICATION,
     needs_item_scope_clarification,
 )
-from tau2_variant_guard import repair_same_size_variant_selection
+from tau2_variant_guard import repair_variant_selection
 
 try:
     from tau2.agent.base_agent import HalfDuplexAgent, ValidAgentInputMessage
@@ -80,6 +80,11 @@ Execution policy:
 - For footwear variants, preserve the original shoe size by default. Only change
   shoe size when the customer explicitly asks for a different size; otherwise
   optimize price or other preferences within the same size.
+- Preserve the customer's original fallback preferences when recommending
+  variants. Example: if the customer says they want a clicky full-size RGB
+  keyboard, but if that exact variant is unavailable they will take no
+  backlight, then choose an available clicky full-size no-backlight keyboard
+  rather than inventing a white-backlight compromise.
 - When a user references an item in another pending order as the desired variant,
   treat that order only as a lookup source. Do not modify, cancel, or otherwise
   mutate the referenced pending order unless the user explicitly asks to change
@@ -165,7 +170,7 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
             call_name="olist_policy_aware_retail_agent",
             **self.llm_args,
         )
-        repair_same_size_variant_selection(response, state.messages)
+        repair_variant_selection(response, state.messages)
         state.messages.append(response)
         return response, state
 

@@ -16,7 +16,8 @@ RUN uv pip install --system --no-cache \
     aiosqlite \
     langchain-openai \
     mcp \
-    python-dotenv
+    python-dotenv \
+    redis
 
 # Copy application code and runtime/eval data
 COPY app/ app/

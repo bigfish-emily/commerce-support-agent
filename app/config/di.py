@@ -13,7 +13,7 @@ from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerat
 from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import OlistService, SQLiteCaseService
 from app.retrieval.hybrid import HybridSupportRetriever
-from app.tool_call import build_business_tool_manager, build_tool_cache_from_env
+from app.tool_call import build_business_tool_manager, build_runtime_store_from_env
 
 load_dotenv()
 
@@ -21,13 +21,14 @@ olist_service = OlistService()
 knowledge_base = MarkdownKnowledgeBase()
 support_retriever = HybridSupportRetriever()
 case_service = SQLiteCaseService()
-tool_cache = build_tool_cache_from_env()
+runtime_store = build_runtime_store_from_env()
 tool_manager = build_business_tool_manager(
     olist_service=olist_service,
     knowledge_base=knowledge_base,
     support_retriever=support_retriever,
     case_service=case_service,
-    cache_backend=tool_cache,
+    cache_backend=runtime_store,
+    runtime_store=runtime_store,
 )
 
 llm_client = LlmClient(
@@ -35,10 +36,26 @@ llm_client = LlmClient(
     model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
     base_url=os.environ.get("OPENAI_BASE_URL"),
 )
+runtime_backend = (
+    os.environ.get("RUNTIME_STORE_BACKEND")
+    or os.environ.get("TOOL_CACHE_BACKEND")
+    or "memory"
+).strip().lower() or "memory"
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 runtime_status = {
     "mode": llm_client.mode,
     "model": llm_client.model,
     "base_url": llm_client.base_url,
+    "runtime_backend": runtime_backend,
+    "rate_limit_per_minute": _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 1000),
 }
 
 intent_planner = IntentPlanner(llm_client.chat_openai)
@@ -57,6 +74,7 @@ actions = AgentActions(
     support_retriever=support_retriever,
     case_service=case_service,
     tool_manager=tool_manager,
+    runtime_store=runtime_store,
 )
 
 agent_graph_builder = AgentGraph(actions=actions)

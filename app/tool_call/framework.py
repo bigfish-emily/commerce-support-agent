@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -54,6 +55,47 @@ class ToolCacheBackend(Protocol):
         """Persist a successful read-only tool result with TTL."""
 
 
+class RateLimitDecision(BaseModel):
+    allowed: bool
+    key: str
+    limit: int
+    remaining: int
+    reset_after_seconds: int
+
+
+class RuntimeStore(ToolCacheBackend, Protocol):
+    """Short-lived runtime coordination backend.
+
+    Redis is useful for this layer because these records are intentionally
+    ephemeral: read-only tool cache, request rate windows, HITL pending TTL, and
+    short side-effect locks. Durable trace and final idempotency records still
+    belong in SQLite or an append-only event stream.
+    """
+
+    async def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+        """Increment a fixed-window counter and return whether the call is allowed."""
+
+    async def put_pending_confirmation(
+        self,
+        session_id: str,
+        pending: dict[str, Any],
+        ttl_seconds: int,
+    ) -> None:
+        """Store a HITL pending action with TTL."""
+
+    async def get_pending_confirmation(self, session_id: str) -> dict[str, Any] | None:
+        """Return HITL pending action while its TTL is still alive."""
+
+    async def clear_pending_confirmation(self, session_id: str) -> None:
+        """Remove HITL pending action after confirm/cancel/timeout."""
+
+    async def acquire_lock(self, key: str, ttl_seconds: int) -> str | None:
+        """Return a lock token when acquired, or None when another worker holds it."""
+
+    async def release_lock(self, key: str, token: str) -> None:
+        """Release a lock only if its token still matches."""
+
+
 class InMemoryToolCache:
     def __init__(self) -> None:
         self._store: dict[str, tuple[float, ToolCallResult]] = {}
@@ -70,6 +112,67 @@ class InMemoryToolCache:
 
     async def set(self, key: str, result: ToolCallResult, ttl_seconds: float) -> None:
         self._store[key] = (time.time() + ttl_seconds, result)
+
+
+class InMemoryRuntimeStore(InMemoryToolCache):
+    """In-process runtime store used by tests and single-worker demos."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._counters: dict[str, tuple[float, int]] = {}
+        self._pending: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._locks: dict[str, tuple[float, str]] = {}
+
+    async def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+        now = time.time()
+        expires_at, count = self._counters.get(key, (now + window_seconds, 0))
+        if expires_at <= now:
+            expires_at, count = now + window_seconds, 0
+        count += 1
+        self._counters[key] = (expires_at, count)
+        remaining = max(limit - count, 0)
+        return RateLimitDecision(
+            allowed=count <= limit,
+            key=key,
+            limit=limit,
+            remaining=remaining,
+            reset_after_seconds=max(int(expires_at - now), 0),
+        )
+
+    async def put_pending_confirmation(
+        self,
+        session_id: str,
+        pending: dict[str, Any],
+        ttl_seconds: int,
+    ) -> None:
+        self._pending[session_id] = (time.time() + max(ttl_seconds, 1), dict(pending))
+
+    async def get_pending_confirmation(self, session_id: str) -> dict[str, Any] | None:
+        cached = self._pending.get(session_id)
+        if not cached:
+            return None
+        expires_at, pending = cached
+        if expires_at <= time.time():
+            self._pending.pop(session_id, None)
+            return None
+        return dict(pending)
+
+    async def clear_pending_confirmation(self, session_id: str) -> None:
+        self._pending.pop(session_id, None)
+
+    async def acquire_lock(self, key: str, ttl_seconds: int) -> str | None:
+        now = time.time()
+        cached = self._locks.get(key)
+        if cached and cached[0] > now:
+            return None
+        token = uuid.uuid4().hex
+        self._locks[key] = (now + max(ttl_seconds, 1), token)
+        return token
+
+    async def release_lock(self, key: str, token: str) -> None:
+        cached = self._locks.get(key)
+        if cached and cached[1] == token:
+            self._locks.pop(key, None)
 
 
 class RedisToolCache:
@@ -100,6 +203,85 @@ class RedisToolCache:
 
     def _namespaced(self, key: str) -> str:
         return f"{self._prefix}:{key}"
+
+
+class RedisRuntimeStore(RedisToolCache):
+    """Redis-backed runtime store for multi-worker deployments."""
+
+    def __init__(self, client: Any, prefix: str = "olist-agent") -> None:
+        super().__init__(client, prefix=f"{prefix.rstrip(':')}:tool-cache")
+        self._runtime_prefix = prefix.rstrip(":")
+
+    @classmethod
+    def from_url(cls, url: str, prefix: str = "olist-agent") -> RedisRuntimeStore:
+        try:
+            from redis import asyncio as redis_asyncio
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
+            raise RuntimeError("Install redis support with `pip install .[redis]`.") from exc
+        return cls(redis_asyncio.from_url(url, decode_responses=True), prefix=prefix)
+
+    async def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+        namespaced = self._runtime_key("rate", key)
+        count = int(await self._client.incr(namespaced))
+        if count == 1:
+            await self._client.expire(namespaced, max(window_seconds, 1))
+            reset_after = window_seconds
+        else:
+            ttl = int(await self._client.ttl(namespaced))
+            reset_after = ttl if ttl > 0 else window_seconds
+        return RateLimitDecision(
+            allowed=count <= limit,
+            key=key,
+            limit=limit,
+            remaining=max(limit - count, 0),
+            reset_after_seconds=max(reset_after, 0),
+        )
+
+    async def put_pending_confirmation(
+        self,
+        session_id: str,
+        pending: dict[str, Any],
+        ttl_seconds: int,
+    ) -> None:
+        await self._client.set(
+            self._runtime_key("hitl", session_id),
+            json.dumps(pending, ensure_ascii=False, sort_keys=True),
+            ex=max(ttl_seconds, 1),
+        )
+
+    async def get_pending_confirmation(self, session_id: str) -> dict[str, Any] | None:
+        raw = await self._client.get(self._runtime_key("hitl", session_id))
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        return dict(json.loads(raw))
+
+    async def clear_pending_confirmation(self, session_id: str) -> None:
+        await self._client.delete(self._runtime_key("hitl", session_id))
+
+    async def acquire_lock(self, key: str, ttl_seconds: int) -> str | None:
+        token = uuid.uuid4().hex
+        acquired = await self._client.set(
+            self._runtime_key("lock", key),
+            token,
+            ex=max(ttl_seconds, 1),
+            nx=True,
+        )
+        return token if acquired else None
+
+    async def release_lock(self, key: str, token: str) -> None:
+        redis_key = self._runtime_key("lock", key)
+        script = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        end
+        return 0
+        """
+        await self._client.eval(script, 1, redis_key, token)
+
+    def _runtime_key(self, kind: str, key: str) -> str:
+        return f"{self._runtime_prefix}:{kind}:{key}"
 
 
 class OrderStatusArgs(BaseModel):
@@ -157,9 +339,11 @@ class ToolCallManager:
         self,
         specs: list[ToolSpec],
         cache_backend: ToolCacheBackend | None = None,
+        runtime_store: RuntimeStore | None = None,
     ) -> None:
         self._specs = {spec.name: spec for spec in specs}
-        self._cache = cache_backend or InMemoryToolCache()
+        self._runtime = runtime_store
+        self._cache = cache_backend or runtime_store or InMemoryRuntimeStore()
         self.audit_events: list[dict[str, Any]] = []
 
     def list_tools(self) -> list[str]:
@@ -200,11 +384,36 @@ class ToolCallManager:
                 self._audit(context, name, validated, result)
                 return result
 
-        result = await self._execute(spec, validated, context, started)
+        if spec.side_effect and self._runtime is not None:
+            result = await self._execute_with_lock(spec, validated, context, started)
+        else:
+            result = await self._execute(spec, validated, context, started)
         if cache_key and result.ok:
             await self._cache.set(cache_key, result, float(spec.cache_ttl_seconds))
         self._audit(context, name, validated, result)
         return result
+
+    async def _execute_with_lock(
+        self,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        context: ToolCallContext,
+        started: float,
+    ) -> ToolCallResult:
+        lock_key = self._cache_key(spec.name, arguments, context.tenant_id)
+        lock_ttl = max(int((spec.timeout_seconds + spec.backoff_seconds) * (spec.retries + 1)) + 1, 3)
+        token = await self._runtime.acquire_lock(f"side-effect:{lock_key}", lock_ttl)
+        if token is None:
+            return self._failure(
+                spec.name,
+                "side_effect_in_progress",
+                "Another worker is already executing the same side-effect request.",
+                started,
+            )
+        try:
+            return await self._execute(spec, arguments, context, started)
+        finally:
+            await self._runtime.release_lock(f"side-effect:{lock_key}", token)
 
     async def _execute(
         self,
@@ -330,6 +539,7 @@ def build_business_tool_manager(
     support_retriever: HybridSupportRetriever,
     case_service: InMemoryCaseService,
     cache_backend: ToolCacheBackend | None = None,
+    runtime_store: RuntimeStore | None = None,
 ) -> ToolCallManager:
     support_roles = frozenset({"support_agent", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
@@ -450,20 +660,29 @@ def build_business_tool_manager(
             ),
         ],
         cache_backend=cache_backend,
+        runtime_store=runtime_store,
     )
 
 
 def build_tool_cache_from_env() -> ToolCacheBackend:
-    backend = os.environ.get("TOOL_CACHE_BACKEND", "memory").strip().lower()
+    return build_runtime_store_from_env()
+
+
+def build_runtime_store_from_env() -> RuntimeStore:
+    backend = (
+        os.environ.get("RUNTIME_STORE_BACKEND")
+        or os.environ.get("TOOL_CACHE_BACKEND")
+        or "memory"
+    ).strip().lower()
     if backend in {"memory", "inmemory", "local", ""}:
-        return InMemoryToolCache()
+        return InMemoryRuntimeStore()
     if backend == "redis":
         url = os.environ.get("REDIS_URL")
         if not url:
-            raise RuntimeError("TOOL_CACHE_BACKEND=redis requires REDIS_URL.")
-        prefix = os.environ.get("TOOL_CACHE_PREFIX", "olist-agent:tool-cache")
-        return RedisToolCache.from_url(url, prefix=prefix)
-    raise RuntimeError(f"Unsupported TOOL_CACHE_BACKEND: {backend}")
+            raise RuntimeError("RUNTIME_STORE_BACKEND=redis requires REDIS_URL.")
+        prefix = os.environ.get("REDIS_PREFIX") or os.environ.get("TOOL_CACHE_PREFIX", "olist-agent")
+        return RedisRuntimeStore.from_url(url, prefix=prefix)
+    raise RuntimeError(f"Unsupported RUNTIME_STORE_BACKEND: {backend}")
 
 
 def _error_code(exc: Exception) -> str:

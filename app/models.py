@@ -29,3 +29,5 @@ class RuntimeStatusResponse(BaseModel):
     mode: str
     model: str
     base_url: str
+    runtime_backend: str = "memory"
+    rate_limit_per_minute: int = 1000
