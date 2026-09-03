@@ -1,4 +1,5 @@
 from app.mcp_server import (
+    assess_after_sales_case,
     draft_escalation,
     generate_after_sales_priority_report,
     get_order_status,
@@ -30,3 +31,15 @@ def test_mcp_escalation_tool() -> None:
     result = draft_escalation(ORDER_ID)
     assert result["found"] is True
     assert result["order_id"] == ORDER_ID
+
+
+def test_mcp_after_sales_case_assessment_tool() -> None:
+    result = assess_after_sales_case(
+        "refund_request",
+        ORDER_ID,
+        f"订单 {ORDER_ID} 延迟送达，我想申请退款",
+    )
+
+    assert result["found"] is True
+    assert result["decision"]["outcome"] == "needs_human_review"
+    assert result["verification"]["required_next_step"] == "hitl"

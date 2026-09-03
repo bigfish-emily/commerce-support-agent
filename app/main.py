@@ -155,6 +155,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "retrieved_insights": [],
             "retrieved_policy": [],
             "retrieved_support_docs": [],
+            "after_sales_cases": [],
             "final_answer": "",
         }
         logger.info("GRAPH INPUT%s", format_state(initial_state))

@@ -5,13 +5,14 @@
 ## Resume Bullet Version
 
 ```tex
-\entryhead{电商客服/售后运营 Agent 系统}{Python · FastAPI · LangGraph · MCP · RAG · Pydantic · Docker}{2026.7 -- 至今}
+\entryhead{电商售后 Case Resolution Agent}{Python · FastAPI · LangGraph · MCP · RAG · Redis · SQLite · Docker}{2026.7 -- 至今}
 
-- 设计并实现面向客服坐席与售后运营主管的业务 Agent，覆盖订单查询、政策问答、类目风险分析、售后优先队列与退款/取消/改地址/发票等副作用申请；使用 LangGraph 固化 plan-and-execute 流程，LLM 负责意图规划、抽槽、query rewriting 和回答生成，业务事实与副作用动作由确定性工具执行。
-- 基于 Olist 公开电商数据构建 98,666 条订单事实与 73 个类目运营画像，离线加工配送延迟、低分率、取消率、支付金额、评价分等特征；结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 评测集，区分公开数据业务 eval 与外部 benchmark。
-- 实现 workflow-constrained RAG 与客服语料 hybrid retrieval：ResCommons 35k train 语料检索 100 条 test query，BM25 intent@1/intent@5 为 64%/81%，char-ngram rerank 后提升到 76%/91%，hybrid RRF 为 77%/91%；类目检索在 240 条别名/扰动评测中 adaptive rewrite Top1 为 92.08%，其中 realistic alias Top1 为 97.50%、noisy holdout Top1 为 10.00%。
-- 实现 MCP 企业工具接入边界：本地 MCP server 暴露 get_order_status、search_category_risk、generate_after_sales_priority_report、draft_escalation；client 侧支持 stdio 与 Streamable HTTP，预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter，保证工具 schema、鉴权、幂等和审计逻辑与 Agent graph 解耦。
-- 建立 CI 与多层评测：pytest 76 passed，真实 LangGraph 轨迹 eval 245/245，Bitext intent mapping 1,080/1,080，多意图拆解 60/60；DeepSeek live Agent eval 30/30，覆盖真实 LLM planner/抽槽/生成/guard 主链路，记录 p50 10.83s、p95 26.05s；接入 τ-bench retail（`tau2-bench` v1.0.1）客服 benchmark，DeepSeek retail base split 114 tasks pass^1 91.23%、DB match 105/114、read action 346/357、write action 162/176、NL assertions 58/61、p95 32.77s；将 task `0/6/19/20/22/29` 沉淀为 bad-case regression，修复确认范围漂移、variant fallback、尺码保持、金额总计、地址回滚和跨订单误写问题。
+- 设计并实现面向电商客服与售后的聊天式业务 Agent，围绕退款、取消、改地址、发票和投诉升级等售后 case，完成用户诉求理解、订单/物流/支付事实查询、政策检索、结构化决策、客户回复草稿和高风险动作 HITL。
+- 基于 LangGraph 构建 workflow-constrained plan-and-execute 链路，LLM 负责意图规划、槽位抽取、query rewriting 和回复生成；订单事实、权限边界、金额/状态判断和副作用动作由确定性工具与 ToolCallManager 执行。
+- 设计 `AfterSalesDecisionEngine + Verifier`，将订单状态、配送延迟、支付金额、评价分、政策命中转为 `approve/reject/needs_human_review/ask_clarification` 决策；已送达订单取消会被拒绝，退款/补偿等资金动作必须进入 HITL。
+- 基于 Olist 公开数据构建 98,666 条订单事实与 73 个类目画像，结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 回归；ResCommons hybrid retrieval 将 BM25 intent@1/intent@5 从 64%/81% 提升至 77%/91%。
+- 实现 MCP 企业工具边界：本地 MCP server 暴露 `get_order_status`、`assess_after_sales_case`、`generate_after_sales_priority_report` 等工具，client 侧支持 stdio 与 Streamable HTTP，并预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter。
+- 建立 CI 与多层评测：pytest 81 passed，DeepSeek live Agent eval 30/30；接入 τ-bench retail（`tau2-bench` v1.0.1）base split 114 tasks，DeepSeek V4-Flash pass^1 91.23%、write action match 92.05%、NL assertions 95.08%、p95 32.77s，并将失败样本沉淀为 bad-case regression。
 ```
 
 这版故意不写“生产级闭环全完成”，也不把所有 100% 当模型能力。最值得强调的是基线提升、数据规模、MCP 代码落点、真实 LLM 主链路和延迟成本。

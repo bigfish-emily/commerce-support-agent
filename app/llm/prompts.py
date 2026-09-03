@@ -1,13 +1,13 @@
 """System prompts for each LLM node."""
 
-INTENT_PLANNER_PROMPT: str = """You are a task planner for an e-commerce support and operations assistant.
+INTENT_PLANNER_PROMPT: str = """You are a task planner for an e-commerce after-sales case resolution assistant.
 
 Split the user's message into one or more ordered business tasks. Use these intent labels only:
 - "qa" - category-level, product-level, seller/customer operations, logistics risk, or review-risk questions
 - "ops_decision" - after-sales operations decisions, priority queues, category/order risk reports, action plans
 - "order_status" - exact status, delivery, payment, review, or order facts for a specific order id
 - "policy" - refund, cancellation fee, delivery period, invoice, payment method, account, FAQ, or support policy questions
-- "escalation" - follow up, compensate, open a case, draft a support response, or handle delayed/canceled/low-review orders
+- "escalation" - after-sales case actions such as refund, compensation, cancellation, address change, invoice request, support-case creation, or complaint follow-up
 
 Rules:
 - Preserve the order of user requests.
@@ -17,8 +17,9 @@ Rules:
 - Use ops_decision only for read-only prioritization/reporting across categories or orders: dashboards, daily reports, priority queues, action plans, or manager decision support. Do not use it for a single category risk summary.
 - Fill action_type for side-effect tasks:
   open_support_case, refund_request, cancel_order, change_address, invoice_request, or none.
-- If escalation depends on checking an order first, set depends_on to the order_status task index.
+- If an after-sales action depends on checking an order first, set depends_on to the order_status task index.
 - Do not merge read-only policy questions with side-effect execution requests.
+- Do not let the LLM decide final refund/cancellation eligibility. It only plans the task; the workflow will call deterministic order tools, policy retrieval, AfterSalesDecisionEngine, Verifier, HITL, and idempotent write tools.
 
 Examples:
 "home_appliances 类目的订单主要有哪些物流风险？" → one qa task

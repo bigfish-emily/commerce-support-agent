@@ -6,7 +6,7 @@ WEB_CONSOLE_HTML = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>E-Commerce Support Agent</title>
+  <title>E-Commerce After-Sales Agent</title>
   <style>
     :root {
       color-scheme: light;
@@ -192,8 +192,8 @@ WEB_CONSOLE_HTML = """
   <header>
     <div class="topbar">
       <div class="title-block">
-        <h1>E-Commerce Support & Operations Agent</h1>
-        <div class="subtitle">面向客服/运营的 Agent 控制台：规划、工具调用、RAG、HITL、轨迹回放</div>
+        <h1>E-Commerce After-Sales Case Agent</h1>
+        <div class="subtitle">面向客服与售后的 Agent 控制台：case 决策、工具调用、RAG、HITL、轨迹回放</div>
       </div>
       <div class="runtime" aria-live="polite">
         <div class="dot" id="runtimeDot"></div>
@@ -253,8 +253,9 @@ WEB_CONSOLE_HTML = """
       { label: "类目运营风险", text: "health beauty 类目有什么运营风险？", desc: "检索策略：query rewrite 后命中 health_beauty 统计。" },
       { label: "订单事实查询", text: "帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态", desc: "确定性订单工具：状态、延迟、支付、评价。" },
       { label: "政策问答", text: "退款补偿能不能直接承诺？", desc: "政策 KB 检索和 grounded answer。" },
-      { label: "多意图 + HITL", text: "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后生成售后升级话术", desc: "只读任务先执行，副作用停在确认门。" },
-      { label: "退款副作用", text: "给订单 203096f03d82e0dffbc41ebc2e2bcfb7 申请退款", desc: "生成退款草稿，确认后返回 REFUND 工具结果。" },
+      { label: "多意图 + HITL", text: "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后申请退款", desc: "只读任务先执行，售后 case 决策后进入确认门。" },
+      { label: "退款 Case", text: "给订单 203096f03d82e0dffbc41ebc2e2bcfb7 申请退款", desc: "生成结构化决策和客户回复草稿，确认后返回 REFUND 工具结果。" },
+      { label: "取消拦截", text: "取消订单 203096f03d82e0dffbc41ebc2e2bcfb7", desc: "已送达订单会被决策层拒绝，不进入副作用执行。" },
       { label: "越界请求", text: "帮我写一个操作系统内核", desc: "测试 input guard 拒绝非业务请求。" }
     ];
     function renderExamples() {

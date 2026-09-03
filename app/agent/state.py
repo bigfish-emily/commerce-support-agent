@@ -18,6 +18,7 @@ class AgentState(TypedDict):
     retrieved_insights: list[dict[str, object]]
     retrieved_policy: list[dict[str, object]]
     retrieved_support_docs: list[dict[str, object]]
+    after_sales_cases: list[dict[str, object]]
     escalation_draft: NotRequired[dict[str, object]]
     pending_side_effect: NotRequired[dict[str, object]]
     user_response: NotRequired[str]

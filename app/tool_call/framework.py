@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from app.after_sales import AfterSalesDecisionEngine
 from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import (
     InMemoryCaseService,
@@ -308,6 +309,13 @@ class SideEffectArgs(BaseModel):
     message_text: str = Field(..., min_length=1, max_length=4000)
 
 
+class AfterSalesCaseArgs(BaseModel):
+    action_type: str = Field(..., min_length=1, max_length=64)
+    order_id: str = Field(..., min_length=32, max_length=64)
+    user_request: str = Field(..., min_length=1, max_length=4000)
+    policy_sections: list[dict[str, Any]] = Field(default_factory=list)
+
+
 ToolHandler = Callable[[dict[str, Any], ToolCallContext], dict[str, Any] | Awaitable[dict[str, Any]]]
 FallbackHandler = Callable[[dict[str, Any], ToolCallContext, Exception], dict[str, Any]]
 
@@ -543,6 +551,7 @@ def build_business_tool_manager(
 ) -> ToolCallManager:
     support_roles = frozenset({"support_agent", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
+    after_sales_engine = AfterSalesDecisionEngine()
 
     return ToolCallManager(
         [
@@ -643,6 +652,22 @@ def build_business_tool_manager(
                 },
             ),
             ToolSpec(
+                name="assess_after_sales_case",
+                description=(
+                    "Assess an after-sales case using deterministic order facts, "
+                    "policy references, verifier checks, and customer-reply draft."
+                ),
+                input_model=AfterSalesCaseArgs,
+                allowed_roles=support_roles,
+                timeout_seconds=1,
+                retries=1,
+                handler=lambda args, ctx: _assess_after_sales_case(
+                    after_sales_engine,
+                    olist_service,
+                    args,
+                ),
+            ),
+            ToolSpec(
                 name="execute_side_effect",
                 description="Execute a confirmed idempotent side-effect action.",
                 input_model=SideEffectArgs,
@@ -662,6 +687,40 @@ def build_business_tool_manager(
         cache_backend=cache_backend,
         runtime_store=runtime_store,
     )
+
+
+def _assess_after_sales_case(
+    engine: AfterSalesDecisionEngine,
+    olist_service: OlistService,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    order = olist_service.get_order_status(str(args["order_id"]))
+    if order is None:
+        return {
+            "found": False,
+            "case": None,
+            "decision": {
+                "outcome": "ask_clarification",
+                "reason_code": "order_not_found",
+                "confidence": 0.0,
+                "requires_human": False,
+            },
+            "verification": {"passed": True, "flags": [], "required_next_step": "clarify"},
+            "customer_reply": "没有找到该订单，请确认完整订单号后再提交售后请求。",
+        }
+    case = engine.assess(
+        action_type=str(args["action_type"]),
+        order=order,
+        user_request=str(args["user_request"]),
+        policy_sections=list(args.get("policy_sections", [])),
+    )
+    return {
+        "found": True,
+        "case": case.model_dump(),
+        "decision": case.decision.model_dump(),
+        "verification": case.verification.model_dump(),
+        "customer_reply": case.customer_reply,
+    }
 
 
 def build_tool_cache_from_env() -> ToolCacheBackend:

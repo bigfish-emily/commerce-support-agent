@@ -8,9 +8,13 @@ import mcp_types as types
 from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
 
+from app.after_sales import AfterSalesDecisionEngine
+from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import OlistService, format_after_sales_report, format_order_status
 
 olist_service = OlistService()
+knowledge_base = MarkdownKnowledgeBase()
+after_sales_engine = AfterSalesDecisionEngine()
 
 
 def get_order_status(order_id: str) -> str:
@@ -34,6 +38,29 @@ def draft_escalation(order_id: str) -> dict[str, object]:
 def generate_after_sales_priority_report(query: str = "") -> dict[str, object]:
     """Generate a read-only after-sales operations decision report."""
     return olist_service.after_sales_priority_report(query)
+
+
+def assess_after_sales_case(action_type: str, order_id: str, user_request: str) -> dict[str, object]:
+    """Assess refund/cancel/address/invoice requests before any write action is executed."""
+    order = olist_service.get_order_status(order_id)
+    if order is None:
+        return {"found": False, "reason": "order_not_found"}
+    policy_hits = knowledge_base.search(user_request, k=3)
+    case = after_sales_engine.assess(
+        action_type=action_type,
+        order=order,
+        user_request=user_request,
+        policy_sections=[
+            {
+                "section_title": hit.section_title,
+                "source": hit.source,
+                "text": hit.text,
+                "score": hit.score,
+            }
+            for hit in policy_hits
+        ],
+    )
+    return {"found": True, **case.model_dump()}
 
 
 async def list_tools(
@@ -62,6 +89,21 @@ async def list_tools(
                 description="Generate high-risk category and priority after-sales order recommendations.",
                 input_schema=_object_schema({"query": "Natural-language operations decision request"}, []),
             ),
+            types.Tool(
+                name="assess_after_sales_case",
+                description="Assess an after-sales case into approve/reject/review before write actions.",
+                input_schema=_object_schema(
+                    {
+                        "action_type": (
+                            "refund_request, cancel_order, change_address, "
+                            "invoice_request, or open_support_case"
+                        ),
+                        "order_id": "32-character Olist order id",
+                        "user_request": "Original customer or support-agent request",
+                    },
+                    ["action_type", "order_id", "user_request"],
+                ),
+            ),
         ]
     )
 
@@ -80,6 +122,12 @@ async def call_tool(
     elif params.name == "generate_after_sales_priority_report":
         report = generate_after_sales_priority_report(str(args.get("query", "")))
         structured = {"report": report, "answer": format_after_sales_report(report)}
+    elif params.name == "assess_after_sales_case":
+        structured = assess_after_sales_case(
+            str(args.get("action_type", "")),
+            str(args.get("order_id", "")),
+            str(args.get("user_request", "")),
+        )
     else:
         return types.CallToolResult(
             content=[types.TextContent(text=f"Unknown tool: {params.name}")],

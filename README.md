@@ -1,24 +1,38 @@
-# E-Commerce Support & Operations Agent
+# E-Commerce After-Sales Case Resolution Agent
 
-面向电商客服/运营场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，而是展示生产级 Agent 开发中的关键能力：意图拆解、workflow-constrained RAG、企业工具接入、HITL 副作用治理、可恢复执行、审计轨迹和可量化评测。
+面向电商客服与售后履约场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，也不是把订单查询、RAG、退款按钮简单拼在一起，而是围绕一次售后 case 的完整解决过程：理解用户诉求、查询订单/物流/支付事实、检索售后政策、形成结构化决策、校验风险、低风险自动处理或高风险 HITL 转人工，并留下可审计、可回放、可评测的执行轨迹。
 
 ## 业务场景
 
 典型用户输入：
 
 ```text
-查订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态；如果已经延迟且低分，生成客服跟进话术，确认后创建售后升级 case。
+我的订单 203096f03d82e0dffbc41ebc2e2bcfb7 晚到了很多天，我想申请退款。请查一下订单和政策，给我处理结果。
 ```
 
-系统支持五类业务能力：
+核心业务对象是 `AfterSalesCase`，不是一条普通聊天消息。一次 case 会经历：
+
+```text
+Case Created
+  -> LLM 理解售后诉求并拆任务
+  -> 订单/物流/支付/评价事实查询
+  -> 售后政策 RAG 检索
+  -> AfterSalesDecisionEngine 形成 approve/reject/review/clarify 决策
+  -> Verifier 校验政策依据、金额/状态事实和副作用边界
+  -> HITL 确认或安全出口
+  -> ToolCallManager 执行幂等 write action
+  -> SQLite trace 记录与回放
+```
+
+系统内部仍使用五类 route intent，但它们服务于售后 case resolution，而不是孤立功能：
 
 | Route Intent | 场景 | LLM 负责 | 确定性工具负责 |
 |---|---|---|---|
 | `order_status` | 精确订单状态、配送、支付、评价查询 | 识别用户是否在查订单、抽取 order_id | 从订单事实索引读取可信业务数据 |
-| `qa` | 类目运营风险、物流风险、低分评价分析 | 将业务问题转成类目检索需求并生成分析口径 | 从全量订单聚合结果中检索类目风险 |
+| `qa` | 类目运营风险、物流风险、低分评价分析 | 将业务问题转成类目检索需求并生成分析口径 | 从全量订单聚合结果中检索类目风险，辅助售后队列判断 |
 | `ops_decision` | 售后运营日报、优先跟进类目/订单、客服主管决策 | 理解运营决策目标，组织报告口径 | 从全量订单和类目风险索引生成只读优先级报告 |
 | `policy` | 退款、取消、发票、支付、账号、配送时效、补偿边界 | 基于检索到的政策段落生成客服回答 | 从 markdown policy KB 检索相关章节 |
-| `escalation` | 售后升级、退款/补偿申请、取消订单、改地址、发票申请、创建 case | 判断副作用意图、生成可审核草稿 | 幂等执行对应企业工具，必须经过 HITL 确认 |
+| `escalation` | 退款/补偿申请、取消订单、改地址、发票申请、创建 case | 判断副作用意图，生成面向用户/坐席的回复草稿 | 先由 `assess_after_sales_case` 形成结构化决策，再通过 HITL 和幂等工具执行 |
 
 这个边界是面试中的核心：**LLM 处理自然语言不确定性，业务事实、权限、副作用和状态迁移交给确定性系统**。
 
@@ -174,8 +188,10 @@ flowchart LR
     PolicyRag --> PolicyLLM[LLM Answer]
     PolicyLLM --> Output
 
-    Executor -- escalation --> Draft[Draft Escalation]
-    Draft --> HITL[LangGraph interrupt]
+    Executor -- escalation --> CaseAssess[AfterSalesCase Assessment]
+    CaseAssess --> Decision[DecisionEngine + Verifier]
+    Decision -- reject/clarify --> Output
+    Decision -- review/write --> HITL[LangGraph interrupt]
     HITL -- confirm --> CaseTool[Idempotent Business Tool]
     HITL -- reject --> Cancel[Cancel]
     CaseTool --> Output
@@ -184,7 +200,7 @@ flowchart LR
     Output --> Trace[(SQLite Trace Store)]
 ```
 
-当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/运营场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到售后升级、退款、取消订单、改地址、发票等副作用任务时进入 HITL。HITL 不表示自动提权；它只是把“模型草稿”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address` 和 `invoice_request`。
+当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/售后场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到退款、取消订单、改地址、发票等副作用任务时，系统会先构造 `AfterSalesCase`，用 `AfterSalesDecisionEngine` 和 `Verifier` 判断是批准、拒绝、补充信息还是转人工。只有需要执行 write action 的 case 才进入 HITL。HITL 不表示自动提权；它只是把“业务决策 + 客户回复草稿 + 预期动作”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address` 和 `invoice_request`。
 
 ## RAG 与检索策略
 
@@ -214,6 +230,7 @@ python -m app.mcp_server
 | `get_order_status` | 查询订单状态、配送、支付、评价事实 |
 | `search_category_risk` | 查询类目运营风险 |
 | `generate_after_sales_priority_report` | 生成高风险类目和优先跟进订单的只读运营决策报告 |
+| `assess_after_sales_case` | 对退款、取消、改地址、发票等售后请求形成结构化决策和 verifier 结果 |
 | `draft_escalation` | 生成售后升级草稿 |
 
 面试中要说清楚：**MCP 是工具上下文协议，不是多 Agent 协作协议**。生产里 Agent 会作为 MCP client 接企业 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 server，方便外部 Agent 客户端复用和测试。
@@ -241,9 +258,10 @@ app/stripe_mcp.py   # Stripe payment/refund MCP adapter
 
 ## 副作用治理
 
-售后升级、补偿、取消订单、改地址、发券、发票申请都属于有副作用动作。项目采用三层保护：
+售后升级、补偿、取消订单、改地址、发券、发票申请都属于有副作用动作。项目采用四层保护：
 
 - **意图侧**：Bitext intent mapping 标记 `side_effect_risk`，把投诉、退款、取消、改订单、人工客服等归入 `escalation`。
+- **决策侧**：`AfterSalesDecisionEngine` 根据订单状态、延迟天数、支付金额、评价分和政策命中输出 `approve/reject/needs_human_review/ask_clarification`。
 - **执行侧**：LangGraph `interrupt()` 在调用副作用工具前暂停，必须确认后才继续。
 - **工具侧**：工具调用用幂等 key，重复确认不会重复创建业务 case/退款单/取消单。
 
@@ -309,7 +327,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 76 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、租户级 cache 隔离、售后运营决策、benchmark summary parser 和 tau2 bad-case guard |
+| Unit/Integration Tests | 81 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、MCP 售后决策工具、benchmark summary parser 和 tau2 bad-case guard |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -514,7 +532,7 @@ tests/
 
 一句话定位：
 
-> 我做的是一个电商客服/运营 Agent，不是泛聊天 demo。它用 Olist 全量订单数据做事实层，用 Bitext 客服语料做意图覆盖，用 ResCommons 35k 客服对话做 hybrid retrieval corpus，用 V1rtucious 2k 测试集补 tool/RAG/escalation eval，用 markdown policy KB 做政策 RAG，用 LangGraph 实现 task planning、task execution、HITL 和 checkpoint recovery，并用 MCP 暴露/接入外部工具；所有关键链路都有离线评测。
+> 我做的是一个面向电商客服与售后的 case resolution Agent，不是泛聊天 demo。前台是自然语言助手，后台按售后任务进入受控 workflow：LLM 做意图拆解、槽位抽取、query rewriting 和回复生成；Olist 全量订单事实、政策 RAG、AfterSalesDecisionEngine、Verifier、ToolCallManager、HITL、Redis 锁和 SQLite trace 共同约束退款、取消、改地址、发票等副作用动作。项目用 Bitext/ResCommons/V1rtucious 补客服语言和检索评测，用 τ-bench retail 验证公开客服域 tool-use、policy compliance 和 write action correctness。
 
 容易被追问的问题和回答方向：
 

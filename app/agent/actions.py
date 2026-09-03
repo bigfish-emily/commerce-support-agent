@@ -72,6 +72,7 @@ class AgentActions:
         retrieved_insights: list[dict[str, object]] = list(state.get("retrieved_insights", []))
         retrieved_policy: list[dict[str, object]] = list(state.get("retrieved_policy", []))
         retrieved_support_docs: list[dict[str, object]] = list(state.get("retrieved_support_docs", []))
+        after_sales_cases: list[dict[str, object]] = list(state.get("after_sales_cases", []))
         escalation_draft: dict[str, object] | None = None
         trajectory_events = list(state.get("trajectory_events", []))
 
@@ -146,11 +147,21 @@ class AgentActions:
                 answers.append(f"[售后升级]\n{draft_answer}")
                 if draft is not None:
                     draft["task_index"] = idx
+                    if isinstance(draft.get("after_sales_case"), dict):
+                        after_sales_cases.append(dict(draft["after_sales_case"]))
                 event_details["tool"] = "prepare_side_effect"
                 event_details["action_type"] = action_type
+                if draft and isinstance(draft.get("decision"), dict):
+                    event_details["decision_outcome"] = draft["decision"].get("outcome")
+                    event_details["risk_level"] = draft["decision"].get("risk_level")
                 if draft is None:
                     completed = _upsert_task_status(completed, idx, intent, "failed")
                     trajectory_events.append(_event("execute_task_plan", intent, "failed", event_details))
+                    continue
+                if draft.get("requires_confirmation") is False:
+                    completed = _upsert_task_status(completed, idx, intent, "completed")
+                    terminal_indices.add(idx)
+                    trajectory_events.append(_event("execute_task_plan", intent, "completed", event_details))
                     continue
                 else:
                     escalation_draft = draft
@@ -183,6 +194,7 @@ class AgentActions:
             "retrieved_insights": retrieved_insights,
             "retrieved_policy": retrieved_policy,
             "retrieved_support_docs": retrieved_support_docs,
+            "after_sales_cases": after_sales_cases,
             "final_answer": final_answer,
             "messages": [*state["messages"], {"role": "assistant", "content": final_answer}],
         }
@@ -322,23 +334,64 @@ class AgentActions:
             return repair.message, None
         order_id = repair.value
 
+        policy_sections = await self._search_policy_knowledge(
+            f"{user_message}\n售后动作：{_ACTION_LABELS.get(action_type, action_type)}",
+            state,
+        )
+        case_result = await self._tool_manager.call(
+            "assess_after_sales_case",
+            {
+                "action_type": action_type,
+                "order_id": order_id,
+                "user_request": user_message,
+                "policy_sections": policy_sections,
+            },
+            self._tool_context(state),
+        )
         result = await self._tool_manager.call(
             "prepare_side_effect",
             {"order_id": order_id},
             self._tool_context(state),
         )
-        draft = result.data.get("draft") if result.ok else None
+        raw_draft = result.data.get("draft") if result.ok else None
+        draft = dict(raw_draft) if isinstance(raw_draft, dict) else None
         if draft is None:
             return "没有找到该订单，无法生成升级处理草稿。", None
         draft["action_type"] = action_type
+        draft["requires_confirmation"] = True
+        if case_result.ok:
+            after_sales_case = case_result.data.get("case")
+            decision = dict(case_result.data.get("decision", {}))
+            verification = dict(case_result.data.get("verification", {}))
+            customer_reply = str(case_result.data.get("customer_reply", ""))
+            if isinstance(after_sales_case, dict):
+                draft["after_sales_case"] = after_sales_case
+            draft["decision"] = decision
+            draft["verification"] = verification
+            if customer_reply:
+                draft["message_text"] = customer_reply
+        else:
+            decision = {}
+            verification = {}
+
+        if _decision_stops_execution(decision, verification):
+            draft["requires_confirmation"] = False
+            answer = _format_after_sales_decision_answer(
+                order_id,
+                action_type,
+                draft,
+                requires_confirmation=False,
+            )
+            return answer, draft
 
         action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
-        answer = (
-            f"我准备为订单 {order_id} 执行：{action_label}。\n\n"
-            f"原因：{draft['reason']}\n"
-            f"草稿：{draft['message_text']}\n\n"
-            "该动作会改变业务状态，是否确认执行？(yes/no)"
+        decision_block = _format_after_sales_decision_answer(
+            order_id,
+            action_type,
+            draft,
+            requires_confirmation=True,
         )
+        answer = f"我准备为订单 {order_id} 执行：{action_label}。\n\n{decision_block}"
         return answer, draft
 
     def await_confirmation(self, state: AgentState) -> dict:
@@ -484,6 +537,61 @@ class AgentActions:
     @staticmethod
     def _tool_context(state: AgentState, role: str = "support_agent") -> ToolCallContext:
         return ToolCallContext(session_id=state.get("session_id", "unknown"), role=role)
+
+
+def _decision_stops_execution(decision: dict[str, object], verification: dict[str, object]) -> bool:
+    outcome = str(decision.get("outcome", ""))
+    next_step = str(verification.get("required_next_step", ""))
+    return outcome in {"reject", "ask_clarification"} or next_step in {"clarify", "stop"}
+
+
+def _format_after_sales_decision_answer(
+    order_id: str,
+    action_type: str,
+    draft: dict[str, object],
+    *,
+    requires_confirmation: bool,
+) -> str:
+    decision = dict(draft.get("decision", {}))
+    verification = dict(draft.get("verification", {}))
+    action_label = _ACTION_LABELS.get(action_type, "售后处理")
+    outcome = str(decision.get("outcome", "needs_human_review"))
+    risk = str(decision.get("risk_level", "medium"))
+    confidence = decision.get("confidence", "")
+    refs = decision.get("policy_refs", [])
+    refs_text = "、".join(str(ref) for ref in refs[:3]) if isinstance(refs, list) else ""
+    evidence = decision.get("evidence", [])
+    evidence_text = "；".join(str(item) for item in evidence[:4]) if isinstance(evidence, list) else ""
+    flags = verification.get("flags", [])
+    flags_text = "；".join(str(flag) for flag in flags) if isinstance(flags, list) and flags else "无"
+    next_step = str(verification.get("required_next_step", "hitl"))
+
+    lines = [
+        "售后 case 决策：",
+        f"- 动作：{action_label}",
+        f"- 结论：{outcome}；风险等级：{risk}；置信度：{confidence}",
+        f"- 证据：{evidence_text}",
+        f"- 政策依据：{refs_text or '未命中明确政策，需谨慎处理'}",
+        f"- Verifier：next_step={next_step}；flags={flags_text}",
+        "",
+        f"客户回复草稿：{draft['message_text']}",
+    ]
+    if requires_confirmation:
+        lines.extend(
+            [
+                "",
+                "该动作会改变业务状态，必须经过 HITL 确认后才会调用企业工具。",
+                "是否确认执行？(yes/no)",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                f"因此本轮不会执行 {order_id} 的副作用工具；可补充信息后重新发起。",
+            ]
+        )
+    return "\n".join(lines)
 
 
 _ACTION_LABELS = {

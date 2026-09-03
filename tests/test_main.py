@@ -36,7 +36,7 @@ async def client() -> AsyncClient:
 async def test_web_console_available(client: AsyncClient) -> None:
     response = await client.get("/")
     assert response.status_code == 200
-    assert "E-Commerce Support & Operations Agent" in response.text
+    assert "E-Commerce After-Sales Case Agent" in response.text
     assert "/observability/summary" in response.text
 
 
@@ -394,6 +394,39 @@ async def test_refund_side_effect_uses_refund_tool(client: AsyncClient) -> None:
         response = await client.post("/chat", json={"message": "确认", "session_id": "refund-task"})
     assert response.status_code == 200
     assert "REFUND-" in response.json()["answer"]
+
+
+@pytest.mark.anyio
+async def test_delivered_order_cancel_is_rejected_before_hitl(client: AsyncClient) -> None:
+    from app.llm.types import PlannedTask, TaskPlanResult
+
+    g1, g2 = _mock_guard(input_on_topic=True)
+    plan = TaskPlanResult(
+        tasks=[
+            PlannedTask(
+                intent="escalation",
+                text=f"取消订单 {ORDER_ID}",
+                side_effect=True,
+                action_type="cancel_order",
+            )
+        ]
+    )
+    with (
+        g1,
+        g2,
+        patch("app.llm.intent_planner.IntentPlanner.plan", AsyncMock(return_value=plan)),
+        _mock_task(),
+    ):
+        response = await client.post(
+            "/chat",
+            json={"message": f"取消订单 {ORDER_ID}", "session_id": "delivered-cancel"},
+        )
+
+    answer = response.json()["answer"]
+    assert "售后 case 决策" in answer
+    assert "结论：reject" in answer
+    assert "本轮不会执行" in answer
+    assert "是否确认执行" not in answer
 
 
 @pytest.mark.anyio
