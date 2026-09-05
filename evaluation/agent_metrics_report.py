@@ -196,6 +196,7 @@ def tool_metrics() -> list[Metric]:
         "cancel_order",
         "change_address",
         "invoice_request",
+        "complaint_escalation",
     ]
     action_ids = [service.escalation_draft("203096f03d82e0dffbc41ebc2e2bcfb7") for _ in action_types]
     action_dispatch_passed = sum(1 for draft in action_ids if draft is not None)
@@ -248,8 +249,8 @@ def tool_metrics() -> list[Metric]:
             "副作用 action_type 分发覆盖率",
             _pct(action_dispatch_passed, len(action_types)),
             str(len(action_types)),
-            "退款、取消、改地址、发票、工单五类动作是否都有工具落点。",
-            "五类 action_type 是否都有可执行的幂等工具模拟。",
+            "工单、退款、取消、改地址、发票、投诉升级六类动作是否都有工具落点。",
+            "六类 action_type 是否都有可执行的幂等工具模拟。",
         ),
         Metric(
             "工具/参数",
@@ -771,7 +772,7 @@ def benchmark_metrics() -> list[Metric]:
         return [
             Metric(
                 "外部Benchmark",
-                "tau2/tau3 retail subset status",
+                "tau2-bench retail status",
                 "not_run",
                 "0",
                 "官方客服 Agent benchmark 子集运行状态。",
@@ -789,17 +790,17 @@ def benchmark_metrics() -> list[Metric]:
     return [
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail pass^1",
+            "tau2-bench retail pass^1",
             _pct_value(float(pass1)) if pass1 is not None else "n/a",
             f"{total_tasks} tasks",
             "官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。",
-            "tau2 对每个 task 的 reward>=1 计算 pass^1；"
-            f"当前是 DeepSeek {total_tasks}-task official subset。",
+            "tau2-bench 对每个 task 的 reward>=1 计算 pass^1；"
+            f"当前是 DeepSeek retail base split {total_tasks}-task local run。",
             api_key="是",
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail avg reward",
+            "tau2-bench retail avg reward",
             _pct_value(float(summary.get("avg_reward", 0.0))),
             str(summary.get("evaluated_simulations", 0)),
             "官方 reward 均值，综合 DB/env/NL assertion 等检查。",
@@ -808,7 +809,7 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail DB match",
+            "tau2-bench retail DB match",
             _ratio(db),
             str(db.get("total", 0)),
             "副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。",
@@ -817,7 +818,7 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail read action match",
+            "tau2-bench retail read action match",
             _ratio(actions.get("read") or {}),
             str((actions.get("read") or {}).get("total", 0)),
             "只读工具调用序列和参数是否匹配官方期望。",
@@ -826,7 +827,7 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail write action match",
+            "tau2-bench retail write action match",
             _ratio(actions.get("write") or {}),
             str((actions.get("write") or {}).get("total", 0)),
             "退款、退货、换货、改订单等写工具是否按官方期望执行。",
@@ -835,7 +836,7 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail NL assertions",
+            "tau2-bench retail NL assertions",
             _ratio(nl),
             str(nl.get("total", 0)),
             "自然语言回答是否满足官方任务断言。",
@@ -844,7 +845,7 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail p95 latency",
+            "tau2-bench retail p95 latency",
             f"{float(summary.get('p95_duration_seconds') or 0.0):.2f}s",
             str(summary.get("evaluated_simulations", 0)),
             "官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。",
@@ -853,7 +854,7 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2/tau3 retail avg total cost",
+            "tau2-bench retail avg total cost",
             f"${float(summary.get('avg_total_cost') or 0.0):.6f}",
             str(summary.get("evaluated_simulations", 0)),
             "官方用户模拟器 + Agent + judge 的平均单会话模型成本。",
@@ -1002,9 +1003,8 @@ def performance_and_ops_metrics() -> list[Metric]:
     eval_tokens = _approx_tokens(
         (ROOT / "data" / "olist_derived" / "eval_cases.jsonl").read_text(encoding="utf-8")
     )
-    policy_tokens = _approx_tokens(
-        (ROOT / "data" / "knowledge_base" / "support_policy.md").read_text(encoding="utf-8")
-    )
+    kb_files = sorted((ROOT / "data" / "knowledge_base").glob("*.md"))
+    policy_tokens = _approx_tokens("\n\n".join(path.read_text(encoding="utf-8") for path in kb_files))
     rows.extend(
         [
             Metric(
@@ -1019,15 +1019,15 @@ def performance_and_ops_metrics() -> list[Metric]:
                 "性能/成本",
                 "policy KB 估算 token",
                 str(policy_tokens),
-                "1 file",
-                "当前政策知识库规模，用于上下文预算。",
+                f"{len(kb_files)} files",
+                "当前 policy/FAQ/merchant rules 知识库规模，用于上下文预算。",
                 "ASCII/4 + 非 ASCII*1.5 的粗略估算。",
             ),
         ]
     )
 
     import app.trace_store as trace_store
-    from app.trace_store import list_session_traces, record_trace, trace_summary
+    from app.trace_store import case_metrics, list_session_traces, record_trace, trace_summary
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         old_db = trace_store.TRACE_DB
@@ -1045,8 +1045,41 @@ def performance_and_ops_metrics() -> list[Metric]:
                 latency_ms=12.3,
                 status="ok",
             )
+            record_trace(
+                session_id="ops-eval",
+                user_message="取消已送达订单",
+                result={
+                    "route_intent": "escalation",
+                    "final_answer": "已拦截不合规取消。",
+                    "trajectory_events": [
+                        {
+                            "node": "execute_task_plan",
+                            "intent": "escalation",
+                            "status": "completed",
+                            "details": {"tool": "assess_after_sales_case"},
+                        }
+                    ],
+                    "after_sales_cases": [
+                        {
+                            "action_type": "cancel_order",
+                            "policy_refs": ["Cancellation Policy"],
+                            "decision": {
+                                "outcome": "reject",
+                                "requires_human": False,
+                            },
+                            "verification": {
+                                "passed": True,
+                                "required_next_step": "stop",
+                            },
+                        }
+                    ],
+                },
+                latency_ms=18.6,
+                status="ok",
+            )
             traces = list_session_traces("ops-eval")
             summary = trace_summary()
+            business_metrics = case_metrics()
         finally:
             trace_store.TRACE_DB = old_db
     rows.extend(
@@ -1062,10 +1095,34 @@ def performance_and_ops_metrics() -> list[Metric]:
             Metric(
                 "可观测性",
                 "trace summary 可用率",
-                _pct(int(summary["total"] == 1), 1),
-                "1",
+                _pct(int(summary["total"] == 2), 1),
+                "2",
                 "是否能统计状态分布、路由分布和延迟。",
                 "trace_summary().total 是否等于写入条数。",
+            ),
+            Metric(
+                "可观测性",
+                "case metrics 聚合可用率",
+                _pct(int(business_metrics["total_cases"] == 1), 1),
+                "1",
+                "是否能从 trace 中按售后 case 聚合业务指标。",
+                "写入 after_sales_cases 后 case_metrics().total_cases 是否为 1。",
+            ),
+            Metric(
+                "可观测性",
+                "wrong_write_blocked",
+                str(business_metrics["wrong_write_blocked"]),
+                "1",
+                "不符合政策或订单状态的写动作被 Verifier/决策层拦截的次数。",
+                "统计 outcome=reject/ask_clarification 的写动作 case 数。",
+            ),
+            Metric(
+                "可观测性",
+                "policy_hit_rate",
+                _pct(int(business_metrics["policy_hit_rate"] == 1.0), 1),
+                "1",
+                "售后 case 是否带有可追溯政策/FAQ/商家规则依据。",
+                "policy_refs 非空的售后 case / total_cases。",
             ),
         ]
     )

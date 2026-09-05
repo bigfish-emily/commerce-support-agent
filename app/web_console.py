@@ -241,6 +241,7 @@ WEB_CONSOLE_HTML = """
       <div class="panel-body stack">
         <div class="quick-grid">
           <button onclick="loadSummary()">Summary</button>
+          <button onclick="loadCaseMetrics()">Case Metrics</button>
           <button onclick="loadTraces()">Session Trace</button>
         </div>
         <div class="small">Trace 展示 route intent、状态、延迟和 trajectory_json，用来判断 Agent 到底做了什么。</div>
@@ -325,6 +326,10 @@ WEB_CONSOLE_HTML = """
     }
     async function loadSummary() {
       const res = await fetch("/observability/summary");
+      document.getElementById("observability").textContent = JSON.stringify(await res.json(), null, 2);
+    }
+    async function loadCaseMetrics() {
+      const res = await fetch("/observability/case-metrics");
       document.getElementById("observability").textContent = JSON.stringify(await res.json(), null, 2);
     }
     async function loadTraces() {

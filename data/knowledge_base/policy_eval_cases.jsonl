@@ -10,3 +10,10 @@
 {"id":"kb-tool-boundary","query":"订单状态、延迟天数、评价分这些事实应该从哪里来？","expected_section":"Tool Boundary Policy"}
 {"id":"kb-category","query":"类目运营风险分析可以回答什么，不能替代什么？","expected_section":"Category Operations Policy"}
 {"id":"kb-audit","query":"生产系统里一次客服agent任务应该记录哪些轨迹？","expected_section":"Audit and Trace Policy"}
+{"id":"kb-refund-status-faq","query":"客户问退款是不是已经完成了，应该怎么回答？","expected_section":"Refund Status FAQ"}
+{"id":"kb-return-label-faq","query":"商品破损或错发时能不能直接承诺退货标签？","expected_section":"Return Label FAQ"}
+{"id":"kb-delivery-complaint-faq","query":"客户说包裹没收到，应该区分哪些物流状态？","expected_section":"Delivery Complaint FAQ"}
+{"id":"kb-complaint-escalation-faq","query":"什么情况下投诉需要转人工复核？","expected_section":"Complaint Escalation FAQ"}
+{"id":"kb-health-beauty-merchant","query":"health beauty 美妆类目已送达订单能不能直接取消？","expected_section":"Health Beauty Merchant Rule"}
+{"id":"kb-electronics-merchant","query":"数码电子产品退款前需要核查序列号和保修吗？","expected_section":"Electronics Merchant Rule"}
+{"id":"kb-high-value-merchant","query":"高金额订单退款补偿为什么必须人工审核？","expected_section":"High Value Order Rule"}

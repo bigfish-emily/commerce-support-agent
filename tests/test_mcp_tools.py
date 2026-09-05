@@ -3,6 +3,7 @@ from app.mcp_server import (
     draft_escalation,
     generate_after_sales_priority_report,
     get_order_status,
+    list_enterprise_tool_boundaries,
     search_category_risk,
 )
 
@@ -43,3 +44,13 @@ def test_mcp_after_sales_case_assessment_tool() -> None:
     assert result["found"] is True
     assert result["decision"]["outcome"] == "needs_human_review"
     assert result["verification"]["required_next_step"] == "hitl"
+
+
+def test_mcp_enterprise_tool_boundaries_include_risk_and_auth() -> None:
+    metadata = {item["tool"]: item for item in list_enterprise_tool_boundaries()}
+
+    assert metadata["get_order_status"]["auth_scope"] == "orders:read"
+    assert "input_schema" in metadata["get_order_status"]
+    assert metadata["assess_after_sales_case"]["risk_level"] == "medium"
+    assert metadata["execute_side_effect"]["side_effect"] is True
+    assert metadata["execute_side_effect"]["idempotency_required"] is True

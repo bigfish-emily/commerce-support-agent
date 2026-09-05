@@ -328,6 +328,9 @@ class ToolSpec:
     handler: ToolHandler
     allowed_roles: frozenset[str] = field(default_factory=lambda: frozenset({"support_agent"}))
     side_effect: bool = False
+    risk_level: str = "read"
+    auth_scope: str = "support:read"
+    idempotency_required: bool = False
     cache_ttl_seconds: float | None = None
     timeout_seconds: float = 2.0
     retries: int = 0
@@ -356,6 +359,23 @@ class ToolCallManager:
 
     def list_tools(self) -> list[str]:
         return sorted(self._specs)
+
+    def list_tool_metadata(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "side_effect": spec.side_effect,
+                "risk_level": spec.risk_level,
+                "auth_scope": spec.auth_scope,
+                "allowed_roles": sorted(spec.allowed_roles),
+                "idempotency_required": spec.idempotency_required,
+                "cache_ttl_seconds": spec.cache_ttl_seconds,
+                "timeout_seconds": spec.timeout_seconds,
+                "retries": spec.retries,
+            }
+            for spec in sorted(self._specs.values(), key=lambda item: item.name)
+        ]
 
     async def call(
         self,
@@ -505,6 +525,8 @@ class ToolCallManager:
                 "user_id": context.user_id,
                 "role": context.role,
                 "tool_name": name,
+                "risk_level": self._specs[name].risk_level if name in self._specs else "unknown",
+                "side_effect": self._specs[name].side_effect if name in self._specs else False,
                 "args_hash": self._cache_key(name, arguments),
                 "cache_key": self._cache_key(name, arguments, context.tenant_id),
                 "redacted_args": _redact_args(arguments),
@@ -560,6 +582,8 @@ def build_business_tool_manager(
                 description="Return deterministic order, delivery, payment, and review facts.",
                 input_model=OrderStatusArgs,
                 allowed_roles=support_roles,
+                risk_level="read",
+                auth_scope="orders:read",
                 cache_ttl_seconds=300,
                 timeout_seconds=1,
                 retries=1,
@@ -578,6 +602,8 @@ def build_business_tool_manager(
                 description="Retrieve category-level logistics and review risk insights.",
                 input_model=QueryArgs,
                 allowed_roles=support_roles,
+                risk_level="read",
+                auth_scope="analytics:read",
                 cache_ttl_seconds=300,
                 timeout_seconds=1,
                 retries=1,
@@ -589,6 +615,8 @@ def build_business_tool_manager(
                 description="Generate a read-only after-sales operations decision report.",
                 input_model=QueryArgs,
                 allowed_roles=ops_roles,
+                risk_level="read",
+                auth_scope="after_sales:ops_report",
                 cache_ttl_seconds=120,
                 timeout_seconds=2,
                 retries=1,
@@ -601,6 +629,8 @@ def build_business_tool_manager(
                 description="Retrieve support policy sections from markdown KB.",
                 input_model=PolicySearchArgs,
                 allowed_roles=support_roles,
+                risk_level="read",
+                auth_scope="policy:read",
                 cache_ttl_seconds=300,
                 timeout_seconds=1,
                 retries=1,
@@ -609,6 +639,7 @@ def build_business_tool_manager(
                     "sections": [
                         {
                             "source": hit.source,
+                            "source_type": hit.source_type,
                             "section_title": hit.section_title,
                             "text": hit.text,
                             "score": hit.score,
@@ -622,6 +653,8 @@ def build_business_tool_manager(
                 description="Retrieve similar public support conversations for answer style context.",
                 input_model=SupportSearchArgs,
                 allowed_roles=support_roles,
+                risk_level="read",
+                auth_scope="support_examples:read",
                 cache_ttl_seconds=300,
                 timeout_seconds=2,
                 retries=1,
@@ -644,6 +677,8 @@ def build_business_tool_manager(
                 description="Draft an after-sales side-effect action before HITL confirmation.",
                 input_model=OrderStatusArgs,
                 allowed_roles=support_roles,
+                risk_level="medium",
+                auth_scope="after_sales:draft",
                 cache_ttl_seconds=120,
                 timeout_seconds=1,
                 retries=1,
@@ -659,6 +694,8 @@ def build_business_tool_manager(
                 ),
                 input_model=AfterSalesCaseArgs,
                 allowed_roles=support_roles,
+                risk_level="medium",
+                auth_scope="after_sales:assess",
                 timeout_seconds=1,
                 retries=1,
                 handler=lambda args, ctx: _assess_after_sales_case(
@@ -673,6 +710,9 @@ def build_business_tool_manager(
                 input_model=SideEffectArgs,
                 allowed_roles=frozenset({"support_agent", "admin"}),
                 side_effect=True,
+                risk_level="critical",
+                auth_scope="after_sales:write",
+                idempotency_required=True,
                 timeout_seconds=2,
                 retries=1,
                 handler=lambda args, ctx: {

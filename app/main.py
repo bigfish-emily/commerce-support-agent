@@ -13,13 +13,14 @@ from app.agent.state import AgentState
 from app.config.di import agent_graph_builder, guardrail, runtime_status, runtime_store
 from app.logger import format_state, setup_logger
 from app.models import (
+    CaseMetricsResponse,
     ChatRequest,
     ChatResponse,
     RuntimeStatusResponse,
     TraceReplayResponse,
     TraceSummaryResponse,
 )
-from app.trace_store import list_session_traces, record_trace, trace_summary
+from app.trace_store import case_metrics, list_session_traces, record_trace, trace_summary
 from app.web_console import WEB_CONSOLE_HTML
 
 agent: StateGraph | None = None
@@ -303,6 +304,11 @@ def _env_int(name: str, default: int) -> int:
 @app.get("/observability/summary", response_model=TraceSummaryResponse)
 def observability_summary() -> TraceSummaryResponse:
     return TraceSummaryResponse(**trace_summary())
+
+
+@app.get("/observability/case-metrics", response_model=CaseMetricsResponse)
+def observability_case_metrics() -> CaseMetricsResponse:
+    return CaseMetricsResponse(**case_metrics())
 
 
 @app.get("/observability/traces/{session_id}", response_model=TraceReplayResponse)

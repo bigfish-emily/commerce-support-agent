@@ -54,6 +54,7 @@ def assess_after_sales_case(action_type: str, order_id: str, user_request: str) 
             {
                 "section_title": hit.section_title,
                 "source": hit.source,
+                "source_type": hit.source_type,
                 "text": hit.text,
                 "score": hit.score,
             }
@@ -61,6 +62,80 @@ def assess_after_sales_case(action_type: str, order_id: str, user_request: str) 
         ],
     )
     return {"found": True, **case.model_dump()}
+
+
+def list_enterprise_tool_boundaries() -> list[dict[str, object]]:
+    """Return MCP-facing tool governance metadata for enterprise integration reviews."""
+    return [
+        {
+            "tool": "get_order_status",
+            "input_schema": {"order_id": "string[32], required"},
+            "risk_level": "read",
+            "side_effect": False,
+            "auth_scope": "orders:read",
+            "idempotency_required": False,
+            "audit": "redacted order id, latency, role, tenant, result summary",
+        },
+        {
+            "tool": "search_category_risk",
+            "input_schema": {"query": "string, required"},
+            "risk_level": "read",
+            "side_effect": False,
+            "auth_scope": "analytics:read",
+            "idempotency_required": False,
+            "audit": "query hash, tenant, latency, hit count",
+        },
+        {
+            "tool": "generate_after_sales_priority_report",
+            "input_schema": {"query": "string, optional"},
+            "risk_level": "read",
+            "side_effect": False,
+            "auth_scope": "after_sales:ops_report",
+            "idempotency_required": False,
+            "audit": "manager role, tenant, generated report summary",
+        },
+        {
+            "tool": "assess_after_sales_case",
+            "input_schema": {
+                "action_type": (
+                    "enum[refund_request,cancel_order,change_address,"
+                    "invoice_request,complaint_escalation,open_support_case]"
+                ),
+                "order_id": "string[32], required",
+                "user_request": "string, required",
+            },
+            "risk_level": "medium",
+            "side_effect": False,
+            "auth_scope": "after_sales:assess",
+            "idempotency_required": False,
+            "audit": "decision outcome, risk level, policy refs, verifier flags",
+        },
+        {
+            "tool": "draft_escalation",
+            "input_schema": {"order_id": "string[32], required"},
+            "risk_level": "medium",
+            "side_effect": False,
+            "auth_scope": "after_sales:draft",
+            "idempotency_required": False,
+            "audit": "draft reason and redacted message hash",
+        },
+        {
+            "tool": "execute_side_effect",
+            "input_schema": {
+                "action_type": (
+                    "enum[refund_request,cancel_order,change_address,"
+                    "invoice_request,complaint_escalation,open_support_case]"
+                ),
+                "order_id": "string[32], required",
+                "message_text": "string, required",
+            },
+            "risk_level": "critical",
+            "side_effect": True,
+            "auth_scope": "after_sales:write",
+            "idempotency_required": True,
+            "audit": "idempotency key, result id, duplicate flag, operator/session",
+        },
+    ]
 
 
 async def list_tools(
@@ -96,13 +171,18 @@ async def list_tools(
                     {
                         "action_type": (
                             "refund_request, cancel_order, change_address, "
-                            "invoice_request, or open_support_case"
+                            "invoice_request, complaint_escalation, or open_support_case"
                         ),
                         "order_id": "32-character Olist order id",
                         "user_request": "Original customer or support-agent request",
                     },
                     ["action_type", "order_id", "user_request"],
                 ),
+            ),
+            types.Tool(
+                name="list_enterprise_tool_boundaries",
+                description="List MCP tool risk levels, auth scopes, idempotency, and audit semantics.",
+                input_schema=_object_schema({}, []),
             ),
         ]
     )
@@ -128,6 +208,8 @@ async def call_tool(
             str(args.get("order_id", "")),
             str(args.get("user_request", "")),
         )
+    elif params.name == "list_enterprise_tool_boundaries":
+        structured = {"tools": list_enterprise_tool_boundaries()}
     else:
         return types.CallToolResult(
             content=[types.TextContent(text=f"Unknown tool: {params.name}")],

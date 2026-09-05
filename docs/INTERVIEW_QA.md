@@ -103,9 +103,9 @@ score(doc) = 0.2 / (bm25_rank + 20) + 2.0 / (vector_rank + 20)
 
 ### 11. policy KB 是不是手写的？
 
-`support_policy.md` 是项目内构造的政策知识库，不应伪装成企业真实文档。它的作用是模拟电商售后政策文档的结构和边界：退款、补偿、取消、发票、改地址、升级审批。真实上线时会从企业 SOP、FAQ、客服质检规则、商家规则中心增量同步。
+知识库现在不是单份 `support_policy.md`，而是 `support_policy.md`、`support_faq.md`、`merchant_rules.md` 三类来源。它仍然是项目内构造的业务 SOP/FAQ/商家规则样本，不应伪装成企业真实私有文档。它的作用是模拟电商售后知识的三种常见形态：强规则政策、客服 FAQ、商家/类目特殊规则。
 
-面试回答要坦诚：公开订单数据有，但真实企业售后政策通常不公开，因此用合成政策文档验证 RAG 和 HITL 边界，用公开客服数据补语言多样性。
+面试回答要坦诚：公开订单数据有，但真实企业售后政策通常不公开，因此用项目内多来源知识库验证 RAG 和 HITL 边界，用 ResCommons 公开客服数据补语言多样性。当前 policy/FAQ/merchant KB 先做 lexical overlap 召回，再按 query intent 和 source_type 做轻量 rerank；19 条中文售后问题 Top1/Recall@3/MRR@3 为 100%，这是小型 KB regression，不包装成公开 benchmark。
 
 ### 12. 检索失败 fallback 怎么做？
 
@@ -119,9 +119,9 @@ Policy 检索：没有足够匹配章节时，回答“未命中明确政策，�
 
 ### 13. MCP 写在技术栈里，正文怎么支撑？
 
-项目同时做了 MCP server 和 client adapter。`app/mcp_server.py` 把本地业务能力暴露成 `get_order_status`、`search_category_risk`、`generate_after_sales_priority_report`、`draft_escalation` 四个 MCP tools；`app/mcp_client.py` 支持 stdio 和 Streamable HTTP client；`app/stripe_mcp.py` 是 Stripe sandbox/remote MCP 的可选 adapter。
+项目同时做了 MCP server 和 client adapter。`app/mcp_server.py` 把本地业务能力暴露成 `get_order_status`、`search_category_risk`、`generate_after_sales_priority_report`、`assess_after_sales_case`、`draft_escalation` 和 `list_enterprise_tool_boundaries` 等 MCP tools；`app/mcp_client.py` 支持 stdio 和 Streamable HTTP client；`app/stripe_mcp.py` 是 Stripe sandbox/remote MCP 的可选 adapter。
 
-简历里不能只写 MCP 不解释。推荐回答：我没有把 MCP 当装饰词，而是用它表达企业工具边界。默认 demo 走本地 service，保证无凭证可跑；生产里把 `OlistService` 换成 OMS/CRM/refund/coupon MCP tools，LangGraph、HITL、幂等、trace 不变。
+简历里不能只写 MCP 不解释。推荐回答：我没有把 MCP 当装饰词，而是用它表达企业工具边界。`list_enterprise_tool_boundaries` 会导出每个工具的 input schema、auth scope、risk level、side_effect、idempotency_required 和 audit 语义。默认 demo 走本地 service，保证无凭证可跑；生产里把 `OlistService` 换成 OMS/CRM/refund/coupon MCP tools，LangGraph、HITL、幂等、trace 不变。
 
 ### 14. 为什么 MCP 没接进主执行路径？
 

@@ -229,4 +229,6 @@ def _action_type(segment: str, intent: str) -> str:
         return "change_address"
     if _has_any(text, ("invoice", "发票", "开票")):
         return "invoice_request"
+    if _has_any(text, ("complaint", "投诉", "升级投诉", "转人工", "人工介入")):
+        return "complaint_escalation"
     return "open_support_case"

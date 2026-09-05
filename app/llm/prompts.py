@@ -16,7 +16,7 @@ Rules:
 - Use qa for a single category's risk, delay rate, low-review rate, cancellation rate, or category risk summary.
 - Use ops_decision only for read-only prioritization/reporting across categories or orders: dashboards, daily reports, priority queues, action plans, or manager decision support. Do not use it for a single category risk summary.
 - Fill action_type for side-effect tasks:
-  open_support_case, refund_request, cancel_order, change_address, invoice_request, or none.
+  open_support_case, refund_request, cancel_order, change_address, invoice_request, complaint_escalation, or none.
 - If an after-sales action depends on checking an order first, set depends_on to the order_status task index.
 - Do not merge read-only policy questions with side-effect execution requests.
 - Do not let the LLM decide final refund/cancellation eligibility. It only plans the task; the workflow will call deterministic order tools, policy retrieval, AfterSalesDecisionEngine, Verifier, HITL, and idempotent write tools.

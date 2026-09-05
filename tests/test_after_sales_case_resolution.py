@@ -56,6 +56,25 @@ def test_after_sales_engine_rejects_delivered_order_cancellation() -> None:
     assert "不能直接执行" in case.customer_reply
 
 
+def test_after_sales_engine_routes_complaint_escalation_through_hitl() -> None:
+    service = OlistService()
+    order = service.get_order_status(ORDER_ID)
+    assert order is not None
+
+    case = AfterSalesDecisionEngine().assess(
+        action_type="complaint_escalation",
+        order=order,
+        user_request=f"我要投诉升级订单 {ORDER_ID} 的延迟和低评分问题",
+        policy_sections=[{"section_title": "Complaint Escalation FAQ"}],
+    )
+
+    assert case.decision.action_type == "complaint_escalation"
+    assert case.decision.outcome == "needs_human_review"
+    assert case.decision.requires_human is True
+    assert case.verification.required_next_step == "hitl"
+    assert "投诉升级" in case.customer_reply
+
+
 @pytest.mark.anyio
 async def test_tool_manager_exposes_after_sales_case_assessment() -> None:
     manager = build_business_tool_manager(

@@ -104,6 +104,11 @@ class AfterSalesDecisionEngine:
             points.append("可以准备发票申请，但需要补齐抬头、税号和邮箱等资料。")
             risk = "medium"
             confidence = 0.75
+        elif action_type == "complaint_escalation":
+            allowed.append("complaint_escalation")
+            points.append("投诉升级会创建可追踪工单，但不能在确认前承诺退款、补偿或处罚结果。")
+            risk = "high" if order.payment_value >= 300 else "medium"
+            confidence = 0.76
         elif action_type == "refund_request":
             if order.status == "canceled":
                 allowed.append("refund_request")
@@ -138,7 +143,13 @@ class AfterSalesDecisionEngine:
             confidence = min(confidence, 0.62)
             points.append("未命中明确政策段落，不能自动执行高风险动作。")
 
-        if action_type in {"refund_request", "cancel_order", "change_address", "invoice_request"}:
+        if action_type in {
+            "refund_request",
+            "cancel_order",
+            "change_address",
+            "invoice_request",
+            "complaint_escalation",
+        }:
             if outcome == "approve":
                 requires_human = True
             if outcome == "needs_human_review":
@@ -161,7 +172,13 @@ class AfterSalesDecisionEngine:
 
 def verify_decision(decision: AfterSalesDecision) -> VerificationResult:
     flags: list[str] = []
-    if decision.action_type in {"refund_request", "cancel_order", "change_address", "invoice_request"}:
+    if decision.action_type in {
+        "refund_request",
+        "cancel_order",
+        "change_address",
+        "invoice_request",
+        "complaint_escalation",
+    }:
         if not decision.requires_human and decision.outcome == "needs_human_review":
             flags.append("high_risk_action_without_hitl")
         if decision.action_type in decision.allowed_actions and not decision.policy_refs:
@@ -218,6 +235,7 @@ def _normalize_action(action_type: str) -> str:
         "cancel_order",
         "change_address",
         "invoice_request",
+        "complaint_escalation",
     }
     return action_type if action_type in allowed else "open_support_case"
 
@@ -255,6 +273,8 @@ def _reason_code(user_request: str, order: OrderStatusView) -> str:
         reasons.append("address_change_requested")
     if "invoice" in text or "发票" in text:
         reasons.append("invoice_requested")
+    if "complaint" in text or "投诉" in text or "升级" in text:
+        reasons.append("complaint_escalation_requested")
     if isinstance(order.delay_days, int) and order.delay_days > 0:
         reasons.append("delivery_delay")
     if isinstance(order.review_score, int) and order.review_score <= 2:

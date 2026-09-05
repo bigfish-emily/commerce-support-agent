@@ -60,6 +60,7 @@ Case Created
 |---|---|
 | 参数校验 | 每个工具声明 Pydantic input schema，非法参数返回 `schema_validation_failed` |
 | 权限检查 | `ToolCallContext(role, tenant_id, user_id, session_id)` + tool allowed role 白名单 |
+| 风险分级 | 每个 `ToolSpec` 声明 `risk_level`、`auth_scope` 和 `idempotency_required`，区分只读、决策、critical write |
 | 缓存检查 | 只读工具使用 `tenant_id + sha256(tool+args)` 做 TTL cache，支持 in-memory/Redis backend；副作用工具不缓存 |
 | 异步执行 | async manager 统一调度 sync/async handler，sync handler 通过 `asyncio.to_thread` 执行 |
 | 超时/重试/退避 | 每个 `ToolSpec` 配置 timeout、retry count 和 exponential backoff |
@@ -67,7 +68,7 @@ Case Created
 | 结果格式化 | 所有工具返回标准 `ToolCallResult(ok/data/cached/attempts/latency/error)` |
 | 审计日志 | 每次调用记录 who/when/tool/args_hash/redacted_args/result/latency，不保存明文长消息 |
 
-代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。
+代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。`ToolCallManager.list_tool_metadata()` 和 MCP `list_enterprise_tool_boundaries` 可直接导出工具 schema、权限范围、风险等级、幂等要求和审计语义。
 
 ### Redis Runtime Store
 
@@ -200,20 +201,20 @@ flowchart LR
     Output --> Trace[(SQLite Trace Store)]
 ```
 
-当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/售后场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到退款、取消订单、改地址、发票等副作用任务时，系统会先构造 `AfterSalesCase`，用 `AfterSalesDecisionEngine` 和 `Verifier` 判断是批准、拒绝、补充信息还是转人工。只有需要执行 write action 的 case 才进入 HITL。HITL 不表示自动提权；它只是把“业务决策 + 客户回复草稿 + 预期动作”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address` 和 `invoice_request`。
+当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/售后场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到退款、取消订单、改地址、发票、投诉升级等副作用任务时，系统会先构造 `AfterSalesCase`，用 `AfterSalesDecisionEngine` 和 `Verifier` 判断是批准、拒绝、补充信息还是转人工。只有需要执行 write action 的 case 才进入 HITL。HITL 不表示自动提权；它只是把“业务决策 + 客户回复草稿 + 预期动作”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address`、`invoice_request` 和 `complaint_escalation`。
 
 ## RAG 与检索策略
 
 项目里有三条检索链路。严格说，当前实现是 workflow-constrained RAG，而不是完全自主的 Agentic RAG：LLM 可以做意图拆解、抽槽和答案生成，是否检索、检索哪个源、何时进入 HITL 由 LangGraph 业务流程控制。
 
 1. **结构化实体检索**：面向 Olist 类目/订单。订单查询是精确事实工具，不包装成 RAG；类目检索先做 query rewriting，把 `health beauty`、`health-beauty`、`healthbeauty` 等用户写法统一到真实类目 `health_beauty`，再结合业务别名词表和 token overlap fallback。
-2. **政策文档 RAG**：面向 `data/knowledge_base/support_policy.md`。按 markdown section 切分，检索退款、取消、补偿、发票、配送、人工审核等规则，回答时只允许使用命中的政策段落。
+2. **售后知识库 Hybrid RAG**：面向 `data/knowledge_base/*.md`，当前包含 `support_policy.md`、`support_faq.md` 和 `merchant_rules.md` 三类来源。系统按 markdown section 切分，先做 lexical overlap 候选召回，再按 query intent 与 `source_type` 做轻量 rerank，检索退款、取消、补偿、发票、配送、人工审核、退货标签、投诉升级和商家/类目特殊规则。每个 hit 带 `source` 和 `source_type`，回答与售后决策都能区分政策、FAQ、商家规则。
 3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。默认本地实现用 BM25 召回候选、字符 ngram 向量分数做 rerank，并在 test query 上评估 intent/capability 命中。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可替换为 Elasticsearch/BM25 + vector DB + learned reranker。
 
 为什么当前没有强依赖 embedding：
 
 - 订单 ID、类目名、政策标题是高精度实体和短文本，确定性归一化比 embedding 更可控、可解释、低成本。
-- 对大量客服对话/FAQ，项目已经接入 ResCommons 做本地 hybrid baseline；生产版会把本地 BM25/字符向量替换为 Elasticsearch/BM25 + vector database + learned reranker。这个替换是工程实现差异，不是业务链路差异。
+- 对大量客服对话、FAQ 和商家规则，项目已经接入本地多源 KB 与 ResCommons hybrid baseline；生产版会把本地 BM25/字符向量替换为 Elasticsearch/BM25 + vector database + learned reranker。这个替换是工程实现差异，不是业务链路差异。
 
 ## MCP 接入
 
@@ -232,8 +233,9 @@ python -m app.mcp_server
 | `generate_after_sales_priority_report` | 生成高风险类目和优先跟进订单的只读运营决策报告 |
 | `assess_after_sales_case` | 对退款、取消、改地址、发票等售后请求形成结构化决策和 verifier 结果 |
 | `draft_escalation` | 生成售后升级草稿 |
+| `list_enterprise_tool_boundaries` | 导出 MCP 工具的 input schema、auth scope、risk level、幂等要求和审计语义 |
 
-面试中要说清楚：**MCP 是工具上下文协议，不是多 Agent 协作协议**。生产里 Agent 会作为 MCP client 接企业 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 server，方便外部 Agent 客户端复用和测试。
+面试中要说清楚：**MCP 是工具上下文协议，不是多 Agent 协作协议**。生产里 Agent 会作为 MCP client 接企业 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 server，方便外部 Agent 客户端复用和测试。`list_enterprise_tool_boundaries` 的作用是把“工具能不能被 Agent 安全调用”显式化：每个工具都能回答 schema 是什么、谁有权限调用、是否有副作用、风险等级、是否要求幂等、审计里记录什么。
 
 适合继续接入的外部 MCP：
 
@@ -274,17 +276,31 @@ app/stripe_mcp.py   # Stripe payment/refund MCP adapter
 | `cancel_order` | OMS 订单取消接口 | `CANCEL-...` 幂等申请 |
 | `change_address` | OMS/物流改地址接口 | `ADDR-...` 幂等申请 |
 | `invoice_request` | 发票/财务系统 | `INV-...` 幂等申请 |
+| `complaint_escalation` | CRM/Zendesk/投诉升级队列 | `COMP-...` 幂等投诉升级单 |
 
 ## 可观测性与回放
 
-每次 `/chat` 请求都会写入 SQLite trace，记录 session、route intent、用户输入、最终回答、来源、状态和延迟。项目提供两个在线调试接口：
+每次 `/chat` 请求都会写入 SQLite trace，记录 session、route intent、用户输入、最终回答、来源、售后 case、状态和延迟。项目提供三个在线调试接口：
 
 ```text
 GET /observability/summary
+GET /observability/case-metrics
 GET /observability/traces/{session_id}?limit=20
 ```
 
-这不是完整监控平台，但已经覆盖面试中最关键的问题：能按 session 回放一次 Agent 轨迹，能看路由分布、失败状态和延迟分布。生产中可以把同一份 trace 事件同步到 Kafka/RocketMQ 审计流，再接 Prometheus/Grafana 或 OpenTelemetry。
+`/observability/case-metrics` 面向业务指标，而不是普通日志：
+
+| 指标 | 含义 |
+|---|---|
+| `auto_resolution_rate` | 拒绝/澄清/低风险执行等不需要 HITL 的 case 占比 |
+| `hitl_rate` | 进入人工确认或人工复核的 case 占比 |
+| `wrong_write_blocked` | 已送达取消、缺政策依据退款等错误写动作被拦截次数 |
+| `policy_hit_rate` | case 决策是否命中政策/FAQ/商家规则依据 |
+| `tool_error_rate` | trace 中工具失败事件占比 |
+| `p95_latency_ms` | 售后 case 请求链路 p95 延迟 |
+| `cost_per_case` | 已记录模型成本样本的单 case 平均成本 |
+
+这不是完整监控平台，但已经覆盖面试中最关键的问题：能按 session 回放一次 Agent 轨迹，能看路由分布、失败状态、业务 case 指标和延迟分布。生产中可以把同一份 trace 事件同步到 Kafka/RocketMQ 审计流，再接 Prometheus/Grafana 或 OpenTelemetry。
 
 ## CI
 
@@ -327,7 +343,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 81 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、MCP 售后决策工具、benchmark summary parser 和 tau2 bad-case guard |
+| Unit/Integration Tests | 89 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、投诉升级 case、MCP 企业工具边界、benchmark summary parser 和 tau2 bad-case guard |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -338,13 +354,13 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 | ResCommons hybrid retrieval | BM25 intent@5 81%, char-ngram intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
 | ResCommons baseline delta | BM25 intent@1/intent@5 64%/81% -> hybrid 77%/91% | 用公开客服对话语料验证 hybrid retrieval 比纯 BM25 更稳，不只报单点最高值 |
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
-| Policy KB retrieval | Top1/Recall@3/MRR@3 100% | 12 条中文政策问题能命中正确 policy section，覆盖退款、补偿、取消、发票、改地址、人工确认等 |
+| Policy/FAQ/Merchant KB retrieval | Top1/Recall@3/MRR@3 100% | 19 条中文售后问题覆盖政策、FAQ、商家规则、退货标签、投诉升级和类目特殊规则；这是小型 KB regression，不是公开 benchmark |
 | After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
 | Live LLM Agent eval | 30/30, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
 | Route drift eval | first-intent/task-sequence match 100% | 读取 live eval 结果，比较 expected/actual 任务分布，用于发现 prompt/model 版本变更造成的路由漂移 |
 | Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
 | Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
-| Layered metrics report | 79 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能和可观测性总表，见 `evaluation/agent_metrics_report.md` |
+| Layered metrics report | 93 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能、业务 case 指标和可观测性总表，见 `evaluation/agent_metrics_report.md` |
 
 外部 benchmark 适配：
 

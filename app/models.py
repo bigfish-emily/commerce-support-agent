@@ -20,6 +20,19 @@ class TraceSummaryResponse(BaseModel):
     p95_latency_ms: float
 
 
+class CaseMetricsResponse(BaseModel):
+    total_cases: int
+    auto_resolution_rate: float
+    hitl_rate: float
+    wrong_write_blocked: int
+    wrong_write_block_rate: float
+    policy_hit_rate: float
+    tool_error_rate: float
+    p95_latency_ms: float
+    cost_per_case: float
+    cost_sample_count: int
+
+
 class TraceReplayResponse(BaseModel):
     session_id: str
     traces: list[dict]

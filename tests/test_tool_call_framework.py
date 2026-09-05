@@ -43,6 +43,7 @@ async def test_tool_call_schema_validation_and_audit_redaction(manager) -> None:
     assert result.error_code == "schema_validation_failed"
     assert manager.audit_events[-1]["tool_name"] == "get_order_status"
     assert manager.audit_events[-1]["redacted_args"]["order_id"] == "short"
+    assert manager.audit_events[-1]["risk_level"] == "read"
 
 
 @pytest.mark.anyio
@@ -276,3 +277,14 @@ async def test_side_effect_tool_is_idempotent_and_audited(manager) -> None:
     event = manager.audit_events[-1]
     assert event["redacted_args"]["order_id"] == "203096...cfb7"
     assert event["redacted_args"]["message_text"]["chars"] == len(args["message_text"])
+    assert event["risk_level"] == "critical"
+    assert event["side_effect"] is True
+
+
+def test_tool_metadata_exposes_enterprise_boundaries(manager) -> None:
+    metadata = {item["name"]: item for item in manager.list_tool_metadata()}
+
+    assert metadata["get_order_status"]["auth_scope"] == "orders:read"
+    assert metadata["assess_after_sales_case"]["risk_level"] == "medium"
+    assert metadata["execute_side_effect"]["risk_level"] == "critical"
+    assert metadata["execute_side_effect"]["idempotency_required"] is True

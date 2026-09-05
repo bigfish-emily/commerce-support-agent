@@ -80,7 +80,8 @@ class PolicyResponseGenerator:
                 "结论：涉及退款、补偿、取消订单、改地址或创建工单时，需要人工确认后再执行。"
             )
         context = "\n".join(
-            f"- {item['section_title']} ({item['source']}): {item['text']}"
+            f"- {item['section_title']} [{item.get('source_type', 'knowledge')}] "
+            f"({item['source']}): {item['text']}"
             for item in policy_sections
         )
         if support_docs:

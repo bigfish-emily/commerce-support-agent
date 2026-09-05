@@ -14,7 +14,7 @@
 | 工具/参数 | order_id 参数修复准确率 | 100.00% | 6 | 工具参数含空格、大小写、前缀、缺失、多 ID 时是否能修复或拒绝。 | repair_order_id 输出 ok/value/error_code 与 gold 是否一致。 | 否 |
 | 工具/参数 | 澄清返回正确率 | 100.00% | 3 | 缺失/不完整/多订单号时，系统是否返回可执行澄清而不是盲目重试。 | 非法参数 case 中 result.ok=false 且 message 非空。 | 否 |
 | 工具/参数 | 副作用任务 HITL 覆盖率 | 100.00% | 120 | 售后/退款/取消等副作用任务是否全部进入人工确认门。 | expected_intent=escalation 的 case 是否都要求确认。 | 否 |
-| 工具/参数 | 副作用 action_type 分发覆盖率 | 100.00% | 5 | 退款、取消、改地址、发票、工单五类动作是否都有工具落点。 | 五类 action_type 是否都有可执行的幂等工具模拟。 | 否 |
+| 工具/参数 | 副作用 action_type 分发覆盖率 | 100.00% | 6 | 工单、退款、取消、改地址、发票、投诉升级六类动作是否都有工具落点。 | 六类 action_type 是否都有可执行的幂等工具模拟。 | 否 |
 | 工具/参数 | ToolCallManager 治理项覆盖率 | 100.00% | 8 | 验证 schema、角色权限、只读缓存、租户隔离、Redis backend、timeout fallback、副作用幂等和审计脱敏是否可用。 | 运行一个无 LLM mini harness，逐项检查 ToolCallManager 的治理能力。 | 否 |
 | RAG/检索 | 类目 RAG exact_underscore Top1 | 32.08% | 240 | 首位召回是否命中正确类目。 | ranked[0] == expected_category。 | 否 |
 | RAG/检索 | 类目 RAG exact_underscore Recall@3 | 32.08% | 240 | Top3 是否包含正确类目，衡量召回能力。 | expected_category in ranked[:3]。 | 否 |
@@ -28,9 +28,9 @@
 | RAG/检索 | 类目 RAG adaptive_rewrite Recall@3 | 92.50% | 240 | Top3 是否包含正确类目，衡量召回能力。 | expected_category in ranked[:3]。 | 否 |
 | RAG/检索 | 类目 RAG adaptive_rewrite MRR@3 | 92.22% | 240 | 正确类目越靠前分数越高。 | 命中时累加 1/rank，未命中为 0。 | 否 |
 | RAG/检索 | 类目 RAG adaptive_rewrite realistic_alias Top1 | 97.50% | 40 | 中文别名、行业俗称、英文近义表达等更接近真实用户说法的首位命中率。 | 只在 realistic_alias 子集上计算 ranked[0] == expected_category。 | 否 |
-| RAG/检索 | 政策 KB Top1 | 100.00% | 12 | 政策问题首位是否命中正确章节。 | ranked[0] == expected_section。 | 否 |
-| RAG/检索 | 政策 KB Recall@3 | 100.00% | 12 | Top3 是否包含正确政策章节。 | expected_section in ranked[:3]。 | 否 |
-| RAG/检索 | 政策 KB MRR@3 | 100.00% | 12 | 正确政策章节越靠前分数越高。 | 命中时累加 1/rank。 | 否 |
+| RAG/检索 | 政策 KB Top1 | 100.00% | 19 | 政策问题首位是否命中正确章节。 | ranked[0] == expected_section。 | 否 |
+| RAG/检索 | 政策 KB Recall@3 | 100.00% | 19 | Top3 是否包含正确政策章节。 | expected_section in ranked[:3]。 | 否 |
+| RAG/检索 | 政策 KB MRR@3 | 100.00% | 19 | 正确政策章节越靠前分数越高。 | 命中时累加 1/rank。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 intent@1 | 64.00% | 100 | 首位召回文档的客服 intent 是否与 query intent 一致。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 intent@5 | 81.00% | 100 | Top5 是否出现同 intent 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 intent_mrr@5 | 70.73% | 100 | 同 intent 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
@@ -73,25 +73,28 @@
 | 性能/成本 | live approx p50 turn tokens | not_recorded | 30 | 旧版 live eval 结果未记录 token 估算字段；下一次 live eval 会自动写入。 | 重新运行 evaluation.live_agent_eval 后按 approx_turn_tokens 取 p50。 | 是 |
 | 真实 LLM Agent | route drift first-intent match | 100.00% | 30 | 同一 live 回归集上，LLM planner 首个业务意图是否偏离 pinned expectation。 | first(actual_tasks) == first(expected_tasks)。 | 是 |
 | 真实 LLM Agent | route drift task-sequence match | 100.00% | 30 | 同一 live 回归集上，多任务序列是否偏离 pinned expectation，用于检测 prompt/model 版本漂移。 | actual_tasks == expected_tasks。 | 是 |
-| 外部Benchmark | tau2/tau3 retail pass^1 | 96.67% | 30 tasks | 官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。 | tau2 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek 30-task official subset。 | 是 |
-| 外部Benchmark | tau2/tau3 retail avg reward | 96.67% | 30 | 官方 reward 均值，综合 DB/env/NL assertion 等检查。 | 读取 tau2 result reward_info.reward 后求平均。 | 是 |
-| 外部Benchmark | tau2/tau3 retail DB match | 29/30 (96.67%) | 30 | 副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。 | reward_info.db_check.db_match=true 的数量 / 有 DB check 的 simulation 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail read action match | 163/170 (95.88%) | 170 | 只读工具调用序列和参数是否匹配官方期望。 | reward_info.action_checks 中 tool_type=read 且 action_reward=1 的数量 / read action 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail write action match | 37/38 (97.37%) | 38 | 退款、退货、换货、改订单等写工具是否按官方期望执行。 | reward_info.action_checks 中 tool_type=write 且 action_reward=1 的数量 / write action 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail NL assertions | 10/10 (100.00%) | 10 | 自然语言回答是否满足官方任务断言。 | reward_info.nl_assertions 中 met=true 的数量 / NL assertion 数。 | 是 |
-| 外部Benchmark | tau2/tau3 retail p95 latency | 28.78s | 30 | 官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。 | 按 tau2 simulation duration 取 p95。 | 是 |
-| 外部Benchmark | tau2/tau3 retail avg total cost | $0.001573 | 30 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
+| 外部Benchmark | tau2-bench retail pass^1 | 91.23% | 114 tasks | 官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。 | tau2-bench 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek retail base split 114-task local run。 | 是 |
+| 外部Benchmark | tau2-bench retail avg reward | 91.23% | 114 | 官方 reward 均值，综合 DB/env/NL assertion 等检查。 | 读取 tau2 result reward_info.reward 后求平均。 | 是 |
+| 外部Benchmark | tau2-bench retail DB match | 105/114 (92.11%) | 114 | 副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。 | reward_info.db_check.db_match=true 的数量 / 有 DB check 的 simulation 数。 | 是 |
+| 外部Benchmark | tau2-bench retail read action match | 346/357 (96.92%) | 357 | 只读工具调用序列和参数是否匹配官方期望。 | reward_info.action_checks 中 tool_type=read 且 action_reward=1 的数量 / read action 数。 | 是 |
+| 外部Benchmark | tau2-bench retail write action match | 162/176 (92.05%) | 176 | 退款、退货、换货、改订单等写工具是否按官方期望执行。 | reward_info.action_checks 中 tool_type=write 且 action_reward=1 的数量 / write action 数。 | 是 |
+| 外部Benchmark | tau2-bench retail NL assertions | 58/61 (95.08%) | 61 | 自然语言回答是否满足官方任务断言。 | reward_info.nl_assertions 中 met=true 的数量 / NL assertion 数。 | 是 |
+| 外部Benchmark | tau2-bench retail p95 latency | 32.77s | 114 | 官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。 | 按 tau2 simulation duration 取 p95。 | 是 |
+| 外部Benchmark | tau2-bench retail avg total cost | $0.006036 | 114 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
 | 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 100% | 3 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 category_risk、policy_boundary、multi_intent_hitl。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
-| 性能/成本 | order_status_lookup p95 延迟 | 0.001 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.249 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.964 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.250 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.057 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
-| 性能/成本 | policy KB 估算 token | 1951 | 1 file | 当前政策知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
+| 性能/成本 | policy KB 估算 token | 2692 | 3 files | 当前 policy/FAQ/merchant rules 知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 可观测性 | trace 写入与回放可用率 | 100.00% | 1 | 请求 trace 是否可按 session 查询回放。 | 写入一条 trace 后 list_session_traces 是否返回记录。 | 否 |
-| 可观测性 | trace summary 可用率 | 100.00% | 1 | 是否能统计状态分布、路由分布和延迟。 | trace_summary().total 是否等于写入条数。 | 否 |
+| 可观测性 | trace summary 可用率 | 100.00% | 2 | 是否能统计状态分布、路由分布和延迟。 | trace_summary().total 是否等于写入条数。 | 否 |
+| 可观测性 | case metrics 聚合可用率 | 100.00% | 1 | 是否能从 trace 中按售后 case 聚合业务指标。 | 写入 after_sales_cases 后 case_metrics().total_cases 是否为 1。 | 否 |
+| 可观测性 | wrong_write_blocked | 1 | 1 | 不符合政策或订单状态的写动作被 Verifier/决策层拦截的次数。 | 统计 outcome=reject/ask_clarification 的写动作 case 数。 | 否 |
+| 可观测性 | policy_hit_rate | 100.00% | 1 | 售后 case 是否带有可追溯政策/FAQ/商家规则依据。 | policy_refs 非空的售后 case / total_cases。 | 否 |

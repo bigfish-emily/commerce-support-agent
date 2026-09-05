@@ -244,6 +244,7 @@ class AgentActions:
             "retrieved_policy": [
                 {
                     "source": hit.source,
+                    "source_type": hit.source_type,
                     "section_title": hit.section_title,
                     "text": hit.text,
                     "score": hit.score,
@@ -488,6 +489,8 @@ class AgentActions:
             return "change_address"
         if any(token in lowered for token in ("invoice", "发票", "开票")):
             return "invoice_request"
+        if any(token in lowered for token in ("complaint", "投诉", "升级投诉", "转人工", "人工介入")):
+            return "complaint_escalation"
         return "open_support_case"
 
     async def _category_insights(self, query: str, state: AgentState) -> list[dict[str, object]]:
@@ -600,6 +603,7 @@ _ACTION_LABELS = {
     "cancel_order": "提交取消订单申请",
     "change_address": "提交改地址申请",
     "invoice_request": "提交发票申请",
+    "complaint_escalation": "提交投诉升级工单",
 }
 
 

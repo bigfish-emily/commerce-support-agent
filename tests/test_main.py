@@ -74,6 +74,21 @@ def _mock_plan(*intents: str):
     )
 
 
+def _mock_plan_action(action_type: str):
+    from app.llm.types import PlannedTask, TaskPlanResult
+
+    task = PlannedTask(
+        intent="escalation",
+        text="",
+        side_effect=True,
+        action_type=action_type,
+    )
+    return patch(
+        "app.llm.intent_planner.IntentPlanner.plan",
+        AsyncMock(return_value=TaskPlanResult(tasks=[task])),
+    )
+
+
 def _mock_qa_answer(response: str):
     return patch("app.llm.response_generator.QaResponseGenerator.generate", AsyncMock(return_value=response))
 
@@ -492,3 +507,45 @@ async def test_chat_trace_contains_trajectory_events(client: AsyncClient, tmp_pa
     assert traces
     assert "plan_tasks" in traces[0]["trajectory_json"]
     assert "search_policy_knowledge" in traces[0]["trajectory_json"]
+
+
+@pytest.mark.anyio
+async def test_observability_case_metrics_endpoint(client: AsyncClient, tmp_path, monkeypatch) -> None:
+    import app.trace_store as trace_store
+
+    monkeypatch.setattr(trace_store, "TRACE_DB", tmp_path / "traces.db")
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("escalation"), _mock_task():
+        await client.post(
+            "/chat",
+            json={"message": f"给订单 {ORDER_ID} 申请退款", "session_id": "metrics-s1"},
+        )
+
+    response = await client.get("/observability/case-metrics")
+    body = response.json()
+    assert response.status_code == 200
+    assert body["total_cases"] == 1
+    assert body["hitl_rate"] == 1.0
+    assert body["policy_hit_rate"] == 1.0
+
+
+@pytest.mark.anyio
+async def test_chat_complaint_escalation_enters_after_sales_case_lifecycle(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan_action("complaint_escalation"), _mock_task():
+        response = await client.post(
+            "/chat",
+            json={"message": f"我要投诉升级订单 {ORDER_ID} 的延迟问题", "session_id": "complaint-s1"},
+        )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert "售后 case 决策" in body["answer"]
+    assert "提交投诉升级工单" in body["answer"]
+    assert "是否确认执行" in body["answer"]
+
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2:
+        confirmed = await client.post("/chat", json={"message": "yes", "session_id": "complaint-s1"})
+    assert confirmed.status_code == 200
+    assert "COMP-" in confirmed.json()["answer"]

@@ -349,6 +349,7 @@ def _case_prefix(action_type: str) -> str:
         "cancel_order": "CANCEL",
         "change_address": "ADDR",
         "invoice_request": "INV",
+        "complaint_escalation": "COMP",
     }
     return prefixes.get(action_type, "CASE")
 

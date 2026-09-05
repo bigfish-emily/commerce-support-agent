@@ -12,7 +12,7 @@
 - 设计 `AfterSalesDecisionEngine + Verifier`，将订单状态、配送延迟、支付金额、评价分、政策命中转为 `approve/reject/needs_human_review/ask_clarification` 决策；已送达订单取消会被拒绝，退款/补偿等资金动作必须进入 HITL。
 - 基于 Olist 公开数据构建 98,666 条订单事实与 73 个类目画像，结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 回归；ResCommons hybrid retrieval 将 BM25 intent@1/intent@5 从 64%/81% 提升至 77%/91%。
 - 实现 MCP 企业工具边界：本地 MCP server 暴露 `get_order_status`、`assess_after_sales_case`、`generate_after_sales_priority_report` 等工具，client 侧支持 stdio 与 Streamable HTTP，并预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter。
-- 建立 CI 与多层评测：pytest 81 passed，DeepSeek live Agent eval 30/30；接入 τ-bench retail（`tau2-bench` v1.0.1）base split 114 tasks，DeepSeek V4-Flash pass^1 91.23%、write action match 92.05%、NL assertions 95.08%、p95 32.77s，并将失败样本沉淀为 bad-case regression。
+- 建立 CI 与多层评测：pytest 89 passed，DeepSeek live Agent eval 30/30；接入 τ-bench retail（`tau2-bench` v1.0.1）base split 114 tasks，DeepSeek V4-Flash pass^1 91.23%、write action match 92.05%、NL assertions 95.08%、p95 32.77s，并将失败样本沉淀为 bad-case regression。
 ```
 
 这版故意不写“生产级闭环全完成”，也不把所有 100% 当模型能力。最值得强调的是基线提升、数据规模、MCP 代码落点、真实 LLM 主链路和延迟成本。
@@ -24,13 +24,14 @@
 | LangGraph plan-and-execute | `app/agent/graph.py`, `app/agent/actions.py` | 当前是单图多 capability，不是多 Agent |
 | LLM first step | `app/llm/intent_planner.py` | LLM 失败时才进入 deterministic fallback |
 | HITL + resume | `interrupt()` in `AgentActions.await_confirmation`, checkpoint in `/chat` | HITL 是确认门，不是自动提权 |
-| MCP support | `app/mcp_server.py`, `app/mcp_client.py`, `app/stripe_mcp.py` | 主 demo 默认用本地 service 保证无凭证可跑 |
+| MCP support | `app/mcp_server.py`, `app/mcp_client.py`, `app/stripe_mcp.py` | MCP server 暴露业务工具和 `list_enterprise_tool_boundaries`；主 demo 默认用本地 service 保证无凭证可跑 |
 | Tool call governance | `app/tool_call/framework.py`, `app/agent/actions.py`, `tests/test_tool_call_framework.py` | Redis runtime 覆盖 cache/rate-limit/HITL TTL/side-effect lock；当前鉴权是角色白名单，不是企业 IAM |
 | Persistent idempotency | `SQLiteCaseService` in `app/olist/service.py` | 个人项目模拟企业工具，不产生真实退款 |
 | Hybrid retrieval formula | `app/retrieval/hybrid.py` | 本地 char-ngram vector baseline，不是线上 embedding/reranker |
 | Real LLM eval | `evaluation/live_agent_eval.py`, `evaluation/live_agent_eval_results.jsonl` | 30 条回归集，不是 leaderboard benchmark |
 | Route drift eval | `evaluation/route_drift_eval.py` | 比较 pinned eval expectation，不等于线上流量漂移 |
 | tau2 adapter | `benchmark_adapters/tau2_retail_agent.py`, `scripts/run_tau2_retail_subset.py`, `benchmark_runs/tau2_retail/last_summary.md` | 当前是 τ-bench retail base split 114-task local run，不是 public leaderboard |
+| Business observability | `app/trace_store.py`, `/observability/case-metrics`, `tests/test_trace_store.py` | 当前是 SQLite 聚合；生产可同步到 OTel/Prometheus/Kafka audit stream |
 
 ## Seven Hard Questions
 
@@ -113,11 +114,26 @@ score(doc) = 0.2 / (bm25_rank + 20) + 2.0 / (vector_rank + 20)
 - ResCommons：公开客服对话语料，train 做 corpus，test query 用原始 intent/capability metadata 做检索评测。
 - V1rtucious：公开 2,000 条 Agent test set，用于 profile tool/RAG/escalation 覆盖，不吹成经典 benchmark。
 - Multi-intent/live eval：人工设计回归集，目标是覆盖关键业务路径和历史 bug，不是统计意义 benchmark。
-- Policy KB：政策文档是项目内模拟 SOP，评测问题人工写，用来验证 RAG 边界。
+- Policy/FAQ/Merchant KB：项目内模拟 SOP、FAQ 和商家规则，评测问题人工写，用来验证多来源售后知识检索、source_type 和决策依据。
 
 回答重点：我不会把“自己构造的 30 条 live eval”包装成行业 benchmark；它是回归测试。横向可比需要 tau2 retail。
 
-### 7. 成本与延迟怎么讲？
+### 7. 可观测性为什么不是普通 trace？
+
+普通 trace 只能回答“某个 session 调了哪些节点/工具”。售后业务还需要回答“这些 case 有没有真的帮业务控风险”，所以我把 trace 里新增了 `after_sales_cases`，再聚合成 `/observability/case-metrics`。
+
+核心指标包括：
+
+- `auto_resolution_rate`：能自动拒绝、澄清或低风险处理的 case 占比。
+- `hitl_rate`：进入人工确认/人工复核的 case 占比。
+- `wrong_write_blocked`：错误写动作被决策层或 verifier 拦住的次数，例如已送达订单取消。
+- `policy_hit_rate`：售后 case 是否带有政策/FAQ/商家规则依据。
+- `tool_error_rate`：工具调用失败占比。
+- `p95_latency` 和 `cost_per_case`：延迟和成本口径。
+
+当前实现是 SQLite 聚合，适合个人项目和面试演示；生产版会把同样事件写到 Kafka/RocketMQ 审计流，metrics 进 Prometheus/Grafana，trace 进 OpenTelemetry。
+
+### 8. 成本与延迟怎么讲？
 
 最新 live eval 记录 p50/p95 latency：p50 约 10.83s，p95 约 26.05s。这个数字包含真实 LLM guard、planner、抽槽/生成、工具执行和 output guard。它暴露的问题也很明确：当前便宜模型和多次 LLM 调用导致端到端延迟偏高。
 

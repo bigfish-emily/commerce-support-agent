@@ -31,6 +31,7 @@ http://127.0.0.1:8000/docs
 - 左侧：示例任务按钮，点击后会把测试句子填入输入框。
 - 中间：对话测试区，填写 `Session ID` 和用户输入，点击发送。
 - 右侧：Trace 与可观测性，可以查看整体 summary 或当前 session 的执行轨迹。
+- 右侧 `Case Metrics`：按售后 case 聚合自动解决率、HITL 占比、错误写动作拦截、政策命中率、工具错误率、p95 延迟和单 case 成本。
 
 `Session ID` 很重要。售后升级、退款、取消订单这类 HITL 流程需要同一个 session 才能继续确认。
 
@@ -118,7 +119,21 @@ yes
 - 停在 HITL。
 - 同 session 回复 `确认` 后，返回 `REFUND-...`。
 
-### 3.6 参数澄清
+### 3.6 投诉升级
+
+输入：
+
+```text
+我要投诉升级订单 203096f03d82e0dffbc41ebc2e2bcfb7 的延迟问题
+```
+
+预期结果：
+
+- Agent 会构造 `complaint_escalation` 类型的 `AfterSalesCase`。
+- 决策层会给出证据、政策依据、Verifier 结果和客户回复草稿。
+- 因为这是写入 CRM/投诉队列的副作用动作，会进入 HITL；确认后返回 `COMP-...`。
+
+### 3.7 参数澄清
 
 输入：
 
@@ -133,7 +148,7 @@ yes
 
 输入多个订单号时，系统会提示你明确要处理哪一个。
 
-### 3.7 越界请求
+### 3.8 越界请求
 
 输入：
 
@@ -160,6 +175,22 @@ yes
 - status_counts：成功、输入拒绝、输出拒绝等状态分布
 - route_intent_counts：不同业务入口的分布
 - avg_latency_ms / p95_latency_ms：平均和 p95 延迟
+
+点击：
+
+```text
+Case Metrics
+```
+
+你会看到：
+
+- `auto_resolution_rate`：自动拒绝、澄清或低风险处理的 case 占比
+- `hitl_rate`：需要人工确认/人工复核的 case 占比
+- `wrong_write_blocked`：错误写动作被拦截次数
+- `policy_hit_rate`：case 是否命中政策/FAQ/商家规则
+- `tool_error_rate`：工具调用失败占比
+- `p95_latency_ms`：售后 case 链路 p95 延迟
+- `cost_per_case`：已有成本样本的平均单 case 成本
 
 点击：
 

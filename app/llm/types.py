@@ -21,7 +21,7 @@ class PlannedTask(BaseModel):
         "none",
         description=(
             "For side effects: open_support_case, refund_request, cancel_order, "
-            "change_address, invoice_request, or none"
+            "change_address, invoice_request, complaint_escalation, or none"
         ),
     )
     depends_on: list[int] = Field(

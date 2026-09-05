@@ -10,6 +10,7 @@ AfterSalesAction = Literal[
     "cancel_order",
     "change_address",
     "invoice_request",
+    "complaint_escalation",
 ]
 
 DecisionOutcome = Literal[
