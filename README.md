@@ -442,9 +442,24 @@ LLM-as-Judge 小样本：
 OPENAI_API_KEY=<your-key>
 OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-v4-flash
-LLM_JUDGE_LIMIT=3
+LLM_JUDGE_LIMIT=10
 python -m evaluation.llm_judge_eval
 ```
+
+AIHubMix 也可以作为 OpenAI-compatible provider 运行同一套评测：
+
+```powershell
+AIHUBMIX_API_KEY=<your-key>
+OPENAI_BASE_URL=https://aihubmix.com/v1
+OPENAI_MODEL=coding-glm-5-free
+LLM_JUDGE_LIMIT=10
+python -m evaluation.llm_judge_eval
+```
+
+运行后会生成：
+
+- `evaluation/llm_judge_eval_results.jsonl`：逐条 JSON 明细。
+- `evaluation/llm_judge_eval_report.md`：可读报告，包含每条 case 的用户输入、期望行为、Agent 输出、轨迹摘要、裁判分数和 rationale。
 
 最近一次小样本结果：category risk、policy boundary、multi-intent HITL 三类样本均通过，answer relevance / faithfulness / tool correctness / HITL correctness 四项均分 `5.00/5`，pass rate `100%`。这是低成本 smoke 级 judge，不等价于大规模线上评测。
 

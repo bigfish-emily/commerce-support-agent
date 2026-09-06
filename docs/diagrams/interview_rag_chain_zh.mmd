@@ -1,0 +1,10 @@
+flowchart LR
+    Q[用户问题] --> Rewrite[Query 改写]
+    Rewrite --> Source{选择数据源}
+    Source --> Policy[政策/FAQ/商家规则]
+    Source --> Case[客服历史语料]
+    Source --> Fact[订单事实工具]
+    Policy --> Rank[召回 + rerank]
+    Case --> Rank
+    Fact --> Answer[基于证据回答]
+    Rank --> Answer

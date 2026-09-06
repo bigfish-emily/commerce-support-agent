@@ -1,0 +1,33 @@
+flowchart TD
+    Request[User message] --> Pending{Pending HITL in session?}
+    Pending -- yes --> PendingPolicy{Confirm / cancel / timeout?}
+    PendingPolicy -- confirm --> Resume[Resume LangGraph checkpoint]
+    PendingPolicy -- cancel or timeout --> Cleanup[Clear pending state]
+    PendingPolicy -- unrelated text --> Reminder[Ask user to confirm or cancel first]
+
+    Pending -- no --> InputGuard[Input guard]
+    InputGuard -- rejected --> Reject[Off-topic or unsafe rejection]
+    InputGuard -- accepted --> Plan[LLM structured task plan]
+    Plan --> Sort[Read-only tasks first, side-effect tasks later]
+    Sort --> Execute[Execute task plan]
+
+    Execute --> Order[Order status tool]
+    Execute --> Policy[Policy / FAQ / merchant RAG]
+    Execute --> Ops[After-sales priority report]
+    Execute --> Side[After-sales side-effect task]
+
+    Side --> Case[Build AfterSalesCase]
+    Case --> Decision[Decision + Verifier]
+    Decision -- reject / clarify --> SafeAnswer[Safe answer without write]
+    Decision -- requires HITL --> Interrupt[interrupt and persist checkpoint]
+    Interrupt --> Draft[Return draft and confirmation question]
+
+    Resume --> Finalize[finalize_escalation]
+    Finalize --> ToolCall[execute_side_effect through ToolCallManager]
+    ToolCall --> FinalAnswer[Final answer]
+    Order --> FinalAnswer
+    Policy --> FinalAnswer
+    Ops --> FinalAnswer
+    SafeAnswer --> FinalAnswer
+    Cleanup --> FinalAnswer
+    Reminder --> FinalAnswer

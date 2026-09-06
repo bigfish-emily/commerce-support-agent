@@ -52,30 +52,31 @@ def parse_json_model(content: object, schema: type[T]) -> T:
     return schema.model_validate(payload)
 
 
-def _extract_json(text: str) -> dict[str, Any]:
+def _extract_json(text: str) -> Any:
     try:
         loaded = json.loads(text)
-        if isinstance(loaded, dict):
+        if isinstance(loaded, (dict, list)):
             return loaded
     except json.JSONDecodeError:
         pass
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
     if fenced:
         loaded = json.loads(fenced.group(1))
-        if isinstance(loaded, dict):
+        if isinstance(loaded, (dict, list)):
             return loaded
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        loaded = json.loads(text[start : end + 1])
-        if isinstance(loaded, dict):
-            return loaded
+    for start_token, end_token in (("{", "}"), ("[", "]")):
+        start = text.find(start_token)
+        end = text.rfind(end_token)
+        if start >= 0 and end > start:
+            loaded = json.loads(text[start : end + 1])
+            if isinstance(loaded, (dict, list)):
+                return loaded
     raise ValueError("LLM response does not contain a JSON object")
 
 
-def _repair_payload(payload: dict[str, Any], schema: type[BaseModel]) -> dict[str, Any]:
+def _repair_payload(payload: Any, schema: type[BaseModel]) -> dict[str, Any]:
     if schema.__name__ == "TaskPlanResult":
-        tasks = payload.get("tasks", [])
+        tasks = payload if isinstance(payload, list) else payload.get("tasks", [])
         repaired_tasks = []
         if isinstance(tasks, list):
             for task in tasks:
@@ -86,6 +87,8 @@ def _repair_payload(payload: dict[str, Any], schema: type[BaseModel]) -> dict[st
                     repaired["intent"] = repaired["type"]
                 if "intent" not in repaired and "task" in repaired:
                     repaired["intent"] = repaired["task"]
+                if "index" not in repaired and isinstance(repaired.get("task"), int):
+                    repaired["index"] = repaired["task"]
                 repaired.setdefault("text", "")
                 repaired.setdefault("side_effect", False)
                 repaired.setdefault("action_type", "none")
@@ -103,5 +106,31 @@ def _repair_payload(payload: dict[str, Any], schema: type[BaseModel]) -> dict[st
             repaired["order_id"] = repaired.get("orderId", repaired.get("order", ""))
         repaired.setdefault("category", "")
         repaired.setdefault("user_goal", repaired.get("goal", ""))
+        return repaired
+    if schema.__name__ == "InputGuardResult":
+        repaired = dict(payload)
+        if "reason" not in repaired:
+            repaired["reason"] = (
+                repaired.get("block_reason")
+                or repaired.get("category")
+                or repaired.get("explanation")
+                or "guard did not provide reason"
+            )
+        return repaired
+    if schema.__name__ == "OutputGuardResult":
+        repaired = dict(payload)
+        if "reason" not in repaired:
+            repaired["reason"] = repaired.get("explanation") or repaired.get("comment") or ""
+        return repaired
+    if schema.__name__ == "JudgeResult":
+        repaired = dict(payload)
+        if "rationale" not in repaired:
+            repaired["rationale"] = (
+                repaired.get("explanation")
+                or repaired.get("reason")
+                or repaired.get("comment")
+                or "judge did not provide rationale"
+            )
+        repaired.setdefault("pass_overall", False)
         return repaired
     return payload

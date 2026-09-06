@@ -1,0 +1,11 @@
+flowchart TD
+    Q[退款/取消/改地址/发票/投诉] --> O[查订单状态]
+    O --> K[检索政策/FAQ/商家规则]
+    K --> C[构造 AfterSalesCase]
+    C --> D[Decision 判断]
+    D --> V[Verifier 校验]
+    V --> X{下一步}
+    X -- 可拒绝 --> Reject[安全拒绝]
+    X -- 信息不足 --> Ask[要求补充信息]
+    X -- 高风险 --> HITL[人工确认]
+    HITL --> Exec[幂等执行]

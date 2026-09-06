@@ -1,0 +1,32 @@
+stateDiagram-v2
+    [*] --> NewRequest: receive user request
+
+    NewRequest --> CheckPending: check session checkpoint
+    CheckPending --> StartGraph: no pending interrupt
+    CheckPending --> PendingHandling: pending interrupt exists
+
+    PendingHandling --> CheckTimeout: check TTL
+    CheckTimeout --> TimeoutPath: expires_at < now
+    CheckTimeout --> CheckReply: still valid
+
+    CheckReply --> ResumeConfirm: yes / confirm / 确认
+    CheckReply --> ResumeCancel: no / cancel / 取消
+    CheckReply --> RemindUser: normal new text
+
+    StartGraph --> ExecuteNodes: plan_tasks -> execute_task_plan
+    ExecuteNodes --> AwaitConfirmationNode: side-effect task requires HITL
+    AwaitConfirmationNode --> Interrupted: LangGraph interrupt()
+    Interrupted --> [*]: return decision draft to user
+
+    TimeoutPath --> ResumeCommand: Command(resume="__hitl_timeout__")
+    ResumeConfirm --> ResumeCommand: Command(resume=user_message)
+    ResumeCancel --> ResumeCommand: Command(resume=user_message)
+
+    ResumeCommand --> FinalizeNode: finalize_escalation
+    RemindUser --> [*]: ask user to confirm or cancel first
+
+    FinalizeNode --> SideEffectExec: confirmed == true
+    FinalizeNode --> CanceledExec: confirmed == false or timeout
+    SideEffectExec --> ClearPending: execute_side_effect with idempotency key
+    CanceledExec --> ClearPending: discard draft
+    ClearPending --> [*]: completed / canceled / timeout_canceled

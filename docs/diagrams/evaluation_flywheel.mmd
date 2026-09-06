@@ -1,0 +1,23 @@
+flowchart TD
+    Cases[Eval cases and production bad cases] --> Offline[Offline deterministic evals]
+    Offline --> Intent[Intent and multi-intent checks]
+    Offline --> Tool[Tool schema / repair / HITL checks]
+    Offline --> RAG[RAG retrieval metrics]
+    Offline --> Trace[Trajectory consistency]
+
+    Cases --> Live[Live LLM agent eval]
+    Live --> Judge[LLM-as-judge answer quality smoke]
+    Live --> Drift[Route drift report]
+
+    Cases --> Bench[tau2-bench retail local run]
+    Bench --> BenchFailures[Failed task clusters]
+
+    Intent --> Report[agent_metrics_report.md]
+    Tool --> Report
+    RAG --> Report
+    Trace --> Report
+    Judge --> Report
+    Drift --> Report
+    BenchFailures --> Regression[Bad-case regression set]
+    Regression --> CI[CI: pytest + ruff + offline evals]
+    CI --> Cases

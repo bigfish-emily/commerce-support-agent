@@ -1,0 +1,21 @@
+flowchart LR
+    User[客服坐席/售后运营] --> API[Web Console / FastAPI]
+    API --> Guard[Input Guard]
+    Guard --> Graph[LangGraph<br/>plan-and-execute]
+
+    Graph --> LLM[LLM<br/>意图规划/抽槽/回答生成]
+    Graph --> RAG[RAG & Retrieval<br/>政策/FAQ/商家规则/客服语料/类目画像]
+    Graph --> Case[AfterSalesCase<br/>售后结构化对象]
+
+    Case --> Decision[Decision Engine + Verifier]
+    Decision --> HITL[HITL 确认/拒绝/超时]
+    HITL --> Tools[ToolCallManager]
+
+    Tools --> Business[业务工具<br/>订单/政策/运营报表/售后写动作]
+    Tools --> MCP[MCP Server/Client<br/>企业工具边界]
+    Tools --> Redis[Redis Runtime<br/>缓存/限流/锁/HITL TTL]
+
+    Graph --> Trace[SQLite Trace & Checkpoint]
+    Business --> Trace
+    Trace --> Metrics[Case Metrics & Replay]
+    Metrics --> Eval[Eval Flywheel<br/>offline/live/tau2/judge]

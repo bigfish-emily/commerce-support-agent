@@ -1,0 +1,26 @@
+flowchart TD
+    Agent[Agent executor] --> Registry[Tool registry / ToolCallManager]
+    Registry --> Metadata[list_enterprise_tool_boundaries]
+    Metadata --> Schema[input schema]
+    Metadata --> Auth[auth_scope and role allowlist]
+    Metadata --> Risk[risk_level and side_effect flag]
+    Metadata --> Idem[idempotency_required]
+    Metadata --> Audit[audit contract]
+
+    Registry --> LocalMCP[Local MCP server]
+    Registry --> RemoteMCP[Remote MCP client]
+
+    LocalMCP --> OrderTool[get_order_status]
+    LocalMCP --> RiskTool[search_category_risk]
+    LocalMCP --> CaseTool[assess_after_sales_case]
+    LocalMCP --> ReportTool[generate_after_sales_priority_report]
+
+    RemoteMCP --> Stripe[Stripe sandbox MCP]
+    RemoteMCP --> OMS[Enterprise OMS MCP]
+    RemoteMCP --> CRM[CRM / ticket MCP]
+    RemoteMCP --> KB[Policy KB MCP]
+
+    Stripe --> AuditStream[Audit / trace event]
+    OMS --> AuditStream
+    CRM --> AuditStream
+    KB --> AuditStream

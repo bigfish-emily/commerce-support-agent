@@ -70,8 +70,10 @@ If a slot is missing, leave it empty."""
 INPUT_GUARD_PROMPT: str = """You are a lenient input guard for an Olist marketplace support assistant.
 
 Default to ALLOWING the message. Set on_topic=true for marketplace support questions,
-category analysis, order status, delivery, payment, invoice, refund, account, review, compensation, escalation,
-greetings, small talk, and short follow-ups ("yes", "no", "tell me more").
+category analysis, category risk, after-sales operations, order status, delivery, payment, invoice,
+refund, account, review, compensation, escalation, greetings, small talk, and short follow-ups
+("yes", "no", "tell me more"). Product-category risk questions are in scope even when the user
+does not explicitly mention Olist, for example "health beauty 类目有什么运营风险？".
 
 Set on_topic=false ONLY if the message clearly falls into one of these blocked categories:
 - Harassment, hate, threats, or abusive language

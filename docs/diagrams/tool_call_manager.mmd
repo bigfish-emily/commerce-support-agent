@@ -1,0 +1,24 @@
+flowchart TD
+    Start[Agent calls Tool] --> Validate[1. Pydantic schema validation]
+    Validate -- failed --> Err1[Return schema_validation_failed]
+    Validate -- passed --> Auth[2. Role and auth_scope permission check]
+    Auth -- denied --> Err2[Return permission_denied]
+    Auth -- passed --> CheckCache{3. Cacheable and not side_effect?}
+    CheckCache -- cache hit --> ReturnCached[Return cached ToolCallResult]
+    CheckCache -- miss or side_effect --> SideEffectCheck{4. side_effect=True?}
+    SideEffectCheck -- yes --> AcquireLock[RuntimeStore distributed lock: SET NX]
+    AcquireLock -- lock failed --> Err3[Return side_effect_in_progress]
+    AcquireLock -- lock acquired --> Exec[5. Async/thread execution with timeout retry backoff]
+    SideEffectCheck -- no --> Exec
+    Exec -- success --> MaybeCache{Read-only cache enabled?}
+    MaybeCache -- yes --> UpdateCache[Write TTL cache]
+    MaybeCache -- no --> Audit
+    UpdateCache --> Audit[6. Redact sensitive args and write audit log]
+    Exec -- failure or timeout --> HasFallback{7. Fallback configured?}
+    HasFallback -- yes --> RunFallback[Run fallback handler] --> Audit
+    HasFallback -- no --> Err4[Return error_code and error_message] --> Audit
+    ReturnCached --> Audit
+    Err1 --> Audit
+    Err2 --> Audit
+    Err3 --> Audit
+    Audit --> Done[Return normalized ToolCallResult]

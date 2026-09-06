@@ -1,0 +1,40 @@
+flowchart TD
+    Start[Receive after-sales action_type] --> Split{Match action_type}
+
+    Split -- cancel_order --> CancelCheck{order.status}
+    CancelCheck -- created / approved / invoiced --> CancelApprove[Allow cancellation draft; risk depends on amount]
+    CancelCheck -- canceled --> CancelReject1[Reject: already canceled]
+    CancelCheck -- shipped / delivered --> CancelReject2[Reject: shipped or delivered]
+
+    Split -- change_address --> AddrCheck{order.status}
+    AddrCheck -- created / approved / invoiced --> AddrApprove[Allow address-change draft; risk medium]
+    AddrCheck -- shipped / delivered / canceled --> AddrReject[Reject: logistics locked or order canceled]
+
+    Split -- refund_request --> RefundCheck{Order facts and risk features}
+    RefundCheck -- status is canceled --> RefundApprove1[Allow refund review case]
+    RefundCheck -- delay_days >= 7 --> RefundApprove2[Allow refund review: delivery delay]
+    RefundCheck -- review_score <= 2 --> RefundTicket[Allow support case first: investigate low review]
+    RefundCheck -- otherwise --> RefundClarify[Clarify: insufficient evidence]
+
+    Split -- invoice_request --> InvoiceApprove[Allow invoice request; ask for tax profile and email]
+    Split -- complaint_escalation --> ComplaintApprove[Allow complaint escalation; high amount raises risk]
+    Split -- other --> SupportApprove[Allow regular support follow-up case]
+
+    CancelApprove --> Verify[Verifier]
+    CancelReject1 --> Verify
+    CancelReject2 --> Verify
+    AddrApprove --> Verify
+    AddrReject --> Verify
+    RefundApprove1 --> Verify
+    RefundApprove2 --> Verify
+    RefundTicket --> Verify
+    RefundClarify --> Verify
+    InvoiceApprove --> Verify
+    ComplaintApprove --> Verify
+    SupportApprove --> Verify
+
+    Verify --> Next{required_next_step}
+    Next -- hitl --> HITL[Pause before write action]
+    Next -- stop --> Stop[Return safe rejection]
+    Next -- clarify --> Clarify[Ask for missing evidence]
+    Next -- execute --> Execute[Execute low-risk action]

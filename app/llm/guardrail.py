@@ -43,13 +43,13 @@ class Guardrail:
         try:
             if self._input_llm is None:
                 raw = await self._base_llm.ainvoke(add_json_instruction(messages, InputGuardResult))
-                return parse_json_model(raw, InputGuardResult)
-            return await self._input_llm.ainvoke(messages)
+                return _apply_business_allow_override(message, parse_json_model(raw, InputGuardResult))
+            return _apply_business_allow_override(message, await self._input_llm.ainvoke(messages))
         except Exception as exc:
             logger.warning("Structured input guard failed, trying JSON-text fallback: %s", exc)
             try:
                 raw = await self._base_llm.ainvoke(add_json_instruction(messages, InputGuardResult))
-                return parse_json_model(raw, InputGuardResult)
+                return _apply_business_allow_override(message, parse_json_model(raw, InputGuardResult))
             except Exception as fallback_exc:
                 logger.warning("Input guard LLM failed, using heuristic fallback: %s", fallback_exc)
                 return _heuristic_input_guard(message)
@@ -80,6 +80,28 @@ class Guardrail:
 
 def _heuristic_input_guard(message: str) -> InputGuardResult:
     text = message.lower()
+    if _contains_blocked_signal(text):
+        return InputGuardResult(on_topic=False, reason="heuristic off-topic or unsafe")
+    return InputGuardResult(on_topic=True, reason="llm unavailable; fail-open for support availability")
+
+
+def _apply_business_allow_override(message: str, result: InputGuardResult) -> InputGuardResult:
+    """Reduce LLM guard false rejects on known marketplace operations language."""
+
+    if result.on_topic:
+        return result
+    text = message.lower()
+    if _contains_blocked_signal(text):
+        return result
+    if _looks_like_marketplace_support(text):
+        return InputGuardResult(
+            on_topic=True,
+            reason=f"allowed by marketplace-support allowlist after LLM guard rejected: {result.reason}",
+        )
+    return result
+
+
+def _contains_blocked_signal(text: str) -> bool:
     blocked = (
         "ignore your instructions",
         "ignore previous instructions",
@@ -113,6 +135,45 @@ def _heuristic_input_guard(message: str) -> InputGuardResult:
         "色情",
         "仇恨",
     )
-    if any(item in text for item in blocked):
-        return InputGuardResult(on_topic=False, reason="heuristic off-topic or unsafe")
-    return InputGuardResult(on_topic=True, reason="llm unavailable; fail-open for support availability")
+    return any(item in text for item in blocked)
+
+
+def _looks_like_marketplace_support(text: str) -> bool:
+    business_terms = (
+        "order",
+        "category",
+        "refund",
+        "invoice",
+        "cancel",
+        "delivery",
+        "payment",
+        "review",
+        "compensation",
+        "escalation",
+        "support",
+        "risk",
+        "health beauty",
+        "health_beauty",
+        "类目",
+        "品类",
+        "订单",
+        "退款",
+        "补偿",
+        "发票",
+        "取消",
+        "物流",
+        "配送",
+        "延迟",
+        "支付",
+        "评价",
+        "低分",
+        "售后",
+        "客服",
+        "投诉",
+        "升级",
+        "运营",
+        "风险",
+        "取消率",
+        "低分率",
+    )
+    return any(term in text for term in business_terms)

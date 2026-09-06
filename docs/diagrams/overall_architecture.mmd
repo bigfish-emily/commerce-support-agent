@@ -1,0 +1,26 @@
+flowchart LR
+    User[Support agent or ops manager] --> UI[Web console / HTTP API]
+    UI --> Guard[Input guard]
+    Guard --> Planner[LLM task planner]
+    Planner --> Graph[LangGraph plan-and-execute graph]
+
+    Graph --> ReadTools[Read-only deterministic tools]
+    Graph --> RAG[Workflow-constrained RAG]
+    Graph --> Case[AfterSalesCase builder]
+
+    ReadTools --> Olist[Olist order facts and category profiles]
+    RAG --> Policy[Policy / FAQ / merchant rules KB]
+    RAG --> SupportCorpus[ResCommons support corpus]
+
+    Case --> Decision[AfterSalesDecisionEngine]
+    Decision --> Verifier[Verifier]
+    Verifier --> SafeExit[Reject or clarify]
+    Verifier --> HITL[HITL confirmation]
+    HITL --> ToolManager[ToolCallManager]
+    ToolManager --> SideEffect[Refund / cancel / address / invoice / complaint tools]
+
+    ToolManager --> Redis[Redis runtime store: cache, lock, TTL, rate limit]
+    ToolManager --> MCP[MCP server/client boundary]
+    Graph --> Trace[SQLite trace and case metrics]
+    Trace --> Eval[Offline evals and bad-case regression]
+    Eval --> CI[GitHub Actions CI]

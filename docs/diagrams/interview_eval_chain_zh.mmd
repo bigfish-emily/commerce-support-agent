@@ -1,0 +1,9 @@
+flowchart LR
+    Change[代码/Prompt 改动] --> CI[CI 离线评测]
+    CI --> Live[小样本真实 LLM 回归]
+    Live --> Bench[tau2-bench 横向评测]
+    Bench --> Bad[失败样本沉淀]
+    Bad --> Change
+    CI --> Report[指标报告]
+    Live --> Report
+    Bench --> Report
