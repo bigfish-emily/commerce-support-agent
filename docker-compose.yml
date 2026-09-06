@@ -7,10 +7,19 @@ services:
     volumes:
       - redis-data:/data
 
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
   marketplace-agent:
     build: .
     depends_on:
       - redis
+      - qdrant
     ports:
       - "8000:8000"
     env_file:
@@ -20,6 +29,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_PREFIX: olist-agent
       AGENT_RATE_LIMIT_PER_MINUTE: 120
+      SUPPORT_VECTOR_BACKEND: qdrant
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: olist_support_examples
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./app:/app/app
@@ -29,3 +41,4 @@ services:
 
 volumes:
   redis-data:
+  qdrant-data:

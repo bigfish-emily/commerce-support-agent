@@ -351,7 +351,7 @@ Olist 不是客服对话数据，也不是标准 Agent benchmark，所以项目�
 
 回答：
 
-ResCommons train 语料作为 corpus，test query 作为评测，不把测试样本放回检索库，避免虚高。baseline 是 BM25，指标是 intent@1 和 intent@5，即 top1/top5 检索结果的 intent 是否命中 query intent。BM25 是 64%/81%，加入字符 ngram 向量分数和 hybrid 融合后达到 77%/91%。
+ResCommons train 语料作为 corpus，test query 作为评测，不把测试样本放回检索库，避免虚高。baseline 是 BM25，指标是 intent@1 和 intent@5，即 top1/top5 检索结果的 intent 是否命中 query intent。BM25 是 64%/81%，加入 `VectorStore` 召回和 RRF 风格融合后达到 78%/91%。默认向量后端是本地 hashing embedding，Docker 可切到 Qdrant；生产版可以替换为 BGE/Jina/OpenAI/企业 embedding。
 
 追问：这个指标说明什么，不说明什么？
 
@@ -373,7 +373,7 @@ ResCommons train 语料作为 corpus，test query 作为评测，不把测试样
 
 回答：
 
-项目不是完全没做向量思想，而是本地用 char-ngram vector baseline 做轻量 rerank，避免下载大模型和引入显存依赖。对订单 ID 和类目名这种高精度实体，确定性归一化更可靠；对大规模 FAQ 和客服对话，生产版本会升级为 Elasticsearch/BM25 + vector DB + cross-encoder reranker，并用 Recall@K、MRR、nDCG、latency 和 cost 比较收益。
+项目已经抽出了 `VectorStore` 边界，并在客服历史语料检索中接入 BM25 + VectorStore + RRF 融合。默认本地 hashing embedding 是为了无 API key、无模型下载、CI 可复现；Docker 模式可以通过 Qdrant 作为向量数据库后端。对订单 ID 和类目名这种高精度实体，确定性归一化更可靠；对大规模 FAQ 和客服对话，生产版本会把 embedder 替换为 BGE/Jina/OpenAI/企业 embedding，再加 cross-encoder reranker，并用 Recall@K、MRR、nDCG、latency 和 cost 比较收益。
 
 ### 5.6 τ-bench retail 结果怎么讲最稳？
 

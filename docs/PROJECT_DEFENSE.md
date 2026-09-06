@@ -27,7 +27,7 @@
 | MCP support | `app/mcp_server.py`, `app/mcp_client.py`, `app/stripe_mcp.py` | MCP server 暴露业务工具和 `list_enterprise_tool_boundaries`；主 demo 默认用本地 service 保证无凭证可跑 |
 | Tool call governance | `app/tool_call/framework.py`, `app/agent/actions.py`, `tests/test_tool_call_framework.py` | Redis runtime 覆盖 cache/rate-limit/HITL TTL/side-effect lock；当前鉴权是角色白名单，不是企业 IAM |
 | Persistent idempotency | `SQLiteCaseService` in `app/olist/service.py` | 个人项目模拟企业工具，不产生真实退款 |
-| Hybrid retrieval formula | `app/retrieval/hybrid.py` | 本地 char-ngram vector baseline，不是线上 embedding/reranker |
+| Hybrid retrieval formula | `app/retrieval/hybrid.py`, `app/retrieval/vector_store.py` | BM25 + VectorStore + RRF 融合；默认本地 hashing embedding，Docker 可切 Qdrant |
 | Real LLM eval | `evaluation/live_agent_eval.py`, `evaluation/live_agent_eval_results.jsonl` | 30 条回归集，不是 leaderboard benchmark |
 | Route drift eval | `evaluation/route_drift_eval.py` | 比较 pinned eval expectation，不等于线上流量漂移 |
 | tau2 adapter | `benchmark_adapters/tau2_retail_agent.py`, `scripts/run_tau2_retail_subset.py`, `benchmark_runs/tau2_retail/last_summary.md` | 当前是 τ-bench retail base split 114-task local run，不是 public leaderboard |
@@ -88,9 +88,9 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 score(doc) = 0.2 / (bm25_rank + 20) + 2.0 / (vector_rank + 20)
 ```
 
-权重来自当前 ResCommons 回归集的经验：客服 query 很多是短句、拼写和表达变体，char-ngram 对同 intent 的近似表达更敏感，所以 vector rank 权重大于 BM25。
+权重来自当前 ResCommons 回归集的经验：客服 query 很多是短句、拼写和表达变体，本地 VectorStore 对同 intent 的近似表达更敏感，所以 vector rank 权重大于 BM25。
 
-没有上 cross-encoder 的原因是个人项目需要低成本、可复现、CI 可跑；cross-encoder 会引入模型下载、显存/CPU 开销和更慢延迟。生产版会把这条 baseline 升级为 BM25/vector 召回 + cross-encoder rerank，并用 Recall@K、MRR、nDCG、latency/cost 做取舍。
+没有上 cross-encoder 的原因是个人项目需要低成本、可复现、CI 可跑；cross-encoder 会引入模型下载、显存/CPU 开销和更慢延迟。当前已经有 VectorStore/Qdrant 后端边界，生产版会把 hashing embedder 替换为真实 embedding 模型，并升级为 BM25/vector 召回 + cross-encoder rerank，用 Recall@K、MRR、nDCG、latency/cost 做取舍。
 
 ### 5. 路由漂移怎么定义、怎么检出？
 

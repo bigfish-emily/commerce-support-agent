@@ -12,7 +12,7 @@ flowchart TD
 
     PolicyKB --> PolicyRecall[Query 扩展 + 词项召回<br/>title/text overlap]
     PolicyRecall --> PolicyRerank[轻量 rerank<br/>source_type + intent boost]
-    SupportCorpus --> HybridRecall[Hybrid retrieval<br/>BM25 + char-ngram similarity baseline]
+    SupportCorpus --> HybridRecall[Hybrid retrieval<br/>BM25 + VectorStore]
     HybridRecall --> HybridFuse[RRF 风格融合 rerank]
     CategoryIndex --> CategoryRewrite[类目 query rewriting<br/>exact -> token overlap -> adaptive rewrite]
 

@@ -17,7 +17,8 @@ RUN uv pip install --system --no-cache \
     langchain-openai \
     mcp \
     python-dotenv \
-    redis
+    redis \
+    qdrant-client
 
 # Copy application code and runtime/eval data
 COPY app/ app/

@@ -37,18 +37,18 @@
 | RAG/检索 | 客服对话 hybrid bm25 capability@1 | 64.00% | 100 | 首位召回文档的能力标签是否匹配。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 capability@5 | 81.00% | 100 | Top5 是否出现同 capability 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid bm25 capability_mrr@5 | 70.73% | 100 | 同 capability 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid char_ngram_vector intent@1 | 76.00% | 100 | 首位召回文档的客服 intent 是否与 query intent 一致。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid char_ngram_vector intent@5 | 91.00% | 100 | Top5 是否出现同 intent 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid char_ngram_vector intent_mrr@5 | 82.62% | 100 | 同 intent 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid char_ngram_vector capability@1 | 75.00% | 100 | 首位召回文档的能力标签是否匹配。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid char_ngram_vector capability@5 | 90.00% | 100 | Top5 是否出现同 capability 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid char_ngram_vector capability_mrr@5 | 81.62% | 100 | 同 capability 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid hybrid_rerank intent@1 | 77.00% | 100 | 首位召回文档的客服 intent 是否与 query intent 一致。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid local_vector_store intent@1 | 77.00% | 100 | 首位召回文档的客服 intent 是否与 query intent 一致。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid local_vector_store intent@5 | 91.00% | 100 | Top5 是否出现同 intent 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid local_vector_store intent_mrr@5 | 83.12% | 100 | 同 intent 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid local_vector_store capability@1 | 76.00% | 100 | 首位召回文档的能力标签是否匹配。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid local_vector_store capability@5 | 90.00% | 100 | Top5 是否出现同 capability 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid local_vector_store capability_mrr@5 | 82.12% | 100 | 同 capability 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid hybrid_rerank intent@1 | 78.00% | 100 | 首位召回文档的客服 intent 是否与 query intent 一致。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid hybrid_rerank intent@5 | 91.00% | 100 | Top5 是否出现同 intent 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid hybrid_rerank intent_mrr@5 | 83.07% | 100 | 同 intent 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid hybrid_rerank capability@1 | 76.00% | 100 | 首位召回文档的能力标签是否匹配。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid hybrid_rerank intent_mrr@5 | 83.57% | 100 | 同 intent 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid hybrid_rerank capability@1 | 77.00% | 100 | 首位召回文档的能力标签是否匹配。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid hybrid_rerank capability@5 | 90.00% | 100 | Top5 是否出现同 capability 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| RAG/检索 | 客服对话 hybrid hybrid_rerank capability_mrr@5 | 82.07% | 100 | 同 capability 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
+| RAG/检索 | 客服对话 hybrid hybrid_rerank capability_mrr@5 | 82.57% | 100 | 同 capability 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | 运营决策 | 高风险类目覆盖率 | 100.00% | Top5 | 售后运营日报是否能输出可跟进的高风险类目列表。 | after_sales_priority_report 返回 high_risk_categories 的数量 / 5。 | 否 |
 | 运营决策 | 高风险类目排序正确率 | 100.00% | 5 | 类目是否按风险分从高到低排序，便于运营优先处理。 | risk_score 序列是否单调递减。 | 否 |
 | 运营决策 | 类目行动建议覆盖率 | 100.00% | 5 | 每个高风险类目是否都有可执行的运营建议。 | recommended_action 非空的比例。 | 否 |
@@ -88,8 +88,8 @@
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
 | 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.250 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.057 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.218 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.593 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 2692 | 3 files | 当前 policy/FAQ/merchant rules 知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

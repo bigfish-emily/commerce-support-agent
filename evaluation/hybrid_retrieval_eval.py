@@ -21,7 +21,7 @@ def main() -> None:
     print("strategy,cases,intent@1,intent@5,intent_mrr@5,capability@1,capability@5,capability_mrr@5")
     for name, method in (
         ("bm25", retriever.bm25_search),
-        ("char_ngram_vector", retriever.vector_search),
+        ("local_vector_store", retriever.vector_search),
         ("hybrid_rerank", retriever.hybrid_search),
     ):
         intent_at_1 = 0

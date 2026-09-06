@@ -19,7 +19,7 @@ flowchart TD
 
     PolicyKB --> PolicyRecall[Query 扩展 + 词项召回<br/>title/text overlap]
     PolicyRecall --> PolicyRerank[轻量 rerank<br/>source_type + intent boost]
-    SupportCorpus --> HybridRecall[Hybrid retrieval<br/>BM25 + char-ngram similarity baseline]
+    SupportCorpus --> HybridRecall[Hybrid retrieval<br/>BM25 + VectorStore]
     HybridRecall --> HybridFuse[RRF 风格融合 rerank]
     CategoryIndex --> CategoryRewrite[类目 query rewriting<br/>exact -> token overlap -> adaptive rewrite]
 
@@ -89,7 +89,7 @@ flowchart TD
 |---|---|---|---|
 | 订单事实 | 订单状态、金额、评价、配送延迟是强事实，不能靠相似度猜 | `OlistService` 精确查询订单事实 | Olist task eval、真实轨迹工具正确率、tau2 DB/action match |
 | 售后政策/FAQ/商家规则 | 文档短、结构清晰，需要可解释来源 | `MarkdownKnowledgeBase` 把多份 markdown 按二级标题切段，query 扩展后做 title/text overlap 召回，再按 `source_type` 和意图词轻量 rerank | policy KB Top1、Recall@3、MRR@3 |
-| 客服历史语料 | 表达变化大，用来补相似问法和话术上下文 | `HybridSupportRetriever`：BM25 候选召回 + char 4-gram similarity baseline + RRF 风格融合 | intent@1、intent@5、MRR@5、capability@1/@5 |
+| 客服历史语料 | 表达变化大，用来补相似问法和话术上下文 | `HybridSupportRetriever`：BM25 候选召回 + VectorStore 召回 + RRF 风格融合；默认本地 hashing embedding，可切 Qdrant | intent@1、intent@5、MRR@5、capability@1/@5 |
 | 类目运营画像 | 类目名有下划线、英文、中文别名和口语扰动 | `exact_underscore -> token_overlap -> adaptive_rewrite` 三档对比 | category Top1、Recall@3、MRR@3、realistic_alias Top1 |
 
 具体代码口径：
@@ -98,10 +98,10 @@ flowchart TD
   - `_expand_query()` 把“退款、发票、投诉、美妆、商家”等中文业务词扩展成英文/业务同义词。
   - `search()` 先算 query tokens 与 section title/text 的 overlap。
   - `_rerank_score()` 根据 `policy/faq/merchant_rule` 和 query intent 做轻量 boost。
-- 客服 hybrid retrieval：`app/retrieval/hybrid.py`
+- 客服 hybrid retrieval：`app/retrieval/hybrid.py`、`app/retrieval/vector_store.py`
   - `bm25_search()` 使用倒排索引和 BM25 公式。
-  - `vector_search()` 使用 char 4-gram overlap，作为低成本相似度 baseline。
-  - `hybrid_search()` 先取 BM25 候选，再融合 BM25 rank 与 char-ngram rank，当前权重是 BM25 `0.2/(rank+20)`，char-ngram `2.0/(rank+20)`。
+  - `vector_search()` 调用 `VectorStore`；默认 `LocalVectorStore` 使用 hashing embedding，本地可复现；Docker 部署可通过 `SUPPORT_VECTOR_BACKEND=qdrant` 切到 Qdrant。
+  - `hybrid_search()` 先取 BM25 候选，再融合 BM25 rank 与 vector rank，当前权重是 BM25 `0.2/(rank+20)`，vector `2.0/(rank+20)`。
 - 类目检索：`app/olist/retrieval.py`
   - exact 用来做最弱 baseline。
   - token overlap 解决 `health beauty` 与 `health_beauty` 的分词匹配。
@@ -109,7 +109,7 @@ flowchart TD
 
 面试时要主动补一句：
 
-> 订单事实走精确工具查询，政策、FAQ、商家规则、历史客服话术和类目归一进入检索链路。当前客服语料使用本地 char-ngram 相似度 baseline，生产化可以替换为 Elasticsearch/BM25 + vector DB + cross-encoder reranker，评估口径保持 Recall@K、MRR、nDCG、latency 和 cost。
+> 订单事实走精确工具查询，政策、FAQ、商家规则、历史客服话术和类目归一进入检索链路。当前客服语料已经接入 VectorStore 边界，默认本地 hashing embedding 保证无外部依赖可复现，Docker 可切 Qdrant；生产化可以替换为 Elasticsearch/BM25 + BGE/Jina/OpenAI/企业 embedding + cross-encoder reranker，评估口径保持 Recall@K、MRR、nDCG、latency 和 cost。
 
 ## 3. 评测具体怎么进行
 
@@ -137,7 +137,7 @@ flowchart TD
 
 **问：RAG 为什么不用 embedding？**
 
-答：项目按数据对象选择检索方式。订单事实需要精确一致性，走事实工具；政策和 FAQ 当前用可解释 lexical+rerank；客服历史语料用本地 hybrid baseline 验证 BM25 与相似度融合策略。生产环境接入大量 FAQ 和客服会话后，可以升级为 ES/BM25 + vector DB + cross-encoder reranker。
+答：项目按数据对象选择检索方式。订单事实需要精确一致性，走事实工具；政策和 FAQ 当前用可解释 lexical+rerank；客服历史语料已经接入 BM25 + VectorStore + RRF 融合。默认本地 hashing embedding 用来保证 CI 和面试现场可复现，Docker 可切 Qdrant；生产环境接入大量 FAQ 和客服会话后，把 embedder 换成 BGE/Jina/OpenAI/企业 embedding，再加 cross-encoder reranker。
 
 **问：这些评测能证明真实 Agent 能力吗？**
 

@@ -80,13 +80,13 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 
 - 类目风险检索：query rewriting + exact/token/adaptive retrieval，解决 `health beauty`、`health-beauty`、`healthbeauty` 到 `health_beauty` 的归一。
 - Policy KB：按 markdown section 切块，检索退款、补偿、取消、发票、升级边界。
-- 客服对话 hybrid retrieval：ResCommons train corpus 做 BM25 + char-ngram vector + rerank，给 QA/policy 生成补充上下文。
+- 客服对话 hybrid retrieval：ResCommons train corpus 做 BM25 + VectorStore + RRF 风格融合，给 QA/policy 生成补充上下文。
 
 准确说，当前不是完全自主 Agentic RAG，而是 workflow-constrained RAG：planner 决定任务类型，LangGraph executor 决定是否检索和检索哪个源。不是每轮都检索，订单精确查询就直接走事实工具。如果面试官问“Agentic 在哪里”，不要硬吹；正确说法是当前落地的是受控 RAG，后续让 Agent 自主决定检索轮次需要增加检索置信度、反思节点、预算上限和退出条件。
 
 ### 10. RAG 为什么不用 embedding / reranker？
 
-准确说，不是完全不用。当前主链路已经接入了本地 hybrid retriever：BM25 召回、字符 ngram 向量分数、hybrid rerank。只是没有引入在线 embedding API，因为：
+准确说，当前主链路已经接入了本地 hybrid retriever：BM25 召回、VectorStore 召回、hybrid rerank。默认没有引入在线 embedding API，因为：
 
 - 订单 ID 必须精确匹配，embedding 不合适；
 - 类目名是短实体，规则归一化更可解释；
@@ -99,7 +99,7 @@ ReAct 适合探索式问题，例如资料研究、代码定位、开放工具�
 score(doc) = 0.2 / (bm25_rank + 20) + 2.0 / (vector_rank + 20)
 ```
 
-生产化会替换为 Elasticsearch/BM25 + vector DB + learned reranker，并评估 Recall@K、MRR、nDCG、faithfulness 和 answer relevance。
+当前已经预留 Qdrant 后端，生产化会替换为 Elasticsearch/BM25 + BGE/Jina/OpenAI/企业 embedding + vector DB + learned reranker，并评估 Recall@K、MRR、nDCG、faithfulness 和 answer relevance。
 
 ### 11. policy KB 是不是手写的？
 
@@ -294,7 +294,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 - LLM judge 样本量小；
 - 多租户 ACL 还未落地；
 - policy KB 不是企业真实 SOP；
-- hybrid retrieval 是本地 baseline，还不是 ES + vector DB + reranker；
+- hybrid retrieval 已接 VectorStore/Qdrant 边界，但还没有接 ES + 真实 embedding 模型 + reranker；
 - 可观测性是 SQLite 和简单接口，不是 OpenTelemetry + dashboard；
 - τ-bench retail 目前已跑 `tau2-bench` v1.0.1 base split 114 tasks，pass^1 91.23%；完整 leaderboard 仍需要多 trial、固定提交环境和成本预算。
 
@@ -308,7 +308,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 
 高级不在于用了多少框架，而在于把 Agent 落到生产问题：多意图拆解、工具参数修复、RAG 召回评测、副作用 HITL、真实轨迹 eval、trace 回放、MCP 边界和成本控制。这个项目不是一个大模型聊天 UI，而是一个可测试、可审计、可替换工具后端的业务 Agent skeleton。
 
-更坦诚的说法：目前它是“高级 Agent 工程样板项目”，不是完整商用 SaaS。它足够支撑秋招面试讨论架构和工程取舍；如果继续冲更强竞争力，优先补 tenant ACL、真实 ES/vector DB、dashboard 和更大规模 live LLM eval。
+更坦诚的说法：目前它是“高级 Agent 工程样板项目”，不是完整商用 SaaS。它足够支撑秋招面试讨论架构和工程取舍；如果继续冲更强竞争力，优先补 tenant ACL、真实 embedding/reranker、dashboard 和更大规模 live LLM eval。
 
 ## 项目成熟度评分
 
@@ -316,7 +316,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 |---|---:|---|---|
 | 业务完整度 | 8/10 | 覆盖客服查询、政策解释、售后升级、退款/取消/改地址/发票申请、售后运营决策 | 接入真实商家规则、库存/优惠券/CRM sandbox |
 | Agent 架构 | 8.5/10 | LangGraph plan-and-execute、LLM planner、结构化 fallback、HITL、HITL timeout、trace | 增加 checkpoint 持久化恢复 demo 和更完整状态回放 |
-| RAG 能力 | 7.8/10 | 类目 adaptive retrieval、policy KB、ResCommons hybrid retrieval 已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + vector DB + reranker，补 nDCG/context precision |
+| RAG 能力 | 8.2/10 | 类目 adaptive retrieval、policy KB、ResCommons BM25 + VectorStore 融合检索已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + 真实 embedding + reranker，补 nDCG/context precision |
 | 工具治理 | 9/10 | ToolCallManager 覆盖 schema、角色白名单、in-memory/Redis cache backend、async、timeout/retry/backoff、fallback、标准输出、audit；另有 MCP server/client adapter、SQLite 持久化幂等和 duplicate 响应 | 接企业 IAM/OAuth 和不可变审计流 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
 | 评测体系 | 9/10 | 76 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、τ-bench retail base split 114 tasks pass^1 91.23%、bad-case regression 覆盖 task `0/6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累 full split 失败样本回归池 |

@@ -209,12 +209,37 @@ flowchart LR
 
 1. **结构化实体检索**：面向 Olist 类目/订单。订单查询是精确事实工具，不包装成 RAG；类目检索先做 query rewriting，把 `health beauty`、`health-beauty`、`healthbeauty` 等用户写法统一到真实类目 `health_beauty`，再结合业务别名词表和 token overlap fallback。
 2. **售后知识库 Hybrid RAG**：面向 `data/knowledge_base/*.md`，当前包含 `support_policy.md`、`support_faq.md` 和 `merchant_rules.md` 三类来源。系统按 markdown section 切分，先做 lexical overlap 候选召回，再按 query intent 与 `source_type` 做轻量 rerank，检索退款、取消、补偿、发票、配送、人工审核、退货标签、投诉升级和商家/类目特殊规则。每个 hit 带 `source` 和 `source_type`，回答与售后决策都能区分政策、FAQ、商家规则。
-3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。默认本地实现用 BM25 召回候选、字符 ngram 向量分数做 rerank，并在 test query 上评估 intent/capability 命中。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可替换为 Elasticsearch/BM25 + vector DB + learned reranker。
+3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。当前实现为 BM25 + `VectorStore` + RRF 风格融合：默认使用本地 hashing embedding 向量索引，适合 CI 和面试现场无外部依赖复现；Docker 部署可通过 `SUPPORT_VECTOR_BACKEND=qdrant` 切换到 Qdrant。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可继续替换为 Elasticsearch/BM25 + 真实 embedding model + vector DB + learned reranker。
 
 为什么当前没有强依赖 embedding：
 
 - 订单 ID、类目名、政策标题是高精度实体和短文本，确定性归一化比 embedding 更可控、可解释、低成本。
-- 对大量客服对话、FAQ 和商家规则，项目已经接入本地多源 KB 与 ResCommons hybrid baseline；生产版会把本地 BM25/字符向量替换为 Elasticsearch/BM25 + vector database + learned reranker。这个替换是工程实现差异，不是业务链路差异。
+- 对大量客服对话、FAQ 和商家规则，项目已经接入本地多源 KB、ResCommons hybrid baseline 和可选 Qdrant vector store。默认 hashing embedding 不声称具备商用语义向量模型的泛化能力，它的价值是把向量库接入边界、融合公式、评测指标和部署路径跑通；生产版把 embedder 换成 BGE/Jina/OpenAI/企业自研 embedding 后，业务链路不用重写。
+
+### Vector Store 配置
+
+默认本地模式不需要外部服务：
+
+```bash
+set SUPPORT_VECTOR_BACKEND=local
+uvicorn app.main:app --reload
+```
+
+Docker Compose 会同时启动 Redis 和 Qdrant，并让 Agent 使用 Qdrant：
+
+```bash
+docker compose up --build
+```
+
+手动切换 Qdrant：
+
+```bash
+pip install ".[vector]"
+set SUPPORT_VECTOR_BACKEND=qdrant
+set QDRANT_URL=http://localhost:6333
+set QDRANT_COLLECTION=olist_support_examples
+uvicorn app.main:app --reload
+```
 
 ## MCP 接入
 
@@ -343,7 +368,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 89 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、投诉升级 case、MCP 企业工具边界、benchmark summary parser 和 tau2 bad-case guard |
+| Unit/Integration Tests | 93 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、VectorStore、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、投诉升级 case、MCP 企业工具边界、benchmark summary parser 和 tau2 bad-case guard |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
@@ -351,8 +376,8 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 | Category retrieval exact_underscore | Top1 32.08% | 只支持原始下划线类目名，真实用户写法容易失败 |
 | Category retrieval token_overlap | Top1 62.92%, Recall@3 66.67% | 能处理空格/连字符，但 compact alias、中文别名和未登录俗称仍会失败 |
 | Category retrieval adaptive_rewrite | Top1 92.08%, Recall@3 92.50% | 当前主链路使用，覆盖机械别名和已登录业务别名；noisy holdout Top1 10%，说明仍需 query log/embedding/reranker 补强 |
-| ResCommons hybrid retrieval | BM25 intent@5 81%, char-ngram intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
-| ResCommons baseline delta | BM25 intent@1/intent@5 64%/81% -> hybrid 77%/91% | 用公开客服对话语料验证 hybrid retrieval 比纯 BM25 更稳，不只报单点最高值 |
+| ResCommons hybrid retrieval | BM25 intent@5 81%, local VectorStore intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
+| ResCommons baseline delta | BM25 intent@1/intent@5 64%/81% -> hybrid 78%/91% | 用公开客服对话语料验证 BM25 + VectorStore 融合比纯 BM25 更稳，不只报单点最高值 |
 | V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
 | Policy/FAQ/Merchant KB retrieval | Top1/Recall@3/MRR@3 100% | 19 条中文售后问题覆盖政策、FAQ、商家规则、退货标签、投诉升级和类目特殊规则；这是小型 KB regression，不是公开 benchmark |
 | After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
@@ -568,7 +593,7 @@ tests/
 容易被追问的问题和回答方向：
 
 - **为什么不用完全自主 Agent？** 客服/运营动作有权限、合规和副作用，完全自主会增加成本和不可控性；我选择 workflow-constrained Agent，把不确定性限制在路由、抽槽、改写、总结里。
-- **为什么 RAG 不一开始全用 embedding？** 订单 ID 查询必须走精确工具；类目名和政策章节先用可解释 retrieval 与业务别名词表；大量客服对话已经接入 ResCommons hybrid retrieval。当前 noisy holdout 表明纯规则覆盖不足，生产版会把本地 BM25/字符向量替换为 ES + vector DB + learned reranker。
+- **为什么 RAG 不一开始全用 embedding？** 订单 ID 查询必须走精确工具；类目名和政策章节先用可解释 retrieval 与业务别名词表；大量客服对话已经接入 ResCommons BM25 + VectorStore 融合检索。当前 noisy holdout 表明纯规则覆盖不足，生产版会把本地 hashing embedder 替换为 BGE/Jina/OpenAI/企业 embedding，并接 ES + vector DB + learned reranker。
 - **MCP 和多 Agent 协议有什么区别？** MCP 解决 Agent 调工具和拿上下文；A2A/Agent Card 解决 Agent 之间能力发现、任务委托和状态协商。这个项目重点是企业工具接入，因此 MCP 是必要层。
 - **为什么接 Stripe MCP？** Stripe 不是最终 OMS，而是最适合个人项目验证真实外部 MCP + sandbox 副作用的 SaaS。它可以演示支付/退款类工具 schema、鉴权、HITL、幂等和 trace；生产里替换为企业内部退款/工单/优惠券 MCP。
 - **副作用怎么防重复？** 路由侧识别风险意图，图执行侧 interrupt 等人工确认，工具侧幂等 key 防止重复创建 case。

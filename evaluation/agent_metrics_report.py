@@ -482,7 +482,7 @@ def hybrid_metrics() -> list[Metric]:
     rows: list[Metric] = []
     for name, method in (
         ("bm25", retriever.bm25_search),
-        ("char_ngram_vector", retriever.vector_search),
+        ("local_vector_store", retriever.vector_search),
         ("hybrid_rerank", retriever.hybrid_search),
     ):
         scores = _eval_hybrid(cases, method)
