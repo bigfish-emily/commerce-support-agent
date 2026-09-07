@@ -1,24 +1,24 @@
 flowchart TD
-    Start[Agent calls Tool] --> Validate[1. Pydantic schema validation]
-    Validate -- failed --> Err1[Return schema_validation_failed]
-    Validate -- passed --> Auth[2. Role and auth_scope permission check]
-    Auth -- denied --> Err2[Return permission_denied]
-    Auth -- passed --> CheckCache{3. Cacheable and not side_effect?}
-    CheckCache -- cache hit --> ReturnCached[Return cached ToolCallResult]
-    CheckCache -- miss or side_effect --> SideEffectCheck{4. side_effect=True?}
-    SideEffectCheck -- yes --> AcquireLock[RuntimeStore distributed lock: SET NX]
-    AcquireLock -- lock failed --> Err3[Return side_effect_in_progress]
-    AcquireLock -- lock acquired --> Exec[5. Async/thread execution with timeout retry backoff]
-    SideEffectCheck -- no --> Exec
-    Exec -- success --> MaybeCache{Read-only cache enabled?}
-    MaybeCache -- yes --> UpdateCache[Write TTL cache]
-    MaybeCache -- no --> Audit
-    UpdateCache --> Audit[6. Redact sensitive args and write audit log]
-    Exec -- failure or timeout --> HasFallback{7. Fallback configured?}
-    HasFallback -- yes --> RunFallback[Run fallback handler] --> Audit
-    HasFallback -- no --> Err4[Return error_code and error_message] --> Audit
+    Start[Agent 调用工具] --> Validate[1 Pydantic Schema 校验]
+    Validate -- 失败 --> Err1[返回 schema_validation_failed]
+    Validate -- 成功 --> Auth[2 Role + auth_scope 权限检查]
+    Auth -- 越权 --> Err2[返回 permission_denied]
+    Auth -- 通过 --> CheckCache{3 是否可缓存且非 side_effect?}
+    CheckCache -- 命中 --> ReturnCached[返回 cached ToolCallResult]
+    CheckCache -- 未命中/副作用 --> SideEffectCheck{4 side_effect=True?}
+    SideEffectCheck -- 是 --> AcquireLock[5 Redis/RuntimeStore SET NX 锁<br/>防多 worker 并发写]
+    AcquireLock -- 拿锁失败 --> Err3[返回 side_effect_in_progress]
+    AcquireLock -- 拿锁成功 --> Exec[6 async/to_thread 执行<br/>timeout + retry + exponential backoff]
+    SideEffectCheck -- 否 --> Exec
+    Exec -- 成功 --> MaybeCache{7 只读工具开启 TTL cache?}
+    MaybeCache -- 是 --> UpdateCache[写 tenant-scoped cache]
+    MaybeCache -- 否 --> Audit
+    UpdateCache --> Audit[8 脱敏审计日志<br/>who/when/tool/args_hash/result/latency]
+    Exec -- 失败/超时 --> HasFallback{9 配置 fallback?}
+    HasFallback -- 有 --> RunFallback[执行 fallback handler] --> Audit
+    HasFallback -- 无 --> Err4[返回 error_code/error_message] --> Audit
     ReturnCached --> Audit
     Err1 --> Audit
     Err2 --> Audit
     Err3 --> Audit
-    Audit --> Done[Return normalized ToolCallResult]
+    Audit --> Done[返回标准 ToolCallResult]

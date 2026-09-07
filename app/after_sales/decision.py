@@ -23,6 +23,7 @@ class AfterSalesDecisionEngine:
         safe_action = _normalize_action(action_type)
         reason_code = _reason_code(user_request, order)
         policy_refs = _policy_refs(policy_sections)
+        risk_signals = _risk_signals(order, user_request)
         evidence = _evidence(order)
 
         decision = self._decide(
@@ -30,6 +31,7 @@ class AfterSalesDecisionEngine:
             reason_code=reason_code,
             order=order,
             policy_refs=policy_refs,
+            risk_signals=risk_signals,
             evidence=evidence,
         )
         verification = verify_decision(decision)
@@ -43,6 +45,7 @@ class AfterSalesDecisionEngine:
             delay_days=order.delay_days,
             review_score=order.review_score,
             category_summary=order.category_summary,
+            risk_signals=risk_signals,
             policy_refs=policy_refs,
             decision=decision,
             verification=verification,
@@ -56,6 +59,7 @@ class AfterSalesDecisionEngine:
         reason_code: str,
         order: OrderStatusView,
         policy_refs: list[str],
+        risk_signals: dict[str, object],
         evidence: list[str],
     ) -> AfterSalesDecision:
         allowed: list[str] = []
@@ -72,6 +76,9 @@ class AfterSalesDecisionEngine:
                 points.append("订单尚未发货，可以提交取消申请。")
                 risk = "medium" if order.payment_value >= 300 else "low"
                 confidence = 0.82
+                if _low_risk_auto_gate(action_type, order, policy_refs, risk_signals):
+                    outcome = "approve"
+                    requires_human = False
             elif order.status == "canceled":
                 outcome = "reject"
                 blocked.append("cancel_order")
@@ -92,6 +99,9 @@ class AfterSalesDecisionEngine:
                 points.append("订单尚未锁定物流，可以准备改址申请。")
                 risk = "medium"
                 confidence = 0.78
+                if _low_risk_auto_gate(action_type, order, policy_refs, risk_signals):
+                    outcome = "approve"
+                    requires_human = False
             else:
                 outcome = "reject"
                 blocked.append("change_address")
@@ -133,27 +143,26 @@ class AfterSalesDecisionEngine:
             allowed.append("open_support_case")
             points.append("可以创建售后跟进工单，后续由人工或下游系统核查。")
             confidence = 0.68
+            if _low_risk_auto_gate("open_support_case", order, policy_refs, risk_signals):
+                outcome = "approve"
+                risk = "low"
+                confidence = 0.84
+                requires_human = False
 
         if order.payment_value >= 300 and outcome != "reject":
             risk = "high"
             confidence = min(confidence, 0.74)
             points.append("订单金额较高，需要人工复核后再执行。")
+            if outcome == "approve":
+                outcome = "needs_human_review"
+                requires_human = True
 
         if not policy_refs:
             confidence = min(confidence, 0.62)
             points.append("未命中明确政策段落，不能自动执行高风险动作。")
 
-        if action_type in {
-            "refund_request",
-            "cancel_order",
-            "change_address",
-            "invoice_request",
-            "complaint_escalation",
-        }:
-            if outcome == "approve":
-                requires_human = True
-            if outcome == "needs_human_review":
-                requires_human = True
+        if outcome == "needs_human_review":
+            requires_human = True
 
         return AfterSalesDecision(
             outcome=outcome,
@@ -260,6 +269,55 @@ def _evidence(order: OrderStatusView) -> list[str]:
     if order.review_score is not None:
         evidence.append(f"review_score={order.review_score}")
     return evidence
+
+
+def _risk_signals(order: OrderStatusView, user_request: str) -> dict[str, object]:
+    text = user_request.lower()
+    return {
+        "is_delivered": order.status == "delivered",
+        "is_shipped_or_delivered": order.status in {"shipped", "delivered"},
+        "is_canceled": order.status == "canceled",
+        "pre_shipment": order.status in {"created", "approved", "invoiced"},
+        "high_value": order.payment_value >= 300,
+        "has_delivery_delay": isinstance(order.delay_days, int) and order.delay_days >= 7,
+        "has_low_review": isinstance(order.review_score, int) and order.review_score <= 2,
+        "mentions_compensation": any(token in text for token in ("refund", "退款", "赔付", "补偿", "退钱")),
+        "mentions_address": any(token in text for token in ("address", "地址")),
+        "mentions_complaint": any(token in text for token in ("complaint", "投诉", "升级")),
+        "already_refunded": False,
+        "partial_refund": False,
+        "coupon_or_points_payment": False,
+        "suspected_abuse": False,
+    }
+
+
+def _low_risk_auto_gate(
+    action_type: str,
+    order: OrderStatusView,
+    policy_refs: list[str],
+    risk_signals: dict[str, object],
+) -> bool:
+    if not policy_refs:
+        return False
+    blocking_signals = {
+        "high_value",
+        "suspected_abuse",
+        "already_refunded",
+        "partial_refund",
+        "has_delivery_delay",
+        "has_low_review",
+        "mentions_compensation",
+        "mentions_complaint",
+    }
+    if any(risk_signals.get(name) for name in blocking_signals):
+        return False
+    if action_type == "open_support_case":
+        return order.payment_value < 300
+    if action_type == "cancel_order":
+        return bool(risk_signals.get("pre_shipment")) and order.payment_value < 50
+    if action_type == "change_address":
+        return bool(risk_signals.get("pre_shipment")) and order.payment_value < 50
+    return False
 
 
 def _reason_code(user_request: str, order: OrderStatusView) -> str:

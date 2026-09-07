@@ -217,7 +217,7 @@ tau2 user simulator -> tau2 retail policy/tools -> 我实现的 tau2 adapter
 
 回答：
 
-当前是 demo 级 RBAC 白名单，`ToolCallContext` 里有 role、tenant_id、user_id、session_id；每个工具有 allowed_roles。例如 `generate_after_sales_priority_report` 只允许 ops_manager/admin，普通 support_agent 不能调用。真实企业里会把这里接入 IAM/OAuth scopes、组织权限、商家 ACL 和工具 registry。
+当前权限模型覆盖按 role 分配最小默认 scopes、工具 role 白名单和 `auth_scope` 校验。`ToolCallContext` 里有 role、tenant_id、user_id、session_id、auth_scopes；显式空 scopes 只允许 read 工具。普通 `support_agent` 可以查订单、检索政策、生成售后草稿，但不能执行 `execute_side_effect`；`ops_manager` 可以看运营报表但没有写权限；写动作只给 `after_sales_operator/admin` 并要求 `after_sales:write` 或显式 `*`。真实企业里可以继续接 IAM/OAuth scopes、组织权限、商家 ACL 和工具 registry。
 
 不要说“已经完整企业级鉴权”。应该说“权限边界和扩展点已经落地，当前实现是角色白名单”。
 
@@ -379,13 +379,13 @@ ResCommons train 语料作为 corpus，test query 作为评测，不把测试样
 
 回答：
 
-我接的是 `sierra-research/tau2-bench` v1.0.1 的 retail base split。它包含 retail policy、用户模拟器、工具和 reward function。我用 DeepSeek V4-Flash 跑了 114-task local run，pass^1 是 91.23%（104/114），DB match 92.11%，write action match 92.05%，NL assertions 95.08%，p95 32.77s。它不是公开 leaderboard submission，也不是我自己造的业务 eval。
+我接的是 `sierra-research/tau2-bench` v1.0.1 的 retail base split。它包含 retail policy、用户模拟器、工具和 reward function。我用 LiteLLM 模型 ID `deepseek/deepseek-chat` 跑了 114-task local run，pass^1 是 91.23%（104/114），DB match 92.11%，write action match 92.05%，NL assertions 95.08%，p95 32.77s。它不是公开 leaderboard submission，也不是我自己造的业务 eval。
 
-### 5.7 为什么模型写 DeepSeek V4-Flash？
+### 5.7 tau2 模型名应该怎么写？
 
 回答：
 
-调用侧在 LiteLLM 里用了 `deepseek/deepseek-chat` 兼容写法，但原始 run log 里 `raw_data.model` 返回的是 `deepseek-v4-flash`。所以简历写实际服务端模型 DeepSeek V4-Flash；面试可以解释兼容入口和服务端模型名的区别。
+tau2 这条按 benchmark 运行配置写 `deepseek/deepseek-chat`，因为这是 LiteLLM 调用侧的模型 ID，也是复现实验时别人能对齐的入口。项目自己的 `/chat` live eval 可以单独写 `deepseek-v4-flash`，两者不要混在同一个指标里。
 
 ### 5.8 91.23% 是高还是低？
 

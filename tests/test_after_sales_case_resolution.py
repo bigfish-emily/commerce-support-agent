@@ -92,10 +92,58 @@ async def test_tool_manager_exposes_after_sales_case_assessment() -> None:
             "user_request": f"给订单 {ORDER_ID} 申请退款",
             "policy_sections": [{"section_title": "Compensation Boundary Policy"}],
         },
-        ToolCallContext(role="support_agent"),
+        ToolCallContext(role="support_agent", auth_scopes=["after_sales:assess"]),
     )
 
     assert result.ok
     assert result.data["found"] is True
     assert result.data["decision"]["outcome"] == "needs_human_review"
     assert result.data["verification"]["required_next_step"] == "hitl"
+
+
+def test_after_sales_engine_auto_executes_low_risk_support_case() -> None:
+    from app.olist.service import OrderStatusView
+
+    order = OrderStatusView(
+        order_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        status="delivered",
+        customer_state="SP",
+        purchase_timestamp="2018-01-01 10:00:00",
+        estimated_delivery_date="2018-01-05 00:00:00",
+        delivered_customer_date="2018-01-04 12:00:00",
+        delay_days=0,
+        payment_value=42.0,
+        review_score=5,
+        category_summary="books",
+    )
+
+    case = AfterSalesDecisionEngine().assess(
+        action_type="open_support_case",
+        order=order,
+        user_request="请帮我创建一个普通售后跟进记录",
+        policy_sections=[{"section_title": "General Support Case Policy"}],
+    )
+
+    assert case.decision.outcome == "approve"
+    assert case.decision.requires_human is False
+    assert case.decision.risk_level == "low"
+    assert case.verification.required_next_step == "execute"
+    assert case.risk_signals["high_value"] is False
+
+
+def test_after_sales_engine_keeps_low_score_followup_in_hitl() -> None:
+    service = OlistService()
+    order = service.get_order_status(ORDER_ID)
+    assert order is not None
+
+    case = AfterSalesDecisionEngine().assess(
+        action_type="open_support_case",
+        order=order,
+        user_request=f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术",
+        policy_sections=[{"section_title": "Low Review Recovery Policy"}],
+    )
+
+    assert case.decision.outcome == "needs_human_review"
+    assert case.decision.requires_human is True
+    assert case.risk_signals["has_delivery_delay"] is True
+    assert case.risk_signals["has_low_review"] is True

@@ -1,32 +1,29 @@
 stateDiagram-v2
-    [*] --> NewRequest: receive user request
+    [*] --> NewRequest: 用户请求进入 /chat
+    NewRequest --> CheckPending: 读取 LangGraph checkpoint + Redis HITL TTL
+    CheckPending --> InputGuard: 没有 pending
+    CheckPending --> PendingHandling: 有 pending
+    PendingHandling --> TimeoutPath: Redis TTL 不存在或 expires_at 过期
+    PendingHandling --> ResumeConfirm: yes / confirm / 确认
+    PendingHandling --> ResumeCancel: no / cancel / 取消
+    PendingHandling --> RemindUser: 普通新问题
 
-    NewRequest --> CheckPending: check session checkpoint
-    CheckPending --> StartGraph: no pending interrupt
-    CheckPending --> PendingHandling: pending interrupt exists
+    InputGuard --> PlanTasks: 业务域与安全检查通过
+    PlanTasks --> SelectNextTask: 生成 task_plan
+    SelectNextTask --> ExtractSlots: 选择下一个可执行任务
+    ExtractSlots --> RetrieveContext: 抽 order_id/category/action_type
+    RetrieveContext --> ExecuteReadTask: 只读任务
+    ExecuteReadTask --> SelectNextTask: 继续下一个任务
+    RetrieveContext --> BuildAfterSalesCase: 副作用任务
+    BuildAfterSalesCase --> SelectNextTask: reject / clarify / low-risk execute 已结束
+    BuildAfterSalesCase --> AwaitConfirmation: high-risk write 需要 HITL
+    AwaitConfirmation --> Interrupted: interrupt() 持久化状态
+    Interrupted --> [*]: 首轮 HTTP 返回草稿和 yes/no 问题
 
-    PendingHandling --> CheckTimeout: check TTL
-    CheckTimeout --> TimeoutPath: expires_at < now
-    CheckTimeout --> CheckReply: still valid
-
-    CheckReply --> ResumeConfirm: yes / confirm / 确认
-    CheckReply --> ResumeCancel: no / cancel / 取消
-    CheckReply --> RemindUser: normal new text
-
-    StartGraph --> ExecuteNodes: plan_tasks -> execute_task_plan
-    ExecuteNodes --> AwaitConfirmationNode: side-effect task requires HITL
-    AwaitConfirmationNode --> Interrupted: LangGraph interrupt()
-    Interrupted --> [*]: return decision draft to user
-
-    TimeoutPath --> ResumeCommand: Command(resume="__hitl_timeout__")
-    ResumeConfirm --> ResumeCommand: Command(resume=user_message)
-    ResumeCancel --> ResumeCommand: Command(resume=user_message)
-
-    ResumeCommand --> FinalizeNode: finalize_escalation
-    RemindUser --> [*]: ask user to confirm or cancel first
-
-    FinalizeNode --> SideEffectExec: confirmed == true
-    FinalizeNode --> CanceledExec: confirmed == false or timeout
-    SideEffectExec --> ClearPending: execute_side_effect with idempotency key
-    CanceledExec --> ClearPending: discard draft
-    ClearPending --> [*]: completed / canceled / timeout_canceled
+    TimeoutPath --> FinalizeEscalation: Command(resume="__hitl_timeout__")
+    ResumeConfirm --> FinalizeEscalation: Command(resume=user_message)
+    ResumeCancel --> FinalizeEscalation: Command(resume=user_message)
+    RemindUser --> [*]: 要求先确认或取消
+    FinalizeEscalation --> SelectNextTask: 执行/取消后继续剩余任务
+    SelectNextTask --> FinalizeAnswer: 无剩余任务
+    FinalizeAnswer --> [*]: 返回最终 answer/sources/trace

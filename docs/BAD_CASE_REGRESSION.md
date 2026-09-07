@@ -177,7 +177,7 @@ Evidence:
 Local validation:
 
 - `ruff check .`
-- `python -m pytest`: initial bad-case regression run `76 passed`; latest after-sales case resolution and business observability regression `89 passed`
+- `python -m pytest`: initial bad-case regression run `76 passed`; latest full regression `100 passed`
 
 ## Full Base Split Result
 

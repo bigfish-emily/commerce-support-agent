@@ -4,6 +4,10 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     session_id: str | None = None
+    tenant_id: str = Field(default="olist-demo", min_length=1, max_length=64)
+    user_id: str = Field(default="demo-user", min_length=1, max_length=128)
+    role: str = Field(default="support_agent", min_length=1, max_length=64)
+    auth_scopes: list[str] | None = None
 
 
 class ChatResponse(BaseModel):

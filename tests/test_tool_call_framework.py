@@ -59,6 +59,41 @@ async def test_tool_call_role_whitelist_denies_ops_tool(manager) -> None:
 
 
 @pytest.mark.anyio
+async def test_empty_auth_scopes_allow_read_but_deny_non_read_tool(manager) -> None:
+    read_result = await manager.call(
+        "get_order_status",
+        {"order_id": "203096f03d82e0dffbc41ebc2e2bcfb7"},
+        ToolCallContext(role="support_agent", auth_scopes=[]),
+    )
+    writeish_result = await manager.call(
+        "assess_after_sales_case",
+        {
+            "action_type": "refund_request",
+            "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
+            "user_request": "申请退款",
+            "policy_sections": [{"section_title": "Compensation Boundary Policy"}],
+        },
+        ToolCallContext(role="support_agent", auth_scopes=[]),
+    )
+
+    assert read_result.ok
+    assert not writeish_result.ok
+    assert writeish_result.error_code == "permission_denied"
+
+
+@pytest.mark.anyio
+async def test_tool_call_auth_scope_denies_even_when_role_allowed(manager) -> None:
+    result = await manager.call(
+        "search_policy_knowledge",
+        {"query": "退款政策", "k": 3},
+        ToolCallContext(role="support_agent", auth_scopes=["orders:read"]),
+    )
+
+    assert not result.ok
+    assert result.error_code == "permission_denied"
+    assert "policy:read" in str(result.error_message)
+
+@pytest.mark.anyio
 async def test_tool_call_cache_for_read_only_tools(manager) -> None:
     args = {"query": "health beauty 类目有什么运营风险？"}
     first = await manager.call("search_category_risk", args, ToolCallContext(role="support_agent"))
@@ -259,6 +294,24 @@ async def test_tool_call_timeout_uses_fallback() -> None:
 
 
 @pytest.mark.anyio
+async def test_side_effect_tool_denies_support_agent_without_write_scope(manager) -> None:
+    args = {
+        "action_type": "refund_request",
+        "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
+        "message_text": "delivery delayed by 11 day(s)",
+    }
+
+    result = await manager.call(
+        "execute_side_effect",
+        args,
+        ToolCallContext(role="support_agent", auth_scopes=["after_sales:draft"]),
+    )
+
+    assert not result.ok
+    assert result.error_code == "permission_denied"
+
+
+@pytest.mark.anyio
 async def test_side_effect_tool_is_idempotent_and_audited(manager) -> None:
     args = {
         "action_type": "refund_request",
@@ -266,8 +319,16 @@ async def test_side_effect_tool_is_idempotent_and_audited(manager) -> None:
         "message_text": "delivery delayed by 11 day(s); low review score 2",
     }
 
-    first = await manager.call("execute_side_effect", args, ToolCallContext(role="support_agent"))
-    second = await manager.call("execute_side_effect", args, ToolCallContext(role="support_agent"))
+    first = await manager.call(
+        "execute_side_effect",
+        args,
+        ToolCallContext(role="after_sales_operator", auth_scopes=["after_sales:write"]),
+    )
+    second = await manager.call(
+        "execute_side_effect",
+        args,
+        ToolCallContext(role="after_sales_operator", auth_scopes=["after_sales:write"]),
+    )
 
     assert first.ok
     assert second.ok

@@ -1,6 +1,6 @@
 # E-Commerce After-Sales Case Resolution Agent
 
-面向电商客服与售后履约场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，也不是把订单查询、RAG、退款按钮简单拼在一起，而是围绕一次售后 case 的完整解决过程：理解用户诉求、查询订单/物流/支付事实、检索售后政策、形成结构化决策、校验风险、低风险自动处理或高风险 HITL 转人工，并留下可审计、可回放、可评测的执行轨迹。
+面向电商客服与售后履约场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，也不是把订单查询、RAG、退款按钮简单拼在一起，而是围绕一次售后 case 的完整解决过程：理解用户诉求、查询订单/物流/支付事实、检索售后政策、形成结构化决策、校验风险、低风险自动处理、高风险 HITL 转人工、拒绝或澄清，并留下可审计、可回放、可评测的执行轨迹。
 
 ## 业务场景
 
@@ -59,7 +59,7 @@ Case Created
 | 能力 | 当前实现 |
 |---|---|
 | 参数校验 | 每个工具声明 Pydantic input schema，非法参数返回 `schema_validation_failed` |
-| 权限检查 | `ToolCallContext(role, tenant_id, user_id, session_id)` + tool allowed role 白名单 |
+| 权限检查 | `/chat` 按 `role` 补最小默认 scopes；显式 `auth_scopes=[]` 只允许 read 工具；工具侧再做 allowed role 白名单 + `auth_scope` 校验 |
 | 风险分级 | 每个 `ToolSpec` 声明 `risk_level`、`auth_scope` 和 `idempotency_required`，区分只读、决策、critical write |
 | 缓存检查 | 只读工具使用 `tenant_id + sha256(tool+args)` 做 TTL cache，支持 in-memory/Redis backend；副作用工具不缓存 |
 | 异步执行 | async manager 统一调度 sync/async handler，sync handler 通过 `asyncio.to_thread` 执行 |
@@ -69,6 +69,8 @@ Case Created
 | 审计日志 | 每次调用记录 who/when/tool/args_hash/redacted_args/result/latency，不保存明文长消息 |
 
 代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。`ToolCallManager.list_tool_metadata()` 和 MCP `list_enterprise_tool_boundaries` 可直接导出工具 schema、权限范围、风险等级、幂等要求和审计语义。
+
+默认权限采用最小可用模型：`support_agent` 能查订单、检索政策、生成售后草稿；`ops_manager` 能查看运营报表但不能执行写动作；`after_sales_operator/admin` 才能确认执行退款、取消、改地址、发票和工单创建等副作用工具。
 
 ### Redis Runtime Store
 
@@ -168,37 +170,27 @@ group: A 667, B 667, C 666
 ## Agent 流程
 
 ```mermaid
-flowchart LR
-    Start((User)) --> Guard[Input Guard]
-    Guard --> Planner[LLM Task Planner]
-
-    Planner --> Executor[Task Plan Executor]
-    Executor -- order_status --> Repair[order_id repair]
-    Repair --> OrderTool[Order Facts Tool]
-    OrderTool --> Output[Output Guard]
-
-    Executor -- qa --> Rewrite[Adaptive Query Rewrite]
-    Rewrite --> CatRag[Category Risk Retrieval]
-    CatRag --> QaLLM[LLM Answer]
-    QaLLM --> Output
-
-    Executor -- ops_decision --> OpsReport[After-sales Ops Report]
-    OpsReport --> Output
-
-    Executor -- policy --> PolicyRag[Policy KB Retrieval]
-    PolicyRag --> PolicyLLM[LLM Answer]
-    PolicyLLM --> Output
-
-    Executor -- escalation --> CaseAssess[AfterSalesCase Assessment]
-    CaseAssess --> Decision[DecisionEngine + Verifier]
-    Decision -- reject/clarify --> Output
-    Decision -- review/write --> HITL[LangGraph interrupt]
-    HITL -- confirm --> CaseTool[Idempotent Business Tool]
-    HITL -- reject --> Cancel[Cancel]
-    CaseTool --> Output
-    Cancel --> Output
-
-    Output --> Trace[(SQLite Trace Store)]
+flowchart TD
+    Start((User)) --> Pending{Pending HITL?}
+    Pending -- yes --> Resume[Confirm/cancel/timeout resume]
+    Pending -- no --> Guard[Input Guard]
+    Guard --> Planner[LLM plan_tasks]
+    Planner --> Select[select_next_task]
+    Select --> Extract[extract_slots]
+    Extract --> Retrieve[retrieve_context]
+    Retrieve --> Branch{side_effect?}
+    Branch -- no --> Read[execute_read_task]
+    Read --> Select
+    Branch -- yes --> Case[build_after_sales_case]
+    Case --> Decision[Decision Engine + Verifier]
+    Decision -- stop/clarify --> Select
+    Decision -- low-risk execute --> Tool[ToolCallManager]
+    Decision -- hitl --> Interrupt[LangGraph interrupt]
+    Resume --> Tool
+    Tool --> Write[execute_side_effect]
+    Write --> Select
+    Select -- done --> Final[finalize_answer]
+    Final --> Trace[(SQLite Trace + Case Metrics)]
 ```
 
 当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/售后场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到退款、取消订单、改地址、发票、投诉升级等副作用任务时，系统会先构造 `AfterSalesCase`，用 `AfterSalesDecisionEngine` 和 `Verifier` 判断是批准、拒绝、补充信息还是转人工。只有需要执行 write action 的 case 才进入 HITL。HITL 不表示自动提权；它只是把“业务决策 + 客户回复草稿 + 预期动作”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address`、`invoice_request` 和 `complaint_escalation`。
@@ -368,7 +360,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|
-| Unit/Integration Tests | 93 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、VectorStore、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、投诉升级 case、MCP 企业工具边界、benchmark summary parser 和 tau2 bad-case guard |
+| Unit/Integration Tests | 100 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、VectorStore、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、投诉升级 case、MCP 企业工具边界、benchmark summary parser 和 tau2 bad-case guard |
 | Ruff | All checks passed | 代码静态检查通过 |
 | Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
 | Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |

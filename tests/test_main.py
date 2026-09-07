@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app
+from app.main import _resolve_auth_scopes, app
 
 ORDER_ID = "203096f03d82e0dffbc41ebc2e2bcfb7"
 
@@ -107,6 +107,38 @@ def _mock_task(order_id: str = ORDER_ID, category: str = "health_beauty"):
     return patch("app.llm.response_generator.OlistTaskExtractor.extract", AsyncMock(return_value=result))
 
 
+def _operator_payload(message: str, session_id: str) -> dict[str, object]:
+    return {
+        "message": message,
+        "session_id": session_id,
+        "role": "after_sales_operator",
+        "auth_scopes": ["*"],
+    }
+
+
+def _ops_payload(message: str, session_id: str | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "message": message,
+        "role": "ops_manager",
+    }
+    if session_id:
+        payload["session_id"] = session_id
+    return payload
+
+
+def test_chat_default_scopes_are_role_aware() -> None:
+    support_scopes = _resolve_auth_scopes("support_agent", None)
+    ops_scopes = _resolve_auth_scopes("ops_manager", None)
+    operator_scopes = _resolve_auth_scopes("after_sales_operator", None)
+
+    assert "after_sales:draft" in support_scopes
+    assert "after_sales:write" not in support_scopes
+    assert "after_sales:ops_report" in ops_scopes
+    assert "after_sales:write" not in ops_scopes
+    assert "after_sales:write" in operator_scopes
+    assert _resolve_auth_scopes("after_sales_operator", []) == []
+
+
 @pytest.mark.anyio
 async def test_qa_category_insights(client: AsyncClient) -> None:
     g1, g2 = _mock_guard(input_on_topic=True)
@@ -123,7 +155,7 @@ async def test_after_sales_ops_decision_report(client: AsyncClient) -> None:
     with g1, g2, _mock_plan("ops_decision"):
         response = await client.post(
             "/chat",
-            json={"message": "生成售后运营风险日报，列出优先跟进类目和订单"},
+            json=_ops_payload("生成售后运营风险日报，列出优先跟进类目和订单"),
         )
     assert response.status_code == 200
     body = response.json()
@@ -138,7 +170,7 @@ async def test_after_sales_ops_decision_report(client: AsyncClient) -> None:
 async def test_offline_after_sales_ops_decision_report(client: AsyncClient) -> None:
     response = await client.post(
         "/chat",
-        json={"message": "生成售后运营风险日报，列出优先跟进类目和订单"},
+        json=_ops_payload("生成售后运营风险日报，列出优先跟进类目和订单"),
     )
     assert response.status_code == 200
     assert "[售后运营决策]" in response.json()["answer"]
@@ -181,12 +213,28 @@ async def test_escalation_first_turn_requires_confirmation(client: AsyncClient) 
 
 
 @pytest.mark.anyio
+async def test_default_support_agent_cannot_execute_confirmed_side_effect(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("escalation"), _mock_task():
+        await client.post(
+            "/chat",
+            json={"message": f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术", "session_id": "s-deny"},
+        )
+    with g1, g2:
+        response = await client.post("/chat", json={"message": "yes", "session_id": "s-deny"})
+
+    assert response.status_code == 200
+    assert "未执行创建售后工单" in response.json()["answer"]
+    assert "permission_denied" in response.json()["answer"] or "not allowed" in response.json()["answer"]
+
+
+@pytest.mark.anyio
 async def test_escalation_second_turn_confirm(client: AsyncClient) -> None:
     g1, g2 = _mock_guard(input_on_topic=True)
     with g1, g2, _mock_plan("escalation"), _mock_task():
         await client.post(
             "/chat",
-            json={"message": f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术", "session_id": "s2"},
+            json=_operator_payload(f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术", "s2"),
         )
     with g1, g2:
         response = await client.post("/chat", json={"message": "yes", "session_id": "s2"})
@@ -201,7 +249,7 @@ async def test_confirmed_hitl_session_can_accept_new_policy_task(client: AsyncCl
     with g1, g2, _mock_plan("escalation"), _mock_task():
         await client.post(
             "/chat",
-            json={"message": f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术", "session_id": "s2-next"},
+            json=_operator_payload(f"订单 {ORDER_ID} 延迟且低分，生成客服跟进话术", "s2-next"),
         )
     with g1, g2:
         confirm_response = await client.post("/chat", json={"message": "yes", "session_id": "s2-next"})
@@ -403,7 +451,7 @@ async def test_refund_side_effect_uses_refund_tool(client: AsyncClient) -> None:
     ):
         await client.post(
             "/chat",
-            json={"message": f"给订单 {ORDER_ID} 申请退款", "session_id": "refund-task"},
+            json=_operator_payload(f"给订单 {ORDER_ID} 申请退款", "refund-task"),
         )
     with g1, g2:
         response = await client.post("/chat", json={"message": "确认", "session_id": "refund-task"})
@@ -473,7 +521,7 @@ async def test_multiple_escalations_continue_after_first_confirmation(client: As
     ):
         first = await client.post(
             "/chat",
-            json={"message": f"给订单 {ORDER_ID} 申请退款，再申请发票", "session_id": "two-effects"},
+            json=_operator_payload(f"给订单 {ORDER_ID} 申请退款，再申请发票", "two-effects"),
         )
     assert first.status_code == 200
     assert "提交退款/补偿申请" in first.json()["answer"]
@@ -535,7 +583,7 @@ async def test_chat_complaint_escalation_enters_after_sales_case_lifecycle(clien
     with g1, g2, _mock_plan_action("complaint_escalation"), _mock_task():
         response = await client.post(
             "/chat",
-            json={"message": f"我要投诉升级订单 {ORDER_ID} 的延迟问题", "session_id": "complaint-s1"},
+            json=_operator_payload(f"我要投诉升级订单 {ORDER_ID} 的延迟问题", "complaint-s1"),
         )
 
     body = response.json()

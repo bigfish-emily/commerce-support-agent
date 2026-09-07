@@ -163,7 +163,7 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 代码落点是 `app/tool_call/framework.py`；`app/agent/actions.py` 的订单查询、类目风险、运营报告、政策检索、客服样例检索、售后草稿和确认后的副作用执行都经过它。单测 `tests/test_tool_call_framework.py` 覆盖 schema fail、permission denied、cache hit、timeout fallback、幂等 duplicate、audit redaction、Redis runtime、限流、HITL TTL 和副作用锁。
 
-边界也要说清楚：当前鉴权是 demo 级 RBAC 白名单，不是企业 IAM/OAuth；Redis 已从单纯 cache backend 升级为 runtime store，负责只读工具缓存、`/chat` 固定窗口限流、HITL pending TTL 和副作用分布式锁；最终 case 幂等记录、LangGraph checkpoint 和 trace 仍落 SQLite。生产里会把 `ToolCallContext` 接登录态、租户、OAuth scopes 和工具 registry，把 audit 写入 Kafka/Pulsar 这类不可变事件流。
+边界也要说清楚：当前鉴权已经覆盖 role 最小默认 scopes、角色白名单与 `auth_scope` 校验；Redis 负责只读工具缓存、`/chat` 固定窗口限流、HITL pending TTL 和副作用分布式锁；最终 case 幂等记录、LangGraph checkpoint 和 trace 仍落 SQLite。生产里会把 `ToolCallContext` 接企业 IAM/OAuth、商家 ACL 和工具 registry，把 audit 写入 Kafka/Pulsar 这类不可变事件流。
 
 ## HITL 与副作用
 

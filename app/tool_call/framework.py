@@ -35,6 +35,7 @@ class ToolCallContext(BaseModel):
     role: str = "support_agent"
     tenant_id: str = "olist-demo"
     session_id: str = "unknown"
+    auth_scopes: list[str] = Field(default_factory=list)
 
 
 class ToolCallResult(BaseModel):
@@ -492,6 +493,20 @@ class ToolCallManager:
                 "permission_denied",
                 f"Role {context.role!r} is not allowed to call {spec.name!r}",
             )
+        if not context.auth_scopes and spec.risk_level != "read":
+            raise ToolCallError(
+                "permission_denied",
+                f"Scope {spec.auth_scope!r} is required to call non-read tool {spec.name!r}",
+            )
+        if (
+            context.auth_scopes
+            and "*" not in context.auth_scopes
+            and spec.auth_scope not in context.auth_scopes
+        ):
+            raise ToolCallError(
+                "permission_denied",
+                f"Scope {spec.auth_scope!r} is required to call {spec.name!r}",
+            )
 
     @staticmethod
     def _failure(
@@ -524,6 +539,7 @@ class ToolCallManager:
                 "session_id": context.session_id,
                 "user_id": context.user_id,
                 "role": context.role,
+                "auth_scopes": context.auth_scopes,
                 "tool_name": name,
                 "risk_level": self._specs[name].risk_level if name in self._specs else "unknown",
                 "side_effect": self._specs[name].side_effect if name in self._specs else False,
@@ -571,7 +587,7 @@ def build_business_tool_manager(
     cache_backend: ToolCacheBackend | None = None,
     runtime_store: RuntimeStore | None = None,
 ) -> ToolCallManager:
-    support_roles = frozenset({"support_agent", "ops_manager", "admin"})
+    support_roles = frozenset({"support_agent", "after_sales_operator", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
     after_sales_engine = AfterSalesDecisionEngine()
 
@@ -585,7 +601,7 @@ def build_business_tool_manager(
                 risk_level="read",
                 auth_scope="orders:read",
                 cache_ttl_seconds=300,
-                timeout_seconds=1,
+                timeout_seconds=3,
                 retries=1,
                 fallback=lambda args, ctx, exc: {
                     "answer": "订单事实工具暂时不可用，请稍后重试或转人工核查。",
@@ -605,7 +621,7 @@ def build_business_tool_manager(
                 risk_level="read",
                 auth_scope="analytics:read",
                 cache_ttl_seconds=300,
-                timeout_seconds=1,
+                timeout_seconds=3,
                 retries=1,
                 fallback=lambda args, ctx, exc: {"insights": [], "fallback_reason": str(exc)},
                 handler=lambda args, ctx: {"insights": olist_service.category_insights(str(args["query"]))},
@@ -618,7 +634,7 @@ def build_business_tool_manager(
                 risk_level="read",
                 auth_scope="after_sales:ops_report",
                 cache_ttl_seconds=120,
-                timeout_seconds=2,
+                timeout_seconds=8,
                 retries=1,
                 handler=lambda args, ctx: {
                     "report": olist_service.after_sales_priority_report(str(args["query"])),
@@ -632,7 +648,7 @@ def build_business_tool_manager(
                 risk_level="read",
                 auth_scope="policy:read",
                 cache_ttl_seconds=300,
-                timeout_seconds=1,
+                timeout_seconds=5,
                 retries=1,
                 fallback=lambda args, ctx, exc: {"sections": [], "fallback_reason": str(exc)},
                 handler=lambda args, ctx: {
@@ -656,7 +672,7 @@ def build_business_tool_manager(
                 risk_level="read",
                 auth_scope="support_examples:read",
                 cache_ttl_seconds=300,
-                timeout_seconds=2,
+                timeout_seconds=5,
                 retries=1,
                 fallback=lambda args, ctx, exc: {"docs": [], "fallback_reason": str(exc)},
                 handler=lambda args, ctx: {
@@ -680,7 +696,7 @@ def build_business_tool_manager(
                 risk_level="medium",
                 auth_scope="after_sales:draft",
                 cache_ttl_seconds=120,
-                timeout_seconds=1,
+                timeout_seconds=3,
                 retries=1,
                 handler=lambda args, ctx: {
                     "draft": olist_service.escalation_draft(str(args["order_id"])),
@@ -696,7 +712,7 @@ def build_business_tool_manager(
                 allowed_roles=support_roles,
                 risk_level="medium",
                 auth_scope="after_sales:assess",
-                timeout_seconds=1,
+                timeout_seconds=8,
                 retries=1,
                 handler=lambda args, ctx: _assess_after_sales_case(
                     after_sales_engine,
@@ -708,7 +724,7 @@ def build_business_tool_manager(
                 name="execute_side_effect",
                 description="Execute a confirmed idempotent side-effect action.",
                 input_model=SideEffectArgs,
-                allowed_roles=frozenset({"support_agent", "admin"}),
+                allowed_roles=frozenset({"after_sales_operator", "admin"}),
                 side_effect=True,
                 risk_level="critical",
                 auth_scope="after_sales:write",

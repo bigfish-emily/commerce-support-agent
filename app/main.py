@@ -26,6 +26,34 @@ from app.web_console import WEB_CONSOLE_HTML
 agent: StateGraph | None = None
 logger = setup_logger("agent")
 
+DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
+    "support_agent": [
+        "orders:read",
+        "analytics:read",
+        "policy:read",
+        "support_examples:read",
+        "after_sales:assess",
+        "after_sales:draft",
+    ],
+    "ops_manager": [
+        "orders:read",
+        "analytics:read",
+        "policy:read",
+        "support_examples:read",
+        "after_sales:ops_report",
+    ],
+    "after_sales_operator": [
+        "orders:read",
+        "analytics:read",
+        "policy:read",
+        "support_examples:read",
+        "after_sales:assess",
+        "after_sales:draft",
+        "after_sales:write",
+    ],
+    "admin": ["*"],
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,12 +78,13 @@ def web_console() -> HTMLResponse:
 async def chat(request: ChatRequest) -> ChatResponse:
     session_id: str = request.session_id or str(uuid.uuid4())
     config: dict = {"configurable": {"thread_id": session_id}}
+    auth_scopes = _resolve_auth_scopes(request.role, request.auth_scopes)
 
     t_start = time.perf_counter()
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("REQUEST | session=%s | message=%s", session_id, request.message[:100])
 
-    rate_limit = await _check_rate_limit(session_id)
+    rate_limit = await _check_rate_limit(request)
     if rate_limit is not None and not rate_limit.allowed:
         result = {
             "route_intent": "rate_limited",
@@ -147,6 +176,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
     else:
         initial_state: AgentState = {
             "session_id": session_id,
+            "tenant_id": request.tenant_id,
+            "user_id": request.user_id,
+            "role": request.role,
+            "auth_scopes": auth_scopes,
             "messages": [{"role": "user", "content": request.message}],
             "route_intent": "",
             "task_plan": [],
@@ -224,6 +257,12 @@ def _response_sources(result: dict) -> list[str]:
     return [str(source) for source in (insights or policies)]
 
 
+def _resolve_auth_scopes(role: str, provided_scopes: list[str] | None) -> list[str]:
+    if provided_scopes is not None:
+        return list(provided_scopes)
+    return list(DEFAULT_ROLE_SCOPES.get(role, []))
+
+
 def _is_confirmation_reply(message: str) -> bool:
     normalized = message.lower().strip()
     return normalized in {
@@ -274,11 +313,11 @@ def _pending_confirmation_response(state: dict) -> dict[str, object]:
     }
 
 
-async def _check_rate_limit(session_id: str):
+async def _check_rate_limit(request: ChatRequest):
     limit = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 1000)
     if limit <= 0:
         return None
-    key = "tenant:olist-demo:user:demo-user:minute"
+    key = f"tenant:{request.tenant_id}:user:{request.user_id}:minute"
     return await runtime_store.check_rate_limit(key, limit=limit, window_seconds=60)
 
 

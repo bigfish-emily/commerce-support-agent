@@ -59,6 +59,7 @@ class AfterSalesCase(BaseModel):
     delay_days: int | None = None
     review_score: int | None = None
     category_summary: str = ""
+    risk_signals: dict[str, object] = Field(default_factory=dict)
     policy_refs: list[str] = Field(default_factory=list)
     decision: AfterSalesDecision
     verification: VerificationResult

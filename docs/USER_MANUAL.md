@@ -201,7 +201,10 @@ Case Metrics
 你会看到当前 session 的请求记录，其中 `trajectory_json` 包含：
 
 - `plan_tasks`
-- `execute_task_plan`
+- `select_next_task`
+- `extract_slots`
+- `retrieve_context`
+- `execute_read_task` 或 `build_after_sales_case`
 - 检索或工具名称
 - HITL 状态
 - 最终确认结果

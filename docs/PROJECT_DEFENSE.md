@@ -8,11 +8,11 @@
 \entryhead{电商售后 Case Resolution Agent}{Python · FastAPI · LangGraph · MCP · RAG · Redis · SQLite · Docker}{2026.7 -- 至今}
 
 - 设计并实现面向电商客服与售后的聊天式业务 Agent，围绕退款、取消、改地址、发票和投诉升级等售后 case，完成用户诉求理解、订单/物流/支付事实查询、政策检索、结构化决策、客户回复草稿和高风险动作 HITL。
-- 基于 LangGraph 构建 workflow-constrained plan-and-execute 链路，LLM 负责意图规划、槽位抽取、query rewriting 和回复生成；订单事实、权限边界、金额/状态判断和副作用动作由确定性工具与 ToolCallManager 执行。
-- 设计 `AfterSalesDecisionEngine + Verifier`，将订单状态、配送延迟、支付金额、评价分、政策命中转为 `approve/reject/needs_human_review/ask_clarification` 决策；已送达订单取消会被拒绝，退款/补偿等资金动作必须进入 HITL。
+- 基于 LangGraph 构建显式 workflow-constrained plan-and-execute 链路，拆出 `plan_tasks/select_next_task/extract_slots/retrieve_context/execute_read_task/build_after_sales_case/finalize_answer` 等节点；LLM 负责意图规划、槽位抽取、query rewriting 和回复生成，订单事实、权限边界、金额/状态判断和副作用动作由确定性工具与 ToolCallManager 执行。
+- 设计 `AfterSalesDecisionEngine + Verifier`，将订单状态、配送延迟、支付金额、评价分、政策命中和 `risk_signals` 转为 `approve/reject/needs_human_review/ask_clarification` 决策；已送达订单取消会被拒绝，普通低风险跟进可自动执行，退款/补偿/投诉等高风险动作进入 HITL。
 - 基于 Olist 公开数据构建 98,666 条订单事实与 73 个类目画像，结合 Bitext、ResCommons、V1rtucious 构建客服意图、多意图、检索和 tool-use 回归；ResCommons hybrid retrieval 将 BM25 intent@1/intent@5 从 64%/81% 提升至 77%/91%。
 - 实现 MCP 企业工具边界：本地 MCP server 暴露 `get_order_status`、`assess_after_sales_case`、`generate_after_sales_priority_report` 等工具，client 侧支持 stdio 与 Streamable HTTP，并预留 Stripe sandbox/企业 OMS/CRM/工单系统 adapter。
-- 建立 CI 与多层评测：pytest 89 passed，DeepSeek live Agent eval 30/30；接入 τ-bench retail（`tau2-bench` v1.0.1）base split 114 tasks，DeepSeek V4-Flash pass^1 91.23%、write action match 92.05%、NL assertions 95.08%、p95 32.77s，并将失败样本沉淀为 bad-case regression。
+- 建立 CI 与多层评测：pytest 100 passed，DeepSeek live Agent eval 30/30；接入 τ-bench retail（`tau2-bench` v1.0.1）base split 114 tasks，DeepSeek `deepseek/deepseek-chat` pass^1 91.23%、write action match 92.05%、NL assertions 95.08%、p95 32.77s，并将失败样本沉淀为 bad-case regression。
 ```
 
 这版故意不写“生产级闭环全完成”，也不把所有 100% 当模型能力。最值得强调的是基线提升、数据规模、MCP 代码落点、真实 LLM 主链路和延迟成本。
@@ -25,7 +25,7 @@
 | LLM first step | `app/llm/intent_planner.py` | LLM 失败时才进入 deterministic fallback |
 | HITL + resume | `interrupt()` in `AgentActions.await_confirmation`, checkpoint in `/chat` | HITL 是确认门，不是自动提权 |
 | MCP support | `app/mcp_server.py`, `app/mcp_client.py`, `app/stripe_mcp.py` | MCP server 暴露业务工具和 `list_enterprise_tool_boundaries`；主 demo 默认用本地 service 保证无凭证可跑 |
-| Tool call governance | `app/tool_call/framework.py`, `app/agent/actions.py`, `tests/test_tool_call_framework.py` | Redis runtime 覆盖 cache/rate-limit/HITL TTL/side-effect lock；当前鉴权是角色白名单，不是企业 IAM |
+| Tool call governance | `app/tool_call/framework.py`, `app/agent/actions.py`, `tests/test_tool_call_framework.py` | Redis runtime 覆盖 cache/rate-limit/HITL TTL/side-effect lock；当前鉴权覆盖按 role 分配最小默认 scopes、角色白名单与 auth_scope 校验，未接企业 IAM/OAuth |
 | Persistent idempotency | `SQLiteCaseService` in `app/olist/service.py` | 个人项目模拟企业工具，不产生真实退款 |
 | Hybrid retrieval formula | `app/retrieval/hybrid.py`, `app/retrieval/vector_store.py` | BM25 + VectorStore + RRF 融合；默认本地 hashing embedding，Docker 可切 Qdrant |
 | Real LLM eval | `evaluation/live_agent_eval.py`, `evaluation/live_agent_eval_results.jsonl` | 30 条回归集，不是 leaderboard benchmark |
@@ -144,7 +144,7 @@ score(doc) = 0.2 / (bm25_rank + 20) + 2.0 / (vector_rank + 20)
 - policy/QA 的生成阶段按置信度跳过；
 - support_docs 检索并行化；
 - 缓存稳定 policy answer/category summary；
-- 高风险任务保留 HITL，低风险只读任务走 fast path。
+- 高风险任务保留 HITL，低风险只读任务走 fast path；低风险写动作只在订单状态、金额、政策命中和风险信号都满足时进入自动执行门禁。
 
 成本口径上，本项目不在代码里写死价格，因为模型定价会变；`live_agent_eval.py` 已记录 `input_chars`、`answer_chars`、`approx_turn_tokens`，真实接入时应优先读取 provider usage tokens，并按当日价格计算。
 

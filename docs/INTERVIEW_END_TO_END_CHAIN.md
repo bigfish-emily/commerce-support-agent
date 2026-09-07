@@ -1,156 +1,95 @@
 # 面试完整主链路图
 
-这份文档用来讲“这个电商客服/售后运营 Agent 如何从一句用户话跑到最终执行”。它比 `INTERVIEW_SIMPLE_DIAGRAMS.md` 更完整，覆盖主执行、RAG 分支、副作用治理、工具边界和评测闭环。
+这份文档对应当前代码里的真实主链路，适合面试时从“用户一句话”讲到“业务写动作执行”。当前 LangGraph 主链路显式拆成：`plan_tasks -> select_next_task -> extract_slots -> retrieve_context -> execute_read_task/build_after_sales_case -> await_confirmation/finalize_escalation -> finalize_answer`。
 
-源文件：`docs/diagrams/interview_end_to_end_chain_zh.mmd`
+源文件：`docs/diagrams/interview_main_chain_zh.mmd`
 
 ```mermaid
 flowchart TD
-    U[用户输入<br/>自然语言: 查订单/问政策/申请退款/运营分析] --> G[Input Guard<br/>业务域与注入风险检查]
-    G -- 越界/注入 --> Reject[安全拒绝<br/>不进入业务工具]
-    G -- 通过 --> Planner[LLM Planner<br/>拆意图/抽槽/标记 side_effect/生成 task_plan]
+    A[1 用户输入 /chat<br/>客服坐席或售后运营主管] --> B{2 当前 Session<br/>是否有待确认副作用?}
+    B -- 有 --> C{3 用户回复类型}
+    C -- yes/确认 --> D[恢复 LangGraph checkpoint<br/>进入 finalize_escalation]
+    C -- no/取消/超时 --> E[清理 pending<br/>记录 canceled/timeout]
+    C -- 普通新问题 --> F[提示先确认或取消<br/>阻止绕过 HITL]
 
-    Planner --> OrderRead[Read-only 任务优先执行<br/>订单事实/政策/RAG/运营画像]
-    OrderRead --> FactTool[订单事实工具<br/>OlistService 精确查询 order_id/status/payment/review]
-    OrderRead --> RagRoute{RAG 数据源选择}
-    RagRoute --> PolicyKB[政策/FAQ/商家规则 KB<br/>Markdown sections]
-    RagRoute --> SupportCorpus[客服历史语料<br/>ResCommons corpus]
-    RagRoute --> CategoryIndex[类目画像<br/>73 个 category risk profile]
+    B -- 无 --> G[4 Input Guard<br/>业务域 + 注入风险检查]
+    G -- 拒绝 --> H[安全拒绝<br/>不进入工具]
+    G -- 通过 --> I[5 LLM Planner<br/>拆多意图 task_plan<br/>标记 side_effect/action_type/dependency]
 
-    PolicyKB --> PolicyRecall[Query 扩展 + 词项召回<br/>title/text overlap]
-    PolicyRecall --> PolicyRerank[轻量 rerank<br/>source_type + intent boost]
-    SupportCorpus --> HybridRecall[Hybrid retrieval<br/>BM25 + VectorStore]
-    HybridRecall --> HybridFuse[RRF 风格融合 rerank]
-    CategoryIndex --> CategoryRewrite[类目 query rewriting<br/>exact -> token overlap -> adaptive rewrite]
+    I --> J[6 select_next_task<br/>只读任务优先<br/>副作用任务后置]
+    J --> K[7 extract_slots<br/>抽 order_id/category/action_type<br/>repair_order_id 修复参数]
+    K --> L[8 retrieve_context<br/>订单事实 / 政策FAQ商家规则 / 客服语料 / 类目画像]
 
-    FactTool --> Evidence[结构化证据池<br/>facts/policy_refs/support_docs/category_insights]
-    PolicyRerank --> Evidence
-    HybridFuse --> Evidence
-    CategoryRewrite --> Evidence
+    L --> M{9 是否副作用任务?}
+    M -- 否 --> N[10 execute_read_task<br/>订单查询/政策问答/运营分析/优先队列]
+    N --> J
 
-    Evidence --> Executor[Executor<br/>按依赖执行 task_plan, read-only 先于 side-effect]
-    Executor --> CaseBuild{是否售后副作用?}
-    CaseBuild -- 否 --> AnswerGen[LLM/模板答案生成<br/>必须基于证据回答]
-    CaseBuild -- 是 --> Case[AfterSalesCase<br/>action_type/order/facts/policy/evidence/risk]
+    M -- 是 --> O[11 build_after_sales_case<br/>组装 action_type/order/facts/policy/evidence/risk_signals]
+    O --> P[12 Decision Engine<br/>退款/取消/改地址/发票/投诉规则判断]
+    P --> Q[13 Verifier<br/>政策依据/信息充分性/风险等级/写动作边界]
+    Q --> R{14 required_next_step}
+    R -- stop --> S[安全拒绝<br/>例如已送达不能取消]
+    R -- clarify --> T[要求补充信息<br/>例如缺订单号/事实不足]
+    R -- execute --> U[低风险自动执行<br/>普通跟进/低额发货前动作]
+    R -- hitl --> V[LangGraph interrupt<br/>返回草稿并持久化 pending TTL]
 
-    Case --> Decision[Decision Engine<br/>退款/取消/改地址/发票/投诉规则判断]
-    Decision --> Verifier[Verifier<br/>政策一致性/信息充分性/风险等级校验]
-    Verifier --> Outcome{下一步}
-    Outcome -- reject --> SafeReject[安全拒绝<br/>说明依据, 不执行写工具]
-    Outcome -- clarify --> Clarify[要求补充信息<br/>缺订单号/事实不足/政策不满足]
-    Outcome -- hitl --> HITL[HITL interrupt<br/>返回草稿并持久化 pending state]
+    U --> W[15 ToolCallManager<br/>schema/role/scope/cache/timeout/retry/fallback/audit]
+    V --> X[等待用户下一轮确认]
+    D --> W
+    W --> Y[16 execute_side_effect<br/>Redis lock + SQLite business idempotency]
 
-    HITL --> Resume{用户确认?}
-    Resume -- no/超时 --> Cancel[取消/超时取消<br/>清理 pending]
-    Resume -- yes --> ToolBoundary[ToolCallManager / MCP 边界]
-
-    ToolBoundary --> Schema[Schema 校验]
-    Schema --> Auth[角色权限/工具白名单]
-    Auth --> Risk[风险等级与 side_effect 标记]
-    Risk --> Lock[Redis/RuntimeStore<br/>幂等 key + 分布式锁 + TTL]
-    Lock --> ToolExec[异步工具执行<br/>timeout/retry/backoff/fallback]
-    ToolExec --> Audit[脱敏审计<br/>who/when/tool/args/result]
-    Audit --> AnswerGen
-    SafeReject --> AnswerGen
-    Clarify --> AnswerGen
-    Cancel --> AnswerGen
-
-    AnswerGen --> Trace[SQLite Trace + Case Metrics<br/>trajectory/case_id/status/latency/cost]
-    Trace --> UserResp[返回用户<br/>answer + sources + pending state]
-
-    subgraph Eval[评测飞轮: 不进入线上请求路径]
-        CI[代码/Prompt 改动] --> Unit[pytest/ruff/离线 eval]
-        Unit --> Offline[意图/多意图/工具/RAG/轨迹/性能]
-        Offline --> Live[真实 LLM 回归<br/>planner/tool/HITL/answer checks]
-        Live --> Tau[tau2-bench retail local run<br/>pass^1/DB match/write action/NL assertions]
-        Tau --> BadCase[失败样本归因<br/>沉淀 bad-case regression]
-        BadCase --> CI
-        Trace -. 抽样/回放 .-> Offline
-    end
+    S --> Z[17 finalize_answer<br/>汇总分段答案/sources]
+    T --> Z
+    E --> Z
+    F --> Z
+    Y --> Z
+    J -- 没有剩余任务 --> Z
+    Z --> AA[18 SQLite trace + case metrics<br/>trajectory/latency/cost/case/replay]
+    AA --> AB[返回 answer + sources + session_id]
 ```
 
-## 1. 面试口播主线
+## 每段链路怎么讲
 
-可以这样讲：
+1. `/chat` 收到用户自然语言，用户可以是客服坐席，也可以是售后运营主管。请求里带 `tenant_id/user_id/role/auth_scopes/session_id`，这些字段会进入 `AgentState`，后续工具调用用同一份上下文做限流、权限、缓存隔离和审计。
+2. 系统先查当前 session 是否有 pending HITL。存在 pending 时，只接受确认、取消或超时恢复，普通新问题会被挡住，防止用户绕过待确认的退款/取消/改地址动作。
+3. 没有 pending 时进入 Input Guard。这里检查业务域和注入风险，越界请求不会触达任何订单、政策或写工具。
+4. LLM Planner 生成结构化 `task_plan`。每个任务包含 `intent/text/side_effect/action_type/depends_on`，多意图请求会拆成多个任务，例如“查订单、说明政策、申请退款”。
+5. `select_next_task` 负责调度顺序。只读任务优先执行，副作用任务后置；如果副作用依赖订单查询，前置任务失败会阻断后续写动作。
+6. `extract_slots` 把自然语言里的订单号、类目和售后动作抽成结构化字段，并用 `repair_order_id` 修复空格、大小写、前缀和多 ID 等常见非法参数。
+7. `retrieve_context` 统一拉证据：订单事实走精确工具，政策/FAQ/商家规则走 KB 检索，客服历史语料走 hybrid retrieval，类目画像走 category rewrite/overlap 检索。
+8. 只读任务进入 `execute_read_task`，生成订单状态、政策回答、运营分析或售后优先队列报告。只读任务结束后回到 `select_next_task` 继续跑剩余任务。
+9. 副作用任务进入 `build_after_sales_case`，形成 `AfterSalesCase`。这个对象记录 action_type、order facts、policy refs、evidence、risk_signals、decision、verification 和 customer_reply。
+10. Decision Engine 根据订单状态、金额、延迟、低分、政策命中和风险信号判断结果。当前支持 `approve/reject/needs_human_review/ask_clarification`。
+11. Verifier 把决策转换成下一步：`execute/hitl/clarify/stop`。低风险普通跟进或低额发货前动作可以自动执行；退款、投诉、延迟低分、金额高、政策不足等进入 HITL 或安全出口。
+12. HITL 使用 LangGraph `interrupt()` 挂起，checkpoint 保存完整状态，Redis 保存 pending TTL。下一轮用户回复 yes/no 时通过 `Command(resume=...)` 回到 `finalize_escalation`。
+13. 写动作统一进 ToolCallManager。工具层做 Pydantic schema 校验、role + auth_scope 权限检查、tenant cache、side-effect lock、timeout/retry/backoff/fallback、输出标准化和脱敏审计。
+14. `execute_side_effect` 使用 Redis/RuntimeStore 锁防并发，用 SQLite case store 保存业务粒度幂等记录。重复确认返回 duplicate，不重复创建退款单或工单。
+15. `finalize_answer` 汇总多任务分段答案和 sources，`record_trace` 写入 SQLite trace，`case_metrics` 可按 case 统计自动解决率、HITL 率、错误写拦截、policy hit rate、工具错误率、延迟和成本。
 
-> 这个项目把电商售后问题拆成可执行的业务任务。LLM 负责理解自然语言、拆 intent、抽 order_id/action_type 和生成回答；订单事实、政策依据、售后决策、副作用动作、权限、幂等和审计进入确定性链路。只读任务会优先执行，退款、取消、改地址、发票、投诉升级这类副作用任务先构造成 `AfterSalesCase`，经过 Decision Engine 和 Verifier，再通过 HITL 确认后进入 ToolCallManager/MCP 企业工具边界执行。
+## RAG 检索具体怎么做
 
-这段话的重点是三个边界：
-
-- **模型边界**：LLM 做语言理解和规划，不直接改业务状态。
-- **工具边界**：所有工具调用都要过 schema、权限、缓存、锁、超时、fallback、审计。
-- **评测边界**：tau2-bench 是外部评测适配器，不在 `/chat` 线上请求路径里；它用来验证同类客服 tool-use 和 policy compliance 能力。
-
-## 2. RAG 检索具体怎么做
-
-本项目按业务对象分三类处理 RAG 和检索。
-
-| 检索对象 | 为什么这么做 | 当前实现 | 评测指标 |
+| 检索对象 | 主链路位置 | 当前策略 | 为什么这样做 |
 |---|---|---|---|
-| 订单事实 | 订单状态、金额、评价、配送延迟是强事实，不能靠相似度猜 | `OlistService` 精确查询订单事实 | Olist task eval、真实轨迹工具正确率、tau2 DB/action match |
-| 售后政策/FAQ/商家规则 | 文档短、结构清晰，需要可解释来源 | `MarkdownKnowledgeBase` 把多份 markdown 按二级标题切段，query 扩展后做 title/text overlap 召回，再按 `source_type` 和意图词轻量 rerank | policy KB Top1、Recall@3、MRR@3 |
-| 客服历史语料 | 表达变化大，用来补相似问法和话术上下文 | `HybridSupportRetriever`：BM25 候选召回 + VectorStore 召回 + RRF 风格融合；默认本地 hashing embedding，可切 Qdrant | intent@1、intent@5、MRR@5、capability@1/@5 |
-| 类目运营画像 | 类目名有下划线、英文、中文别名和口语扰动 | `exact_underscore -> token_overlap -> adaptive_rewrite` 三档对比 | category Top1、Recall@3、MRR@3、realistic_alias Top1 |
+| 订单事实 | `retrieve_context -> get_order_status` | 精确 order_id 查询 | 订单状态、金额、评价、延迟是强事实，不能靠相似度猜 |
+| 政策/FAQ/商家规则 | `retrieve_context -> search_policy_knowledge` | markdown 分段、query 扩展、title/text overlap、source_type rerank | 需要可解释来源，适合短 SOP/FAQ/规则文档 |
+| 客服历史语料 | `retrieve_context -> search_support_examples` | BM25 + char/hash VectorStore + RRF 风格融合 | 解决相似问法和话术模式泛化，默认本地可复现，可切 Qdrant |
+| 类目画像 | `retrieve_context -> search_category_risk` | exact -> token overlap -> adaptive rewrite | 处理 `health_beauty`、`health beauty`、中文别名、口语化类目名 |
 
-具体代码口径：
+政策 KB 的检索单元来自 `data/knowledge_base/*.md` 的标题分段，每个 hit 带 `section_title/source/source_type/text/score`。客服历史语料来自 ResCommons train split，test split 只用于评测，避免把测试样本放回语料库造成指标虚高。类目画像来自 Olist 全量订单离线聚合，返回类目名、平均支付金额、延迟率、低分率、取消率、样例订单和处理建议。
 
-- 政策 KB：`app/olist/knowledge.py`
-  - `_expand_query()` 把“退款、发票、投诉、美妆、商家”等中文业务词扩展成英文/业务同义词。
-  - `search()` 先算 query tokens 与 section title/text 的 overlap。
-  - `_rerank_score()` 根据 `policy/faq/merchant_rule` 和 query intent 做轻量 boost。
-- 客服 hybrid retrieval：`app/retrieval/hybrid.py`、`app/retrieval/vector_store.py`
-  - `bm25_search()` 使用倒排索引和 BM25 公式。
-  - `vector_search()` 调用 `VectorStore`；默认 `LocalVectorStore` 使用 hashing embedding，本地可复现；Docker 部署可通过 `SUPPORT_VECTOR_BACKEND=qdrant` 切到 Qdrant。
-  - `hybrid_search()` 先取 BM25 候选，再融合 BM25 rank 与 vector rank，当前权重是 BM25 `0.2/(rank+20)`，vector `2.0/(rank+20)`。
-- 类目检索：`app/olist/retrieval.py`
-  - exact 用来做最弱 baseline。
-  - token overlap 解决 `health beauty` 与 `health_beauty` 的分词匹配。
-  - adaptive rewrite 解决中文别名、行业俗称、英文近义表达。
+## 评测具体怎么做
 
-面试时要主动补一句：
+| 层级 | 评什么 | 代表指标 |
+|---|---|---|
+| 单测/集成测试 | 主链路、MCP、RAG、ToolCallManager、Redis runtime、HITL、幂等、trace、tau summary parser | `pytest 100 passed` |
+| 离线业务 eval | intent 映射、多意图拆解、工具参数修复、RAG 召回、真实轨迹结构、性能 | intent/multi-intent/task/tool repair/policy retrieval/performance |
+| RAG 对比 | 不同检索策略是否真的提升召回和排序 | Top1、Recall@3、MRR、intent@1、intent@5 |
+| 真实 LLM 回归 | LLM 进入 planner、抽槽、guard、answer 后是否仍跑通 | task_exact、tools_used、HITL correctness、answer checks、latency、cost |
+| LLM-as-Judge | 回答相关性、事实一致性、工具正确性、HITL 正确性 | relevance/faithfulness/tool correctness/HITL correctness |
+| tau2-bench retail | 第三方客服环境的 tool-use、policy compliance、副作用执行 | pass^1、DB match、read/write action match、NL assertions、p95、cost |
 
-> 订单事实走精确工具查询，政策、FAQ、商家规则、历史客服话术和类目归一进入检索链路。当前客服语料已经接入 VectorStore 边界，默认本地 hashing embedding 保证无外部依赖可复现，Docker 可切 Qdrant；生产化可以替换为 Elasticsearch/BM25 + BGE/Jina/OpenAI/企业 embedding + cross-encoder reranker，评估口径保持 Recall@K、MRR、nDCG、latency 和 cost。
+面试时要主动区分：离线 eval 用来保证确定性模块和回归不退化；真实 LLM eval 用来验证模型进入主链路后的端到端效果；tau2-bench 是外部 benchmark local run，用来做横向可比，不属于 Olist `/chat` 生产请求路径。
 
-## 3. 评测具体怎么进行
+## 30 秒口播
 
-评测分四层，不把所有数字混成一个“准确率”。
-
-| 层级 | 评什么 | 怎么跑 | 当前代表指标 |
-|---|---|---|---|
-| 离线确定性评测 | intent 映射、多意图拆解、工具参数修复、RAG 召回、轨迹结构 | `python -m evaluation.agent_metrics_report` 汇总各 eval | pytest 89 passed；多意图 60/60；工具任务 245/245；policy KB 19 条 Top1/Recall@3/MRR@3 100% |
-| RAG 对比评测 | 不同检索策略是否真的提升召回 | `evaluation/rag_retrieval_eval.py`、`evaluation/hybrid_retrieval_eval.py` | 类目 adaptive_rewrite Top1 92.08%、realistic_alias Top1 97.50%；ResCommons hybrid intent@1/intent@5 77%/91% |
-| 真实 LLM 回归 | LLM 进入主链路后，planner、工具、HITL、回答是否一起工作 | `evaluation/live_agent_eval.py`，需要 API key，样本小但跑真实模型 | live Agent eval 30/30；p50 10830ms、p95 26052ms |
-| 外部 benchmark | 是否能在第三方客服环境横向对比 | tau2-bench retail adapter，独立 Python 3.12 环境跑 | retail base split 114-task local run：pass^1 91.23%、DB match 92.11%、write action match 92.05%、NL assertions 95.08%、p95 32.77s |
-
-各指标的含义：
-
-- **Top1**：首位召回是否就是 gold，适合看“第一条证据能不能用”。
-- **Recall@3 / intent@5**：TopK 内是否包含正确答案，适合看召回池有没有覆盖。
-- **MRR@K**：正确项越靠前分越高，适合比较排序质量。
-- **task_exact**：LLM 拆出来的任务序列是否和 gold 完全一致。
-- **tools_used / action match**：是否调用了正确工具，以及参数和副作用动作是否正确。
-- **DB match**：执行后环境数据库状态是否和 benchmark gold state 一致，这是副作用任务最硬的指标。
-- **NL assertions**：自然语言回复是否满足任务要求，比如是否正确说明政策、有没有误承诺。
-- **p95 latency / cost_per_case**：证明不是只会跑通，还关注线上成本和延迟。
-
-## 4. 面试官追问时的边界说法
-
-**问：RAG 为什么不用 embedding？**
-
-答：项目按数据对象选择检索方式。订单事实需要精确一致性，走事实工具；政策和 FAQ 当前用可解释 lexical+rerank；客服历史语料已经接入 BM25 + VectorStore + RRF 融合。默认本地 hashing embedding 用来保证 CI 和面试现场可复现，Docker 可切 Qdrant；生产环境接入大量 FAQ 和客服会话后，把 embedder 换成 BGE/Jina/OpenAI/企业 embedding，再加 cross-encoder reranker。
-
-**问：这些评测能证明真实 Agent 能力吗？**
-
-答：离线评测只能证明确定性模块和回归不退化，不能单独证明真实 Agent 能力。所以项目又跑了真实 LLM 回归和 tau2-bench retail。我的表述会区分三类数字：本项目业务 eval、真实模型回归、外部 benchmark local run，不把它们包装成同一种指标。
-
-**问：tau2-bench 在主链路里吗？**
-
-答：tau2-bench 运行在外部 benchmark adapter 中。主链路是 `/chat` 的 Olist Agent；tau2 adapter 接第三方 retail policy、tool set 和用户模拟器，用于横向验证 tool-use、policy compliance 和副作用治理能力。
-
-**问：为什么不是全交给 ReAct？**
-
-答：售后业务有副作用和政策边界，纯 ReAct 容易把“想一想”和“做动作”混在一起。这里用 plan-and-execute，把 read-only 任务排在前面，把副作用任务统一收敛到 `AfterSalesCase -> Decision -> Verifier -> HITL -> ToolCallManager`，可审计、可恢复，也更容易评测。
-
-## 5. 30 秒版本
-
-> 用户说一句话后，系统先做安全检查，再由 LLM 拆成多个业务任务。订单、政策、类目风险和客服历史分别走精确工具、政策 KB、类目 query rewriting 和 hybrid retrieval，形成证据池。只读任务先回答；退款、取消、改地址、发票和投诉升级会构造 `AfterSalesCase`，经过规则决策和 Verifier 后，必须 HITL 确认才能通过 ToolCallManager/MCP 调企业工具。每一步都会写 trace 和 case metrics；效果用离线 eval、真实 LLM 回归和 tau2-bench retail local run 三层验证。
+这个项目是电商售后 case resolution Agent。用户一句话进来后，系统先查 session 是否有未确认副作用，再做安全检查；LLM 只负责拆任务、抽槽、query rewriting 和生成表达。订单事实、政策检索、类目风险、售后决策、Verifier、HITL 和写工具执行都在 LangGraph 显式节点里完成。退款、取消、改地址、发票、投诉等动作会先构造成 `AfterSalesCase`，通过规则决策和 Verifier 后，低风险动作自动执行，高风险动作 interrupt 等人工确认。所有工具经过 ToolCallManager/MCP 边界治理，Redis 做缓存、限流、锁和 HITL TTL，SQLite 保存 checkpoint、trace 和幂等 case。项目用单测/离线 eval/真实 LLM 回归/LLM judge/tau2-bench retail 来证明链路有效。

@@ -64,234 +64,328 @@ class AgentActions:
             ],
         }
 
-    async def execute_task_plan(self, state: AgentState) -> dict:
-        answers: list[str] = []
-        if _should_include_previous_answer(state):
-            answers.append(str(state.get("final_answer", "")))
-        completed: list[dict[str, object]] = list(state.get("completed_tasks", []))
-        retrieved_insights: list[dict[str, object]] = list(state.get("retrieved_insights", []))
-        retrieved_policy: list[dict[str, object]] = list(state.get("retrieved_policy", []))
-        retrieved_support_docs: list[dict[str, object]] = list(state.get("retrieved_support_docs", []))
-        after_sales_cases: list[dict[str, object]] = list(state.get("after_sales_cases", []))
-        escalation_draft: dict[str, object] | None = None
-        trajectory_events = list(state.get("trajectory_events", []))
-
-        tasks = state.get("task_plan", [])
+    def select_next_task(self, state: AgentState) -> dict:
+        completed = list(state.get("completed_tasks", []))
         terminal_indices = _terminal_task_indices(completed)
+        completed_indices = _completed_task_indices(completed)
+        tasks = state.get("task_plan", [])
+
         for idx, task in _execution_order(tasks):
             if idx in terminal_indices:
                 continue
             dependencies = [int(dep) for dep in task.get("depends_on", []) if isinstance(dep, int)]
-            completed_indices = _completed_task_indices(completed)
-            if any(dep not in completed_indices for dep in dependencies):
+            missing = [dep for dep in dependencies if dep not in completed_indices]
+            if missing:
                 completed = _upsert_task_status(
                     completed,
                     idx,
                     str(task.get("intent", "policy")),
                     "blocked",
                 )
-                answers.append("[任务阻断]\n前置任务没有完成，已停止后续可能有副作用的动作。")
-                trajectory_events.append(
+                answer_parts = [
+                    *state.get("answer_parts", []),
+                    "[任务阻断]\n前置任务没有完成，已停止后续可能有副作用的动作。",
+                ]
+                return {
+                    "completed_tasks": completed,
+                    "answer_parts": answer_parts,
+                    "workflow_complete": True,
+                    "trajectory_events": [
+                        *state.get("trajectory_events", []),
+                        _event(
+                            "select_next_task",
+                            str(task.get("intent", "policy")),
+                            "blocked",
+                            {"task_index": idx, "missing_dependencies": missing},
+                        ),
+                    ],
+                }
+
+            return {
+                "current_task_index": idx,
+                "current_task": task,
+                "current_task_text": str(task.get("text") or _latest_user_task_message(state)),
+                "workflow_complete": False,
+                "trajectory_events": [
+                    *state.get("trajectory_events", []),
                     _event(
-                        "execute_task_plan",
+                        "select_next_task",
                         str(task.get("intent", "policy")),
-                        "blocked",
-                        {"task_index": idx, "missing_dependencies": dependencies},
-                    )
-                )
-                break
-
-            intent = str(task.get("intent", "policy"))
-            text = str(task.get("text") or _latest_user_task_message(state))
-            event_details: dict[str, object] = {"task_index": idx, "text": text[:300]}
-            if intent == "order_status":
-                answer = await self._answer_order_status(text, state)
-                answers.append(f"[订单查询]\n{answer}")
-                event_details["tool"] = "get_order_status"
-            elif intent == "qa":
-                insights = await self._category_insights(text, state)
-                support_docs = await self._search_support_docs(text, state)
-                retrieved_insights.extend(insights)
-                retrieved_support_docs.extend(support_docs)
-                answer = await self._qa_generator.generate(text, insights, support_docs)
-                answers.append(f"[运营分析]\n{answer}")
-                event_details["tool"] = "search_category_risk"
-                event_details["hit_count"] = len(insights)
-                event_details["support_doc_count"] = len(support_docs)
-            elif intent == "ops_decision":
-                report = await self._after_sales_priority_report(text, state)
-                answers.append(f"[售后运营决策]\n{format_after_sales_report(report)}")
-                retrieved_insights.extend(report.get("high_risk_categories", []))
-                event_details["tool"] = "generate_after_sales_priority_report"
-                event_details["category_count"] = len(report.get("high_risk_categories", []))
-                event_details["order_count"] = len(report.get("priority_orders", []))
-            elif intent == "policy":
-                sections = await self._search_policy_knowledge(text, state)
-                support_docs = await self._search_support_docs(text, state)
-                retrieved_policy.extend(sections)
-                retrieved_support_docs.extend(support_docs)
-                answer = await self._policy_generator.generate(
-                    text,
-                    sections,
-                    support_docs,
-                    completed_context="\n\n".join(answers),
-                )
-                answers.append(f"[政策问答]\n{answer}")
-                event_details["tool"] = "search_policy_knowledge"
-                event_details["hit_count"] = len(sections)
-                event_details["support_doc_count"] = len(support_docs)
-            elif intent == "escalation":
-                action_type = str(task.get("action_type") or self._infer_action_type(text))
-                slot_text = _with_order_context(text, state["messages"][-1]["content"])
-                draft_answer, draft = await self._prepare_escalation_from_text(slot_text, action_type, state)
-                answers.append(f"[售后升级]\n{draft_answer}")
-                if draft is not None:
-                    draft["task_index"] = idx
-                    if isinstance(draft.get("after_sales_case"), dict):
-                        after_sales_cases.append(dict(draft["after_sales_case"]))
-                event_details["tool"] = "prepare_side_effect"
-                event_details["action_type"] = action_type
-                if draft and isinstance(draft.get("decision"), dict):
-                    event_details["decision_outcome"] = draft["decision"].get("outcome")
-                    event_details["risk_level"] = draft["decision"].get("risk_level")
-                if draft is None:
-                    completed = _upsert_task_status(completed, idx, intent, "failed")
-                    trajectory_events.append(_event("execute_task_plan", intent, "failed", event_details))
-                    continue
-                if draft.get("requires_confirmation") is False:
-                    completed = _upsert_task_status(completed, idx, intent, "completed")
-                    terminal_indices.add(idx)
-                    trajectory_events.append(_event("execute_task_plan", intent, "completed", event_details))
-                    continue
-                else:
-                    escalation_draft = draft
-                    completed = _upsert_task_status(completed, idx, intent, "awaiting_confirmation")
-                    trajectory_events.append(
-                        _event("execute_task_plan", intent, "awaiting_confirmation", event_details)
-                    )
-                    break
-            completed = _upsert_task_status(completed, idx, intent, "completed")
-            terminal_indices.add(idx)
-            trajectory_events.append(_event("execute_task_plan", intent, "completed", event_details))
-
-        final_answer = (
-            "\n\n".join(answers)
-            if answers
-            else "没有识别到可执行的电商客服任务，请补充订单号或问题。"
-        )
-        update: dict[str, object] = {
-            "completed_tasks": completed,
-            "trajectory_events": trajectory_events,
-            "artifacts": {
-                "policy_sources": [str(item["section_title"]) for item in retrieved_policy],
-                "insight_sources": [
-                    str(item.get("name") or item.get("category") or "")
-                    for item in retrieved_insights
-                    if item.get("name") or item.get("category")
+                        "selected",
+                        {"task_index": idx, "side_effect": bool(task.get("side_effect"))},
+                    ),
                 ],
-                "support_sources": [str(item["doc_id"]) for item in retrieved_support_docs],
-            },
-            "retrieved_insights": retrieved_insights,
-            "retrieved_policy": retrieved_policy,
-            "retrieved_support_docs": retrieved_support_docs,
-            "after_sales_cases": after_sales_cases,
-            "final_answer": final_answer,
-            "messages": [*state["messages"], {"role": "assistant", "content": final_answer}],
-        }
-        if escalation_draft:
-            created_at = time.time()
-            timeout_seconds = _hitl_timeout_seconds()
-            update["escalation_draft"] = escalation_draft
-            pending_side_effect = {
-                "type": escalation_draft.get("action_type", "open_support_case"),
-                "requires_confirmation": True,
-                "task_intent": "escalation",
-                "task_index": escalation_draft.get("task_index"),
-                "created_at": created_at,
-                "expires_at": created_at + timeout_seconds,
-                "timeout_seconds": timeout_seconds,
             }
-            update["pending_side_effect"] = pending_side_effect
-            if self._runtime_store is not None:
-                await self._runtime_store.put_pending_confirmation(
-                    str(state.get("session_id", "unknown")),
-                    pending_side_effect,
-                    timeout_seconds,
+
+        return {
+            "current_task": {},
+            "current_task_text": "",
+            "workflow_complete": True,
+            "trajectory_events": [
+                *state.get("trajectory_events", []),
+                _event("select_next_task", "workflow", "completed"),
+            ],
+        }
+
+    async def extract_slots(self, state: AgentState) -> dict:
+        if state.get("workflow_complete"):
+            return {}
+        task = dict(state.get("current_task", {}))
+        intent = str(task.get("intent", "policy"))
+        text = str(state.get("current_task_text") or _latest_user_task_message(state))
+        slot_text = _with_order_context(text, _latest_user_task_message(state))
+        extracted = await self._task_extractor.extract(slot_text)
+        order_repair = repair_order_id(extracted.order_id or slot_text)
+        slots = {
+            "order_id": order_repair.value if order_repair.ok else "",
+            "order_id_ok": order_repair.ok,
+            "order_id_error": "" if order_repair.ok else order_repair.message,
+            "category": extracted.category,
+            "user_goal": extracted.user_goal,
+        }
+        if intent == "escalation":
+            slots["action_type"] = str(task.get("action_type") or self._infer_action_type(text))
+        return {
+            "current_slots": slots,
+            "trajectory_events": [
+                *state.get("trajectory_events", []),
+                _event(
+                    "extract_slots",
+                    intent,
+                    "completed",
+                    {
+                        "task_index": state.get("current_task_index"),
+                        "has_order_id": bool(slots["order_id"]),
+                        "category": slots["category"],
+                    },
+                ),
+            ],
+        }
+
+    async def retrieve_context(self, state: AgentState) -> dict:
+        if state.get("workflow_complete"):
+            return {}
+        task = dict(state.get("current_task", {}))
+        intent = str(task.get("intent", "policy"))
+        text = str(state.get("current_task_text") or _latest_user_task_message(state))
+        slots = dict(state.get("current_slots", {}))
+        context: dict[str, object] = {}
+        update: dict[str, object] = {}
+
+        if intent == "order_status":
+            if slots.get("order_id_ok"):
+                order_id = str(slots["order_id"])
+                result = await self._tool_manager.call(
+                    "get_order_status",
+                    {"order_id": order_id},
+                    self._tool_context(state),
                 )
+                context["order_status_result"] = result.model_dump()
+            else:
+                context["order_id_error"] = str(slots.get("order_id_error", "没有检测到有效订单号。"))
+        elif intent == "qa":
+            insights = await self._category_insights(text, state)
+            support_docs = await self._search_support_docs(text, state)
+            context["insights"] = insights
+            context["support_docs"] = support_docs
+            update["retrieved_insights"] = [*state.get("retrieved_insights", []), *insights]
+            update["retrieved_support_docs"] = [*state.get("retrieved_support_docs", []), *support_docs]
+        elif intent == "ops_decision":
+            report = await self._after_sales_priority_report(text, state)
+            context["ops_report"] = report
+            update["retrieved_insights"] = [
+                *state.get("retrieved_insights", []),
+                *list(report.get("high_risk_categories", [])),
+            ]
+        elif intent in {"policy", "escalation"}:
+            policy_query = text
+            if intent == "escalation":
+                action_type = str(slots.get("action_type") or task.get("action_type") or "open_support_case")
+                policy_query = f"{text}\n售后动作：{_ACTION_LABELS.get(action_type, action_type)}"
+            sections = await self._search_policy_knowledge(policy_query, state)
+            support_docs = await self._search_support_docs(text, state)
+            context["policy_sections"] = sections
+            context["support_docs"] = support_docs
+            update["retrieved_policy"] = [*state.get("retrieved_policy", []), *sections]
+            update["retrieved_support_docs"] = [*state.get("retrieved_support_docs", []), *support_docs]
+
+        update["current_context"] = context
+        update["trajectory_events"] = [
+            *state.get("trajectory_events", []),
+            _event(
+                "retrieve_context",
+                intent,
+                "completed",
+                {
+                    "task_index": state.get("current_task_index"),
+                    "policy_hits": len(context.get("policy_sections", []))
+                    if isinstance(context.get("policy_sections"), list)
+                    else 0,
+                    "support_hits": len(context.get("support_docs", []))
+                    if isinstance(context.get("support_docs"), list)
+                    else 0,
+                    "insight_hits": len(context.get("insights", []))
+                    if isinstance(context.get("insights"), list)
+                    else 0,
+                },
+            ),
+        ]
+        if intent == "policy":
+            update["trajectory_events"].append(
+                _event(
+                    "search_policy_knowledge",
+                    intent,
+                    "completed",
+                    {
+                        "task_index": state.get("current_task_index"),
+                        "hit_count": len(context.get("policy_sections", []))
+                        if isinstance(context.get("policy_sections"), list)
+                        else 0,
+                    },
+                )
+            )
         return update
 
-    def search_marketplace_insights(self, state: AgentState) -> dict:
-        query: str = state["messages"][-1]["content"]
-        results = self._olist_service.category_insights(query)
-        return {"retrieved_insights": results}
+    async def execute_read_task(self, state: AgentState) -> dict:
+        task = dict(state.get("current_task", {}))
+        intent = str(task.get("intent", "policy"))
+        text = str(state.get("current_task_text") or _latest_user_task_message(state))
+        context = dict(state.get("current_context", {}))
+        answer = ""
 
-    async def generate_qa_answer(self, state: AgentState) -> dict:
-        insights = state.get("retrieved_insights", [])
-        support_docs = state.get("retrieved_support_docs", [])
-        user_message: str = state["messages"][-1]["content"]
-        answer: str = await self._qa_generator.generate(user_message, insights, support_docs)
-        sources = [str(item["name"]) for item in insights] if insights else []
+        if intent == "order_status":
+            if context.get("order_id_error"):
+                answer = str(context["order_id_error"])
+            else:
+                result = context.get("order_status_result")
+                data = dict(result.get("data", {})) if isinstance(result, dict) else {}
+                answer = str(data.get("answer", "订单事实工具没有返回结果。"))
+        elif intent == "qa":
+            answer = await self._qa_generator.generate(
+                text,
+                list(context.get("insights", [])),
+                list(context.get("support_docs", [])),
+            )
+        elif intent == "ops_decision":
+            answer = format_after_sales_report(dict(context.get("ops_report", {})))
+        elif intent == "policy":
+            answer = await self._policy_generator.generate(
+                text,
+                list(context.get("policy_sections", [])),
+                list(context.get("support_docs", [])),
+                completed_context="\n\n".join(state.get("answer_parts", [])),
+            )
+
+        idx = int(state.get("current_task_index", 0))
+        completed = _upsert_task_status(list(state.get("completed_tasks", [])), idx, intent, "completed")
         return {
-            "final_answer": answer,
-            "messages": [*state["messages"], {"role": "assistant", "content": answer}],
-            "retrieved_insights": sources,
+            "completed_tasks": completed,
+            "answer_parts": [
+                *state.get("answer_parts", []),
+                f"[{_INTENT_LABELS.get(intent, intent)}]\n{answer}",
+            ],
+            "trajectory_events": [
+                *state.get("trajectory_events", []),
+                _event(
+                    "execute_read_task",
+                    intent,
+                    "completed",
+                    {"task_index": idx, "answer_chars": len(answer)},
+                ),
+            ],
         }
 
-    def search_policy_knowledge(self, state: AgentState) -> dict:
-        query: str = state["messages"][-1]["content"]
-        hits = self._knowledge_base.search(query, k=3)
-        return {
-            "retrieved_policy": [
-                {
-                    "source": hit.source,
-                    "source_type": hit.source_type,
-                    "section_title": hit.section_title,
-                    "text": hit.text,
-                    "score": hit.score,
-                }
-                for hit in hits
-            ]
-        }
-
-    async def generate_policy_answer(self, state: AgentState) -> dict:
-        policy_sections = state.get("retrieved_policy", [])
-        support_docs = state.get("retrieved_support_docs", [])
-        user_message: str = state["messages"][-1]["content"]
-        answer: str = await self._policy_generator.generate(user_message, policy_sections, support_docs)
-        sources = [str(item["section_title"]) for item in policy_sections]
-        return {
-            "final_answer": answer,
-            "messages": [*state["messages"], {"role": "assistant", "content": answer}],
-            "retrieved_policy": sources,
-        }
-
-    async def check_order_status(self, state: AgentState) -> dict:
-        user_message: str = state["messages"][-1]["content"]
-        answer = await self._answer_order_status(user_message, state)
-        return {
-            "final_answer": answer,
-            "messages": [*state["messages"], {"role": "assistant", "content": answer}],
-        }
-
-    async def prepare_escalation(self, state: AgentState) -> dict:
-        user_message: str = state["messages"][-1]["content"]
-        answer, draft = await self._prepare_escalation_from_text(
-            user_message,
-            self._infer_action_type(user_message),
-            state,
+    async def build_after_sales_case(self, state: AgentState) -> dict:
+        task = dict(state.get("current_task", {}))
+        idx = int(state.get("current_task_index", 0))
+        text = str(state.get("current_task_text") or _latest_user_task_message(state))
+        slots = dict(state.get("current_slots", {}))
+        action_type = str(
+            slots.get("action_type") or task.get("action_type") or self._infer_action_type(text)
         )
+        slot_text = _with_order_context(text, _latest_user_task_message(state))
+        answer, draft = await self._prepare_escalation_from_text(slot_text, action_type, state)
+        completed = list(state.get("completed_tasks", []))
+        after_sales_cases = list(state.get("after_sales_cases", []))
+        events = list(state.get("trajectory_events", []))
+
         if draft is None:
+            completed = _upsert_task_status(completed, idx, "escalation", "failed")
             return {
-                "final_answer": answer,
-                "messages": [*state["messages"], {"role": "assistant", "content": answer}],
+                "completed_tasks": completed,
+                "answer_parts": [*state.get("answer_parts", []), f"[售后升级]\n{answer}"],
+                "trajectory_events": [
+                    *events,
+                    _event("decision_engine", "escalation", "failed", {"task_index": idx}),
+                ],
             }
+
+        draft["task_index"] = idx
+        if isinstance(draft.get("after_sales_case"), dict):
+            after_sales_cases.append(dict(draft["after_sales_case"]))
+        decision = dict(draft.get("decision", {}))
+        verification = dict(draft.get("verification", {}))
+        events.extend(
+            [
+                _event(
+                    "decision_engine",
+                    "escalation",
+                    str(decision.get("outcome", "unknown")),
+                    {
+                        "task_index": idx,
+                        "action_type": action_type,
+                        "risk_level": decision.get("risk_level"),
+                        "requires_human": decision.get("requires_human"),
+                    },
+                ),
+                _event(
+                    "verifier",
+                    "escalation",
+                    str(verification.get("required_next_step", "unknown")),
+                    {"task_index": idx, "flags": verification.get("flags", [])},
+                ),
+            ]
+        )
+
+        if _decision_stops_execution(decision, verification):
+            completed = _upsert_task_status(completed, idx, "escalation", "completed")
+            return {
+                "completed_tasks": completed,
+                "after_sales_cases": after_sales_cases,
+                "answer_parts": [*state.get("answer_parts", []), f"[售后升级]\n{answer}"],
+                "trajectory_events": events,
+            }
+
+        if draft.get("requires_confirmation") is False:
+            execution_answer = await self._execute_escalation_draft(draft, state)
+            completed = _upsert_task_status(completed, idx, "escalation", "completed")
+            answer_parts = [
+                *state.get("answer_parts", []),
+                f"[售后升级]\n{answer}\n\n{execution_answer}",
+            ]
+            return {
+                "completed_tasks": completed,
+                "after_sales_cases": after_sales_cases,
+                "answer_parts": answer_parts,
+                "final_answer": "\n\n".join(answer_parts),
+                "trajectory_events": [
+                    *events,
+                    _event(
+                        "execute_write_action",
+                        "escalation",
+                        "completed",
+                        {"task_index": idx, "action_type": action_type, "auto_execute": True},
+                    ),
+                ],
+            }
+
         created_at = time.time()
         timeout_seconds = _hitl_timeout_seconds()
         pending_side_effect = {
             "type": draft.get("action_type", "open_support_case"),
             "requires_confirmation": True,
             "task_intent": "escalation",
-            "task_index": draft.get("task_index"),
+            "task_index": idx,
             "created_at": created_at,
             "expires_at": created_at + timeout_seconds,
             "timeout_seconds": timeout_seconds,
@@ -302,11 +396,49 @@ class AgentActions:
                 pending_side_effect,
                 timeout_seconds,
             )
+        completed = _upsert_task_status(completed, idx, "escalation", "awaiting_confirmation")
+        answer_parts = [*state.get("answer_parts", []), f"[售后升级]\n{answer}"]
+        final_answer = "\n\n".join(answer_parts)
         return {
+            "completed_tasks": completed,
+            "after_sales_cases": after_sales_cases,
+            "answer_parts": answer_parts,
+            "final_answer": final_answer,
+            "messages": [*state["messages"], {"role": "assistant", "content": final_answer}],
             "escalation_draft": draft,
             "pending_side_effect": pending_side_effect,
-            "final_answer": answer,
-            "messages": [*state["messages"], {"role": "assistant", "content": answer}],
+            "trajectory_events": [
+                *events,
+                _event("hitl_gate", "escalation", "awaiting_confirmation", {"task_index": idx}),
+            ],
+        }
+
+    async def finalize_answer(self, state: AgentState) -> dict:
+        answers = list(state.get("answer_parts", []))
+        final_answer = (
+            "\n\n".join(answers)
+            if answers
+            else "没有识别到可执行的电商客服任务，请补充订单号或问题。"
+        )
+        retrieved_policy = list(state.get("retrieved_policy", []))
+        retrieved_insights = list(state.get("retrieved_insights", []))
+        retrieved_support_docs = list(state.get("retrieved_support_docs", []))
+        return {
+            "final_answer": final_answer,
+            "messages": [*state["messages"], {"role": "assistant", "content": final_answer}],
+            "artifacts": {
+                "policy_sources": [str(item["section_title"]) for item in retrieved_policy],
+                "insight_sources": [
+                    str(item.get("name") or item.get("category") or "")
+                    for item in retrieved_insights
+                    if item.get("name") or item.get("category")
+                ],
+                "support_sources": [str(item["doc_id"]) for item in retrieved_support_docs],
+            },
+            "trajectory_events": [
+                *state.get("trajectory_events", []),
+                _event("finalize_answer", "workflow", "completed", {"answer_parts": len(answers)}),
+            ],
         }
 
     async def _answer_order_status(self, user_message: str, state: AgentState) -> str:
@@ -359,7 +491,6 @@ class AgentActions:
         if draft is None:
             return "没有找到该订单，无法生成升级处理草稿。", None
         draft["action_type"] = action_type
-        draft["requires_confirmation"] = True
         if case_result.ok:
             after_sales_case = case_result.data.get("case")
             decision = dict(case_result.data.get("decision", {}))
@@ -374,6 +505,7 @@ class AgentActions:
         else:
             decision = {}
             verification = {}
+        draft["requires_confirmation"] = str(verification.get("required_next_step", "hitl")) == "hitl"
 
         if _decision_stops_execution(decision, verification):
             draft["requires_confirmation"] = False
@@ -390,9 +522,12 @@ class AgentActions:
             order_id,
             action_type,
             draft,
-            requires_confirmation=True,
+            requires_confirmation=bool(draft.get("requires_confirmation")),
         )
-        answer = f"我准备为订单 {order_id} 执行：{action_label}。\n\n{decision_block}"
+        if draft.get("requires_confirmation"):
+            answer = f"我准备为订单 {order_id} 执行：{action_label}。\n\n{decision_block}"
+        else:
+            answer = f"订单 {order_id} 的{action_label}通过低风险自动执行门禁。\n\n{decision_block}"
         return answer, draft
 
     def await_confirmation(self, state: AgentState) -> dict:
@@ -419,24 +554,7 @@ class AgentActions:
         pending = state.get("pending_side_effect", {})
         task_index = _maybe_int(pending.get("task_index") or draft.get("task_index"))
         if confirmed and draft:
-            action_type = str(draft.get("action_type", "open_support_case"))
-            tool_result = await self._tool_manager.call(
-                "execute_side_effect",
-                {
-                    "action_type": action_type,
-                    "order_id": str(draft["order_id"]),
-                    "message_text": str(draft["message_text"]),
-                },
-                self._tool_context(state),
-            )
-            result = (
-                tool_result.data["result"]
-                if tool_result.ok
-                else {"result_id": "FAILED", "duplicate": False}
-            )
-            action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
-            duplicate_hint = "（重复请求，已返回已有结果）" if result["duplicate"] else ""
-            answer = f"已执行{action_label}：{result['result_id']}。{duplicate_hint}"
+            answer = await self._execute_escalation_draft(draft, state)
             status = "completed"
         elif confirmed:
             answer = "没有找到可提交的升级草稿，请重新发起。"
@@ -458,6 +576,7 @@ class AgentActions:
             "final_answer": answer,
             "messages": [*state["messages"], {"role": "assistant", "content": answer}],
             "completed_tasks": completed,
+            "answer_parts": [*state.get("answer_parts", []), answer],
             "pending_side_effect": {},
             "escalation_draft": {},
             "trajectory_events": [
@@ -474,6 +593,25 @@ class AgentActions:
                 ),
             ],
         }
+
+    async def _execute_escalation_draft(self, draft: dict[str, object], state: AgentState) -> str:
+        action_type = str(draft.get("action_type", "open_support_case"))
+        tool_result = await self._tool_manager.call(
+            "execute_side_effect",
+            {
+                "action_type": action_type,
+                "order_id": str(draft["order_id"]),
+                "message_text": str(draft["message_text"]),
+            },
+            self._tool_context(state),
+        )
+        action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
+        if not tool_result.ok:
+            reason = tool_result.error_message or tool_result.error_code or "unknown error"
+            return f"未执行{action_label}：{reason}。"
+        result = tool_result.data["result"]
+        duplicate_hint = "（重复请求，已返回已有结果）" if result["duplicate"] else ""
+        return f"已执行{action_label}：{result['result_id']}。{duplicate_hint}"
 
     @staticmethod
     def _infer_action_type(text: str) -> str:
@@ -505,11 +643,15 @@ class AgentActions:
         result = await self._tool_manager.call(
             "generate_after_sales_priority_report",
             {"query": query},
-            self._tool_context(state, role="ops_manager"),
+            self._tool_context(state),
         )
         if result.ok:
             return dict(result.data.get("report", {}))
-        return {"high_risk_categories": [], "priority_orders": []}
+        return {
+            "summary": f"权限不足或运营报表工具不可用：{result.error_message or result.error_code}",
+            "high_risk_categories": [],
+            "priority_orders": [],
+        }
 
     async def _search_policy_knowledge(
         self,
@@ -538,8 +680,14 @@ class AgentActions:
         return list(result.data.get("docs", [])) if result.ok else []
 
     @staticmethod
-    def _tool_context(state: AgentState, role: str = "support_agent") -> ToolCallContext:
-        return ToolCallContext(session_id=state.get("session_id", "unknown"), role=role)
+    def _tool_context(state: AgentState, role: str | None = None) -> ToolCallContext:
+        return ToolCallContext(
+            session_id=state.get("session_id", "unknown"),
+            tenant_id=state.get("tenant_id", "olist-demo"),
+            user_id=state.get("user_id", "demo-user"),
+            role=role or state.get("role", "support_agent"),
+            auth_scopes=list(state.get("auth_scopes", [])),
+        )
 
 
 def _decision_stops_execution(decision: dict[str, object], verification: dict[str, object]) -> bool:
@@ -587,6 +735,13 @@ def _format_after_sales_decision_answer(
                 "是否确认执行？(yes/no)",
             ]
         )
+    elif next_step == "execute":
+        lines.extend(
+            [
+                "",
+                "该动作满足低风险自动执行门禁，系统会继续调用企业写工具并记录审计日志。",
+            ]
+        )
     else:
         lines.extend(
             [
@@ -604,6 +759,14 @@ _ACTION_LABELS = {
     "change_address": "提交改地址申请",
     "invoice_request": "提交发票申请",
     "complaint_escalation": "提交投诉升级工单",
+}
+
+_INTENT_LABELS = {
+    "order_status": "订单查询",
+    "qa": "运营分析",
+    "ops_decision": "售后运营决策",
+    "policy": "政策问答",
+    "escalation": "售后处理",
 }
 
 

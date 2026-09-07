@@ -14,54 +14,74 @@ class AgentGraph:
     def build(self, checkpointer: BaseCheckpointSaver) -> StateGraph:
         """Graph topology:
 
-        plan_tasks -> execute_task_plan -> END
-        execute_task_plan -> await_confirmation -> finalize_escalation
-        finalize_escalation -> execute_task_plan when later tasks remain
+        plan_tasks -> select_next_task -> extract_slots -> retrieve_context
+        retrieve_context -> execute_read_task for read-only tasks
+        retrieve_context -> build_after_sales_case for write-intent tasks
+        build_after_sales_case -> await_confirmation for high-risk writes
+        build_after_sales_case -> select_next_task after reject/clarify/auto-execute
+        finalize_escalation -> select_next_task after HITL resume
         """
         graph: StateGraph = StateGraph(AgentState)
 
         graph.add_node("plan_tasks", self._actions.plan_tasks)
-        graph.add_node("execute_task_plan", self._actions.execute_task_plan)
+        graph.add_node("select_next_task", self._actions.select_next_task)
+        graph.add_node("extract_slots", self._actions.extract_slots)
+        graph.add_node("retrieve_context", self._actions.retrieve_context)
+        graph.add_node("execute_read_task", self._actions.execute_read_task)
+        graph.add_node("build_after_sales_case", self._actions.build_after_sales_case)
         graph.add_node("await_confirmation", self._actions.await_confirmation)
         graph.add_node("finalize_escalation", self._actions.finalize_escalation)
+        graph.add_node("finalize_answer", self._actions.finalize_answer)
 
         graph.set_entry_point("plan_tasks")
-        graph.add_edge("plan_tasks", "execute_task_plan")
+        graph.add_edge("plan_tasks", "select_next_task")
         graph.add_conditional_edges(
-            "execute_task_plan",
-            self._route_after_execution,
+            "select_next_task",
+            self._route_after_select,
+            {
+                "run": "extract_slots",
+                "finalize": "finalize_answer",
+            },
+        )
+        graph.add_edge("extract_slots", "retrieve_context")
+        graph.add_conditional_edges(
+            "retrieve_context",
+            self._route_after_context,
+            {
+                "after_sales": "build_after_sales_case",
+                "read": "execute_read_task",
+            },
+        )
+        graph.add_edge("execute_read_task", "select_next_task")
+        graph.add_conditional_edges(
+            "build_after_sales_case",
+            self._route_after_after_sales,
             {
                 "await_confirmation": "await_confirmation",
-                "end": END,
+                "continue": "select_next_task",
             },
         )
         graph.add_edge("await_confirmation", "finalize_escalation")
-        graph.add_conditional_edges(
-            "finalize_escalation",
-            self._route_after_finalize,
-            {
-                "continue": "execute_task_plan",
-                "end": END,
-            },
-        )
+        graph.add_edge("finalize_escalation", "select_next_task")
+        graph.add_edge("finalize_answer", END)
 
         return graph.compile(checkpointer=checkpointer)
 
     @staticmethod
-    def _route_after_execution(state: AgentState) -> str:
-        if state.get("pending_side_effect", {}).get("requires_confirmation"):
-            return "await_confirmation"
-        return "end"
+    def _route_after_select(state: AgentState) -> str:
+        if state.get("workflow_complete"):
+            return "finalize"
+        return "run"
 
     @staticmethod
-    def _route_after_finalize(state: AgentState) -> str:
-        terminal = {"completed", "canceled", "timeout_canceled", "failed", "blocked"}
-        completed = {
-            int(task["index"])
-            for task in state.get("completed_tasks", [])
-            if task.get("status") in terminal and isinstance(task.get("index"), int)
-        }
-        for index, _task in enumerate(state.get("task_plan", [])):
-            if index not in completed:
-                return "continue"
-        return "end"
+    def _route_after_context(state: AgentState) -> str:
+        task = state.get("current_task", {})
+        if task.get("side_effect") or task.get("intent") == "escalation":
+            return "after_sales"
+        return "read"
+
+    @staticmethod
+    def _route_after_after_sales(state: AgentState) -> str:
+        if state.get("pending_side_effect", {}).get("requires_confirmation"):
+            return "await_confirmation"
+        return "continue"

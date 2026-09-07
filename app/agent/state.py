@@ -9,10 +9,21 @@ class AgentState(TypedDict):
     """
 
     session_id: str
+    tenant_id: NotRequired[str]
+    user_id: NotRequired[str]
+    role: NotRequired[str]
+    auth_scopes: NotRequired[list[str]]
     messages: list[dict[str, str]]
     route_intent: str
     task_plan: list[dict[str, object]]
     completed_tasks: list[dict[str, object]]
+    current_task_index: NotRequired[int]
+    current_task: NotRequired[dict[str, object]]
+    current_task_text: NotRequired[str]
+    current_slots: NotRequired[dict[str, object]]
+    current_context: NotRequired[dict[str, object]]
+    answer_parts: NotRequired[list[str]]
+    workflow_complete: NotRequired[bool]
     trajectory_events: list[dict[str, object]]
     artifacts: dict[str, object]
     retrieved_insights: list[dict[str, object]]

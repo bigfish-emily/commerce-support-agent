@@ -1,40 +1,43 @@
 flowchart TD
-    Start[Receive after-sales action_type] --> Split{Match action_type}
+    Start[接收售后 action_type + order facts + policy hits] --> Signals[提取 risk_signals<br/>是否发货/送达/取消/高金额/延迟/低分/疑似滥用/已退款等]
+    Signals --> Split{action_type}
 
-    Split -- cancel_order --> CancelCheck{order.status}
-    CancelCheck -- created / approved / invoiced --> CancelApprove[Allow cancellation draft; risk depends on amount]
-    CancelCheck -- canceled --> CancelReject1[Reject: already canceled]
-    CancelCheck -- shipped / delivered --> CancelReject2[Reject: shipped or delivered]
+    Split -- cancel_order --> CancelCheck{订单状态}
+    CancelCheck -- created/approved/invoiced 且低额无风险 --> CancelAuto[approve + execute<br/>低风险自动取消申请]
+    CancelCheck -- created/approved/invoiced 但金额高/证据复杂 --> CancelHitl[needs_human_review + HITL]
+    CancelCheck -- canceled --> CancelReject1[reject: 已取消]
+    CancelCheck -- shipped/delivered --> CancelReject2[reject: 已发货或已送达]
 
-    Split -- change_address --> AddrCheck{order.status}
-    AddrCheck -- created / approved / invoiced --> AddrApprove[Allow address-change draft; risk medium]
-    AddrCheck -- shipped / delivered / canceled --> AddrReject[Reject: logistics locked or order canceled]
+    Split -- change_address --> AddrCheck{物流是否锁定}
+    AddrCheck -- 发货前且低额无风险 --> AddrAuto[approve + execute<br/>低风险改址申请]
+    AddrCheck -- 发货前但证据复杂 --> AddrHitl[needs_human_review + HITL]
+    AddrCheck -- shipped/delivered/canceled --> AddrReject[reject: 物流锁定或订单不可改]
 
-    Split -- refund_request --> RefundCheck{Order facts and risk features}
-    RefundCheck -- status is canceled --> RefundApprove1[Allow refund review case]
-    RefundCheck -- delay_days >= 7 --> RefundApprove2[Allow refund review: delivery delay]
-    RefundCheck -- review_score <= 2 --> RefundTicket[Allow support case first: investigate low review]
-    RefundCheck -- otherwise --> RefundClarify[Clarify: insufficient evidence]
+    Split -- refund_request --> RefundCheck{退款事实}
+    RefundCheck -- canceled/delay>=7/low_review<=2 --> RefundHitl[needs_human_review + HITL<br/>可建退款核查申请]
+    RefundCheck -- 事实不足 --> RefundClarify[ask_clarification<br/>补充原因/异常证据]
 
-    Split -- invoice_request --> InvoiceApprove[Allow invoice request; ask for tax profile and email]
-    Split -- complaint_escalation --> ComplaintApprove[Allow complaint escalation; high amount raises risk]
-    Split -- other --> SupportApprove[Allow regular support follow-up case]
+    Split -- invoice_request --> InvoiceHitl[needs_human_review<br/>补齐抬头/税号/邮箱]
+    Split -- complaint_escalation --> ComplaintHitl[needs_human_review + HITL<br/>投诉工单不承诺补偿结果]
+    Split -- open_support_case --> SupportCheck{是否含延迟/低分/补偿/投诉/高额}
+    SupportCheck -- 无高风险信号且命中政策 --> SupportAuto[approve + execute<br/>低风险普通跟进工单]
+    SupportCheck -- 有风险信号 --> SupportHitl[needs_human_review + HITL]
 
-    CancelApprove --> Verify[Verifier]
+    CancelAuto --> Verify[Verifier]
+    CancelHitl --> Verify
     CancelReject1 --> Verify
     CancelReject2 --> Verify
-    AddrApprove --> Verify
+    AddrAuto --> Verify
+    AddrHitl --> Verify
     AddrReject --> Verify
-    RefundApprove1 --> Verify
-    RefundApprove2 --> Verify
-    RefundTicket --> Verify
+    RefundHitl --> Verify
     RefundClarify --> Verify
-    InvoiceApprove --> Verify
-    ComplaintApprove --> Verify
-    SupportApprove --> Verify
-
+    InvoiceHitl --> Verify
+    ComplaintHitl --> Verify
+    SupportAuto --> Verify
+    SupportHitl --> Verify
     Verify --> Next{required_next_step}
-    Next -- hitl --> HITL[Pause before write action]
-    Next -- stop --> Stop[Return safe rejection]
-    Next -- clarify --> Clarify[Ask for missing evidence]
-    Next -- execute --> Execute[Execute low-risk action]
+    Next -- execute --> Exec[ToolCallManager 执行写工具]
+    Next -- hitl --> HITL[interrupt 等人工确认]
+    Next -- clarify --> Clarify[向用户要补充信息]
+    Next -- stop --> Stop[安全拒绝]
