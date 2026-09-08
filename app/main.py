@@ -13,13 +13,16 @@ from langgraph.graph import StateGraph
 from langgraph.types import Command
 
 from app.agent.state import AgentState
-from app.config.di import agent_graph_builder, guardrail, runtime_status, runtime_store
+from app.config.di import agent_graph_builder, case_service, guardrail, runtime_status, runtime_store
 from app.logger import format_state, setup_logger
 from app.models import (
     CaseMetricsResponse,
     ChatRequest,
     ChatResponse,
+    CustomerAppealRequest,
+    CustomerCaseResponse,
     ReviewActionRequest,
+    ReviewCaseListResponse,
     ReviewSessionResponse,
     RuntimeStatusResponse,
     TraceReplayResponse,
@@ -307,6 +310,65 @@ async def customer_chat(request: ChatRequest) -> ChatResponse:
     return await chat(customer_request)
 
 
+@app.get("/customer/cases/{case_id}", response_model=CustomerCaseResponse)
+async def get_customer_case(
+    case_id: str,
+    user_id: str = Query(default="demo-customer"),
+) -> CustomerCaseResponse:
+    """Return a customer-safe status view for an after-sales case."""
+    record = case_service.get(case_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="case_not_found")
+    if str(record.get("user_id") or "demo-customer") != user_id:
+        raise HTTPException(status_code=403, detail="case_owner_required")
+    return _customer_case_response(record)
+
+
+@app.post("/customer/cases/{case_id}/appeal", response_model=CustomerCaseResponse)
+async def appeal_customer_case(
+    case_id: str,
+    request: CustomerAppealRequest,
+) -> CustomerCaseResponse:
+    """Reopen a rejected or timed-out case for staff review with new customer evidence."""
+    record = case_service.appeal_case(case_id, request.user_id, request.reason)
+    if record is None:
+        raise HTTPException(status_code=404, detail="case_not_found_or_not_owned")
+    record_trace(
+        session_id=str(record.get("session_id") or case_id),
+        user_message=f"[customer_appeal:{case_id}] {request.reason}",
+        result={
+            "route_intent": "appeal",
+            "final_answer": "customer appeal submitted",
+            "trajectory_events": [
+                {
+                    "node": "customer_case_appeal",
+                    "intent": "appeal",
+                    "status": str(record.get("status")),
+                    "details": {
+                        "case_id": case_id,
+                        "appeal_count": int(record.get("appeal_count") or 0),
+                    },
+                }
+            ],
+        },
+        latency_ms=0,
+        status="customer_case_appeal",
+    )
+    return _customer_case_response(record)
+
+
+@app.get("/review/cases", response_model=ReviewCaseListResponse)
+async def list_review_cases(
+    limit: int = Query(default=50, ge=1, le=200),
+    role: str = Query(default="after_sales_operator"),
+    auth_scopes: list[str] | None = Query(default=None),
+    x_review_token: str | None = Header(default=None, alias="X-Review-Token"),
+) -> ReviewCaseListResponse:
+    """Return pending and appealed after-sales cases for asynchronous staff handling."""
+    _authorize_review(role, auth_scopes, x_review_token)
+    return ReviewCaseListResponse(cases=case_service.list_pending(limit))
+
+
 @app.get("/review/sessions/{session_id}", response_model=ReviewSessionResponse)
 async def get_review_session(
     session_id: str,
@@ -370,6 +432,21 @@ def _response_sources(result: dict) -> list[str]:
     if policies and isinstance(policies[0], dict):
         return [str(item.get("section_title", "")) for item in policies]
     return [str(source) for source in (insights or policies)]
+
+
+def _customer_case_response(record: dict) -> CustomerCaseResponse:
+    order_id = str(record.get("order_id", ""))
+    return CustomerCaseResponse(
+        case_id=str(record.get("case_id", "")),
+        status=str(record.get("status", "")),
+        action_type=str(record.get("action_type", "")),
+        order_id=f"{order_id[:8]}...{order_id[-4:]}" if len(order_id) >= 12 else order_id,
+        message_text=str(record.get("message_text", ""))[:800],
+        created_at=str(record.get("created_at") or ""),
+        updated_at=record.get("updated_at"),
+        expires_at=record.get("expires_at"),
+        appeal_count=int(record.get("appeal_count") or 0),
+    )
 
 
 def _resolve_auth_scopes(role: str, provided_scopes: list[str] | None) -> list[str]:
@@ -544,8 +621,13 @@ async def _resume_review_session(
     if await _pending_confirmation_expired(session_id, snapshot.values):
         result = await agent.ainvoke(Command(resume="__hitl_timeout__"), config)
         status = "hitl_timeout_canceled"
+        case_service.mark_review_result(session_id, "timeout_canceled", reviewer_id="system_timeout")
     else:
         result = await agent.ainvoke(Command(resume=resume_value), config)
+        if status == "review_approved":
+            case_service.mark_review_result(session_id, "executed", reviewer_id=reviewer_id)
+        elif status == "review_rejected":
+            case_service.mark_review_result(session_id, "rejected", reviewer_id=reviewer_id)
     record_trace(
         session_id=session_id,
         user_message=f"[staff_review:{status}:{reviewer_id}]",

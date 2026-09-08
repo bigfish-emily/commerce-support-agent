@@ -204,11 +204,15 @@ class InMemoryCaseService:
         idempotency_key = _idempotency_key(action_type, order_id, message_text)
         if idempotency_key in self._idempotency_index:
             case_id = self._idempotency_index[idempotency_key]
+            record = self._cases[case_id]
+            was_executed = record.get("status") == "executed"
+            if not was_executed:
+                record["status"] = "executed"
             return {
                 "result_id": case_id,
-                "duplicate": True,
+                "duplicate": was_executed,
                 "idempotency_key": idempotency_key,
-                "record": self._cases[case_id],
+                "record": record,
             }
 
         digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
@@ -219,7 +223,7 @@ class InMemoryCaseService:
             "action_type": action_type,
             "order_id": order_id,
             "message_text": message_text,
-            "status": "opened",
+            "status": "executed",
             "idempotency_key": idempotency_key,
         }
         return {
@@ -236,6 +240,79 @@ class InMemoryCaseService:
 
     def get(self, case_id: str) -> dict | None:
         return self._cases.get(case_id)
+
+    def get_by_session(self, session_id: str) -> dict | None:
+        for record in self._cases.values():
+            if record.get("session_id") == session_id:
+                return record
+        return None
+
+    def submit_for_review(
+        self,
+        *,
+        action_type: str,
+        order_id: str,
+        message_text: str,
+        session_id: str,
+        user_id: str,
+        expires_at: float | None,
+    ) -> dict[str, object]:
+        idempotency_key = _idempotency_key(action_type, order_id, message_text)
+        if idempotency_key in self._idempotency_index:
+            case_id = self._idempotency_index[idempotency_key]
+            return {
+                "result_id": case_id,
+                "duplicate": True,
+                "idempotency_key": idempotency_key,
+                "record": self._cases[case_id],
+            }
+        digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
+        case_id = f"{_case_prefix(action_type)}-{digest}"
+        self._idempotency_index[idempotency_key] = case_id
+        self._cases[case_id] = {
+            "case_id": case_id,
+            "idempotency_key": idempotency_key,
+            "action_type": action_type,
+            "order_id": order_id,
+            "message_text": message_text,
+            "status": "pending_review",
+            "session_id": session_id,
+            "user_id": user_id,
+            "expires_at": expires_at,
+            "appeal_count": 0,
+        }
+        return {
+            "result_id": case_id,
+            "duplicate": False,
+            "idempotency_key": idempotency_key,
+            "record": self._cases[case_id],
+        }
+
+    def mark_review_result(self, session_id: str, status: str, reviewer_id: str = "") -> dict | None:
+        record = self.get_by_session(session_id)
+        if record is None:
+            return None
+        record["status"] = status
+        record["reviewer_id"] = reviewer_id
+        return record
+
+    def appeal_case(self, case_id: str, user_id: str, reason: str) -> dict | None:
+        record = self._cases.get(case_id)
+        if record is None or record.get("user_id") != user_id:
+            return None
+        if record.get("status") not in {"rejected", "timeout_canceled"}:
+            return record
+        record["status"] = "appealed_pending_review"
+        record["appeal_reason"] = reason
+        record["appeal_count"] = int(record.get("appeal_count") or 0) + 1
+        return record
+
+    def list_pending(self, limit: int = 50) -> list[dict]:
+        return [
+            dict(record)
+            for record in self._cases.values()
+            if record.get("status") in {"pending_review", "appealed_pending_review"}
+        ][:limit]
 
 
 class SQLiteCaseService:
@@ -264,9 +341,24 @@ class SQLiteCaseService:
             ).fetchone()
             if existing:
                 record = dict(existing)
+                if record["status"] != "executed":
+                    conn.execute(
+                        """
+                        UPDATE cases
+                        SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                        WHERE case_id = ?
+                        """,
+                        ("executed", record["case_id"]),
+                    )
+                    record = dict(
+                        conn.execute(
+                            "SELECT * FROM cases WHERE case_id = ?",
+                            (record["case_id"],),
+                        ).fetchone()
+                    )
                 return {
                     "result_id": record["case_id"],
-                    "duplicate": True,
+                    "duplicate": existing["status"] == "executed",
                     "idempotency_key": idempotency_key,
                     "record": record,
                 }
@@ -281,7 +373,7 @@ class SQLiteCaseService:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 """,
-                (case_id, idempotency_key, action_type, order_id, message_text, "opened"),
+                (case_id, idempotency_key, action_type, order_id, message_text, "executed"),
             )
             record = dict(
                 conn.execute(
@@ -306,6 +398,138 @@ class SQLiteCaseService:
             row = conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
             return dict(row) if row else None
 
+    def get_by_session(self, session_id: str) -> dict | None:
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM cases WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def submit_for_review(
+        self,
+        *,
+        action_type: str,
+        order_id: str,
+        message_text: str,
+        session_id: str,
+        user_id: str,
+        expires_at: float | None,
+    ) -> dict[str, object]:
+        idempotency_key = _idempotency_key(action_type, order_id, message_text)
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            existing = conn.execute(
+                "SELECT * FROM cases WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing:
+                record = dict(existing)
+                return {
+                    "result_id": record["case_id"],
+                    "duplicate": True,
+                    "idempotency_key": idempotency_key,
+                    "record": record,
+                }
+
+            digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
+            case_id = f"{_case_prefix(action_type)}-{digest}"
+            conn.execute(
+                """
+                INSERT INTO cases (
+                    case_id, idempotency_key, action_type, order_id, message_text,
+                    status, created_at, updated_at, session_id, user_id, expires_at, appeal_count
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?, ?,
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    ?, ?, ?, 0
+                )
+                """,
+                (
+                    case_id,
+                    idempotency_key,
+                    action_type,
+                    order_id,
+                    message_text,
+                    "pending_review",
+                    session_id,
+                    user_id,
+                    expires_at,
+                ),
+            )
+            record = dict(conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+        return {
+            "result_id": case_id,
+            "duplicate": False,
+            "idempotency_key": idempotency_key,
+            "record": record,
+        }
+
+    def mark_review_result(self, session_id: str, status: str, reviewer_id: str = "") -> dict | None:
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT case_id FROM cases WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = ?, reviewer_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE case_id = ?
+                """,
+                (status, reviewer_id, row["case_id"]),
+            )
+            updated = conn.execute(
+                "SELECT * FROM cases WHERE case_id = ?",
+                (row["case_id"],),
+            ).fetchone()
+            return dict(updated) if updated else None
+
+    def appeal_case(self, case_id: str, user_id: str, reason: str) -> dict | None:
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM cases WHERE case_id = ?",
+                (case_id,),
+            ).fetchone()
+            if row is None or row["user_id"] != user_id:
+                return None
+            if row["status"] not in {"rejected", "timeout_canceled"}:
+                return dict(row)
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = 'appealed_pending_review',
+                    appeal_reason = ?,
+                    appeal_count = COALESCE(appeal_count, 0) + 1,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE case_id = ?
+                """,
+                (reason, case_id),
+            )
+            updated = conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            return dict(updated) if updated else None
+
+    def list_pending(self, limit: int = 50) -> list[dict]:
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT * FROM cases
+                WHERE status IN ('pending_review', 'appealed_pending_review')
+                ORDER BY updated_at ASC, created_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def _ensure_schema(self) -> None:
         with sqlite3.connect(self.path) as conn:
             conn.execute(
@@ -321,6 +545,19 @@ class SQLiteCaseService:
                 )
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(cases)").fetchall()}
+            additions = {
+                "updated_at": "TEXT",
+                "session_id": "TEXT",
+                "user_id": "TEXT",
+                "reviewer_id": "TEXT",
+                "expires_at": "REAL",
+                "appeal_count": "INTEGER DEFAULT 0",
+                "appeal_reason": "TEXT",
+            }
+            for column, ddl in additions.items():
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE cases ADD COLUMN {column} {ddl}")
 
 
 def _idempotency_key(action_type: str, order_id: str, message_text: str) -> str:

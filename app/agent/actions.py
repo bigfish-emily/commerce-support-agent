@@ -460,11 +460,23 @@ class AgentActions:
 
         created_at = time.time()
         timeout_seconds = _hitl_timeout_seconds()
+        review_case = self._case_service.submit_for_review(
+            action_type=str(draft.get("action_type", "open_support_case")),
+            order_id=str(draft.get("order_id", "")),
+            message_text=str(draft.get("message_text", "")),
+            session_id=str(state.get("session_id", "unknown")),
+            user_id=str(state.get("user_id", "demo-user")),
+            expires_at=created_at + timeout_seconds,
+        )
+        review_case_id = str(review_case.get("result_id", ""))
+        draft["review_case_id"] = review_case_id
+        draft["case_status"] = dict(review_case.get("record", {})).get("status", "pending_review")
         pending_side_effect = {
             "type": draft.get("action_type", "open_support_case"),
             "requires_confirmation": True,
             "task_intent": "escalation",
             "task_index": idx,
+            "review_case_id": review_case_id,
             "created_at": created_at,
             "expires_at": created_at + timeout_seconds,
             "timeout_seconds": timeout_seconds,
@@ -492,10 +504,14 @@ class AgentActions:
             "trajectory_events": [
                 *events,
                 _event(
-                    "hitl_gate",
-                    "escalation",
-                    "awaiting_confirmation",
-                    {"task_index": idx, "tool": "prepare_side_effect"},
+                        "hitl_gate",
+                        "escalation",
+                        "awaiting_confirmation",
+                    {
+                        "task_index": idx,
+                        "tool": "prepare_side_effect",
+                        "review_case_id": review_case_id,
+                    },
                 ),
             ],
         }
@@ -658,14 +674,32 @@ class AgentActions:
                 auth_scopes_override=["after_sales:write"] if reviewer_override else None,
             )
             status = "completed"
+            if reviewer_override and hasattr(self._case_service, "mark_review_result"):
+                self._case_service.mark_review_result(
+                    str(state.get("session_id", "unknown")),
+                    "executed",
+                    reviewer_id=reviewer_override,
+                )
         elif confirmed:
             answer = "没有找到可提交的升级草稿，请重新发起。"
             status = "failed"
         elif normalized_response == "__hitl_timeout__":
-            answer = "待确认的售后动作已超时自动取消；如果仍需处理，请重新发起任务。"
+            if hasattr(self._case_service, "mark_review_result"):
+                self._case_service.mark_review_result(
+                    str(state.get("session_id", "unknown")),
+                    "timeout_canceled",
+                    reviewer_id="system_timeout",
+                )
+            answer = "待审核售后申请已超时自动取消；如果仍需处理，可以在原 case 上发起二次申诉。"
             status = "timeout_canceled"
         else:
-            answer = "已取消创建售后升级 case。"
+            if hasattr(self._case_service, "mark_review_result"):
+                self._case_service.mark_review_result(
+                    str(state.get("session_id", "unknown")),
+                    "rejected",
+                    reviewer_id="after_sales_operator",
+                )
+            answer = "售后申请已被审核拒绝；如果你有新的凭证或理由，可以在原 case 上发起二次申诉。"
             status = "canceled"
 
         completed = list(state.get("completed_tasks", []))

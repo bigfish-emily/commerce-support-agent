@@ -67,3 +67,24 @@ class ReviewActionRequest(BaseModel):
     tenant_id: str = Field(default="olist-demo", min_length=1, max_length=64)
     role: str = Field(default="after_sales_operator", min_length=1, max_length=64)
     auth_scopes: list[str] | None = None
+
+
+class CustomerCaseResponse(BaseModel):
+    case_id: str
+    status: str
+    action_type: str
+    order_id: str
+    message_text: str
+    created_at: str
+    updated_at: str | None = None
+    expires_at: float | None = None
+    appeal_count: int = 0
+
+
+class CustomerAppealRequest(BaseModel):
+    user_id: str = Field(default="demo-customer", min_length=1, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class ReviewCaseListResponse(BaseModel):
+    cases: list[dict]

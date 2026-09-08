@@ -2,11 +2,11 @@
 
 An e-commerce self-service after-sales agent with a staff review console for high-risk actions. It combines governed tool execution, workflow-constrained RAG, HITL approval, audit traces, and tau-bench retail evaluation.
 
-The project focuses on a concrete business workflow: a customer asks about an order, refund, cancellation, address change, invoice, or complaint. The agent answers read-only questions directly, creates an after-sales case when a business action is needed, and pauses risky write actions for staff approval before calling enterprise tools. The UI is split into a customer self-service app and a staff review console; the backend remains a FastAPI API service.
+The project focuses on a concrete business workflow: a customer asks about an order, refund, cancellation, address change, invoice, or complaint. The agent answers read-only questions directly, creates an after-sales case when a business action is needed, and turns risky write actions into asynchronous staff-review work. The UI is split into a customer self-service app and a staff review console; the backend remains a FastAPI API service.
 
 ## Highlights
 
-- **Customer self-service + staff review**: order status lookup, policy Q&A, after-sales case creation, low-risk auto-handling, and HITL review for refunds, cancellations, address changes, invoices, and complaints.
+- **Customer self-service + staff review**: order status lookup, policy Q&A, after-sales case creation, low-risk auto-handling, review queues, case status tracking, customer appeals, and HITL review for refunds, cancellations, address changes, invoices, and complaints.
 - **LangGraph execution graph**: `plan_tasks -> select_next_task -> extract_slots -> retrieve_context -> execute_read_task/build_after_sales_case -> await_confirmation/finalize_escalation -> finalize_answer`.
 - **Dialogue state tracking**: durable `active_order_id`, filled/missing slots, current intent, turn count, retrieved evidence counts, decision outcome, and handoff reasons.
 - **Governed tool calls**: Pydantic schema validation, role/scope checks, customer order ownership guard, tenant-aware cache, async execution, timeout/retry/backoff, fallback, redacted audit logs, Redis side-effect locks, and SQLite idempotency records.
@@ -145,6 +145,7 @@ docker compose up --build
 Staff review endpoints:
 
 ```text
+GET  /review/cases
 GET  /review/sessions/{session_id}
 POST /review/sessions/{session_id}/approve
 POST /review/sessions/{session_id}/reject
@@ -153,6 +154,13 @@ POST /review/sessions/{session_id}/reject
 Local review-console requests require `X-Review-Token: local-review-demo` by default.
 Set `REVIEW_API_TOKEN` to override it.
 Session trace replay uses the same token because it can contain redacted case-level debugging data.
+
+Customer case endpoints:
+
+```text
+GET  /customer/cases/{case_id}
+POST /customer/cases/{case_id}/appeal
+```
 
 ## Repository Layout
 

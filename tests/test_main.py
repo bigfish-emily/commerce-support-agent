@@ -361,6 +361,53 @@ async def test_customer_yes_cannot_approve_pending_write_action(client: AsyncCli
 
 
 @pytest.mark.anyio
+async def test_review_queue_reject_and_customer_appeal_flow(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("escalation"), _mock_task():
+        created = await client.post(
+            "/customer/chat",
+            json={
+                "message": f"给订单 {ORDER_ID} 申请退款",
+                "session_id": "customer-appeal-s1",
+            },
+        )
+    assert created.status_code == 200
+
+    queue = await client.get("/review/cases", headers=REVIEW_HEADERS)
+    assert queue.status_code == 200
+    cases = queue.json()["cases"]
+    assert cases
+    case_id = cases[0]["case_id"]
+    assert cases[0]["status"] == "pending_review"
+
+    rejected = await client.post(
+        "/review/sessions/customer-appeal-s1/reject",
+        headers=REVIEW_HEADERS,
+        json={
+            "reviewer_id": "reviewer-appeal",
+            "role": "after_sales_operator",
+            "auth_scopes": ["after_sales:write"],
+        },
+    )
+    assert rejected.status_code == 200
+
+    status = await client.get(f"/customer/cases/{case_id}", params={"user_id": "demo-customer"})
+    assert status.status_code == 200
+    assert status.json()["status"] == "rejected"
+
+    appeal = await client.post(
+        f"/customer/cases/{case_id}/appeal",
+        json={"user_id": "demo-customer", "reason": "我补充了物流延迟证明，请重新审核。"},
+    )
+    assert appeal.status_code == 200
+    assert appeal.json()["status"] == "appealed_pending_review"
+    assert appeal.json()["appeal_count"] == 1
+
+    queue_after_appeal = await client.get("/review/cases", headers=REVIEW_HEADERS)
+    assert any(item["case_id"] == case_id for item in queue_after_appeal.json()["cases"])
+
+
+@pytest.mark.anyio
 async def test_staff_review_endpoint_approves_customer_case(client: AsyncClient) -> None:
     g1, g2 = _mock_guard(input_on_topic=True)
     with g1, g2, _mock_plan("escalation"), _mock_task():
