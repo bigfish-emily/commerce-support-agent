@@ -55,12 +55,25 @@ class AgentActions:
         plan = await self._intent_planner.plan(last_message)
         tasks = [task.model_dump() for task in plan.tasks]
         route_intent = str(tasks[0]["intent"]) if tasks else "policy"
+        dialog_state = _merge_dialog_state(
+            state,
+            current_intent=route_intent,
+            task_count=len(tasks),
+            turn_count=_turn_count(state),
+        )
         return {
             "route_intent": route_intent,
             "task_plan": tasks,
+            "turn_count": dialog_state["turn_count"],
+            "dialog_state": dialog_state,
             "trajectory_events": [
                 *state.get("trajectory_events", []),
-                _event("plan_tasks", "planner", "completed", {"task_count": len(tasks), "tasks": tasks}),
+                _event(
+                    "plan_tasks",
+                    "planner",
+                    "completed",
+                    {"task_count": len(tasks), "tasks": tasks, "dialog_state": dialog_state},
+                ),
             ],
         }
 
@@ -145,8 +158,18 @@ class AgentActions:
         }
         if intent == "escalation":
             slots["action_type"] = str(task.get("action_type") or self._infer_action_type(text))
+        dialog_state = _merge_dialog_state(
+            state,
+            current_intent=intent,
+            slots=slots,
+            missing_slots=_missing_slots(intent, slots),
+        )
         return {
             "current_slots": slots,
+            "active_order_id": str(dialog_state.get("active_order_id", "")),
+            "filled_slots": dict(dialog_state.get("filled_slots", {})),
+            "missing_slots": list(dialog_state.get("missing_slots", [])),
+            "dialog_state": dialog_state,
             "trajectory_events": [
                 *state.get("trajectory_events", []),
                 _event(
@@ -157,6 +180,7 @@ class AgentActions:
                         "task_index": state.get("current_task_index"),
                         "has_order_id": bool(slots["order_id"]),
                         "category": slots["category"],
+                        "missing_slots": dialog_state.get("missing_slots", []),
                     },
                 ),
             ],
@@ -216,6 +240,19 @@ class AgentActions:
             update["retrieved_support_docs"] = [*state.get("retrieved_support_docs", []), *support_docs]
 
         update["current_context"] = context
+        update["dialog_state"] = _merge_dialog_state(
+            state,
+            current_intent=intent,
+            retrieved_policy_count=len(context.get("policy_sections", []))
+            if isinstance(context.get("policy_sections"), list)
+            else 0,
+            retrieved_support_count=len(context.get("support_docs", []))
+            if isinstance(context.get("support_docs"), list)
+            else 0,
+            retrieved_insight_count=len(context.get("insights", []))
+            if isinstance(context.get("insights"), list)
+            else 0,
+        )
         update["trajectory_events"] = [
             *state.get("trajectory_events", []),
             _event(
@@ -346,6 +383,16 @@ class AgentActions:
             after_sales_cases.append(dict(draft["after_sales_case"]))
         decision = dict(draft.get("decision", {}))
         verification = dict(draft.get("verification", {}))
+        handoff_reasons = list(decision.get("handoff_reasons", []))
+        dialog_state = _merge_dialog_state(
+            state,
+            current_intent="escalation",
+            slots={**slots, "action_type": action_type},
+            handoff_reasons=handoff_reasons,
+            risk_level=str(decision.get("risk_level", "")),
+            decision_outcome=str(decision.get("outcome", "")),
+            verifier_next_step=str(verification.get("required_next_step", "")),
+        )
         events.extend(
             [
                 _event(
@@ -358,6 +405,7 @@ class AgentActions:
                         "action_type": action_type,
                         "risk_level": decision.get("risk_level"),
                         "requires_human": decision.get("requires_human"),
+                        "handoff_reasons": handoff_reasons,
                     },
                 ),
                 _event(
@@ -374,6 +422,8 @@ class AgentActions:
             return {
                 "completed_tasks": completed,
                 "after_sales_cases": after_sales_cases,
+                "dialog_state": dialog_state,
+                "handoff_reasons": handoff_reasons,
                 "answer_parts": [*state.get("answer_parts", []), f"[售后升级]\n{answer}"],
                 "trajectory_events": events,
             }
@@ -388,6 +438,8 @@ class AgentActions:
             return {
                 "completed_tasks": completed,
                 "after_sales_cases": after_sales_cases,
+                "dialog_state": dialog_state,
+                "handoff_reasons": handoff_reasons,
                 "answer_parts": answer_parts,
                 "final_answer": "\n\n".join(answer_parts),
                 "trajectory_events": [
@@ -416,6 +468,7 @@ class AgentActions:
             "created_at": created_at,
             "expires_at": created_at + timeout_seconds,
             "timeout_seconds": timeout_seconds,
+            "handoff_reasons": handoff_reasons,
         }
         if self._runtime_store is not None:
             await self._runtime_store.put_pending_confirmation(
@@ -429,6 +482,8 @@ class AgentActions:
         return {
             "completed_tasks": completed,
             "after_sales_cases": after_sales_cases,
+            "dialog_state": dialog_state,
+            "handoff_reasons": handoff_reasons,
             "answer_parts": answer_parts,
             "final_answer": final_answer,
             "messages": [*state["messages"], {"role": "assistant", "content": final_answer}],
@@ -985,6 +1040,88 @@ def _maybe_int(value: object) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _turn_count(state: AgentState) -> int:
+    return sum(1 for message in state.get("messages", []) if message.get("role") == "user")
+
+
+def _merge_dialog_state(
+    state: AgentState,
+    *,
+    current_intent: str | None = None,
+    task_count: int | None = None,
+    turn_count: int | None = None,
+    slots: dict[str, object] | None = None,
+    missing_slots: list[str] | None = None,
+    retrieved_policy_count: int | None = None,
+    retrieved_support_count: int | None = None,
+    retrieved_insight_count: int | None = None,
+    handoff_reasons: list[str] | None = None,
+    risk_level: str | None = None,
+    decision_outcome: str | None = None,
+    verifier_next_step: str | None = None,
+) -> dict[str, object]:
+    dialog_state = dict(state.get("dialog_state", {}))
+    filled_slots = dict(dialog_state.get("filled_slots", state.get("filled_slots", {})))
+    if slots:
+        for key, value in slots.items():
+            if value not in ("", None, [], {}):
+                filled_slots[key] = value
+    active_order_id = str(
+        filled_slots.get("order_id")
+        or dialog_state.get("active_order_id")
+        or state.get("active_order_id", "")
+    )
+    merged_handoff = list(dialog_state.get("handoff_reasons", state.get("handoff_reasons", [])))
+    if handoff_reasons:
+        merged_handoff.extend(handoff_reasons)
+
+    next_missing_slots = (
+        missing_slots if missing_slots is not None else dialog_state.get("missing_slots", [])
+    )
+    next_turn_count = (
+        turn_count
+        if turn_count is not None
+        else dialog_state.get("turn_count", _turn_count(state))
+    )
+    dialog_state.update(
+        {
+            "current_intent": current_intent or dialog_state.get("current_intent", ""),
+            "active_order_id": active_order_id,
+            "filled_slots": filled_slots,
+            "missing_slots": list(next_missing_slots),
+            "handoff_reasons": list(dict.fromkeys(str(item) for item in merged_handoff if item)),
+            "turn_count": int(next_turn_count),
+            "failure_count": int(dialog_state.get("failure_count", state.get("failure_count", 0))),
+        }
+    )
+    if task_count is not None:
+        dialog_state["task_count"] = task_count
+    if retrieved_policy_count is not None:
+        dialog_state["retrieved_policy_count"] = retrieved_policy_count
+    if retrieved_support_count is not None:
+        dialog_state["retrieved_support_count"] = retrieved_support_count
+    if retrieved_insight_count is not None:
+        dialog_state["retrieved_insight_count"] = retrieved_insight_count
+    if risk_level:
+        dialog_state["risk_level"] = risk_level
+    if decision_outcome:
+        dialog_state["decision_outcome"] = decision_outcome
+    if verifier_next_step:
+        dialog_state["verifier_next_step"] = verifier_next_step
+    return dialog_state
+
+
+def _missing_slots(intent: str, slots: dict[str, object]) -> list[str]:
+    missing: list[str] = []
+    if intent in {"order_status", "escalation"} and not slots.get("order_id"):
+        missing.append("order_id")
+    if intent == "escalation" and not slots.get("action_type"):
+        missing.append("action_type")
+    if intent == "qa" and not slots.get("category"):
+        missing.append("category")
+    return missing
 
 
 def _event(

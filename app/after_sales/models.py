@@ -32,6 +32,7 @@ class AfterSalesDecision(BaseModel):
     confidence: float = Field(..., ge=0, le=1)
     risk_level: RiskLevel
     requires_human: bool
+    handoff_reasons: list[str] = Field(default_factory=list)
     allowed_actions: list[str] = Field(default_factory=list)
     blocked_actions: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)

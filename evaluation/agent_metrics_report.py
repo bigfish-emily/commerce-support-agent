@@ -691,6 +691,98 @@ def customer_flow_metrics() -> list[Metric]:
             "按 customer_flow_eval 每条 case latency_ms 取 p95。",
         )
     )
+    auto_rows = [
+        row
+        for row in rows
+        if row.get("resolution_type") in {"auto_answer", "auth_block", "guard_reject"}
+    ]
+    handoff_rows = [row for row in rows if row.get("resolution_type") == "handoff_review"]
+    expected_handoff_rows = [row for row in rows if row.get("handoff_expected")]
+    grounded_rows = [row for row in rows if row.get("policy_grounded")]
+    reasonful_handoffs = [row for row in handoff_rows if row.get("handoff_reasons")]
+    avg_turns = (
+        sum(int(row.get("customer_turns", 1)) for row in rows) / len(rows)
+        if rows
+        else 0.0
+    )
+    type_counts: dict[str, int] = {}
+    for row in rows:
+        resolution_type = str(row.get("resolution_type", "unknown"))
+        type_counts[resolution_type] = type_counts.get(resolution_type, 0) + 1
+    metrics.extend(
+        [
+            Metric(
+                "产品主链路",
+                "auto resolution rate",
+                _pct(len(auto_rows), len(rows)),
+                str(len(rows)),
+                "消费者请求无需人工审核即可完成答复、越权拦截或越界拒绝的比例。",
+                "customer_flow_eval 中 resolution_type in auto_answer/auth_block/guard_reject 的比例。",
+            ),
+            Metric(
+                "产品主链路",
+                "handoff rate",
+                _pct(len(handoff_rows), len(rows)),
+                str(len(rows)),
+                "需要进入售后审核台的请求比例。",
+                "customer_flow_eval 中 resolution_type=handoff_review 的比例。",
+            ),
+            Metric(
+                "产品主链路",
+                "handoff precision",
+                _pct(
+                    sum(bool(row.get("handoff_expected")) for row in handoff_rows),
+                    len(handoff_rows),
+                ),
+                str(len(handoff_rows)),
+                "进入审核台的请求是否都是评测集中预期需要人工处理的高风险请求。",
+                "actual handoff 且 handoff_expected=true 的数量 / actual handoff 数量。",
+            ),
+            Metric(
+                "产品主链路",
+                "expected handoff recall",
+                _pct(
+                    sum(row.get("resolution_type") == "handoff_review" for row in expected_handoff_rows),
+                    len(expected_handoff_rows),
+                ),
+                str(len(expected_handoff_rows)),
+                "评测集中应转人工的请求是否全部进入审核台。",
+                "handoff_expected=true 且 resolution_type=handoff_review 的数量 / expected handoff 数量。",
+            ),
+            Metric(
+                "产品主链路",
+                "policy grounding rate",
+                _pct(len(grounded_rows), len(rows)),
+                str(len(rows)),
+                "需要政策或售后判断的回答是否带有可追溯政策依据。",
+                "customer_flow_eval 中 policy_grounded=true 的比例。",
+            ),
+            Metric(
+                "产品主链路",
+                "avg customer turns",
+                f"{avg_turns:.2f}",
+                str(len(rows)),
+                "从用户发起到自动答复或进入审核台的平均用户轮次。",
+                "customer_flow_eval 每条 case 的 customer_turns 平均值。",
+            ),
+            Metric(
+                "产品主链路",
+                "handoff reason coverage",
+                _pct(len(reasonful_handoffs), len(handoff_rows)),
+                str(len(handoff_rows)),
+                "进入审核台的 case 是否带有明确的人机切换原因。",
+                "actual handoff 中 handoff_reasons 非空的比例。",
+            ),
+            Metric(
+                "产品主链路",
+                "resolution type counts",
+                str(type_counts),
+                str(len(rows)),
+                "产品链路输出类型分布，用于观察自动答复、转人工、越权拦截和越界拒绝。",
+                "按 customer_flow_eval 的 resolution_type 聚合计数。",
+            ),
+        ]
+    )
     return metrics
 
 
@@ -1299,6 +1391,7 @@ def _customer_flow_check_meaning(name: str) -> str:
         "tool_calls": "trace replay 中是否出现预期确定性工具调用。",
         "review_requires_token": "审核台读取 case 是否必须携带 review token。",
         "pending_review": "高风险售后动作是否暂停并进入审核台。",
+        "handoff_reason_present": "进入审核台的 case 是否携带明确的人机切换原因。",
         "customer_cannot_confirm": "消费者是否无法通过 yes/no 自己批准高风险写动作。",
         "review_approve_executes": "售后审核员 approve 后是否恢复 checkpoint 并执行幂等写工具。",
         "unauthorized_blocked": "消费者查询非本人订单是否在进入 Agent 图前被拦截。",

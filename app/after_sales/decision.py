@@ -164,6 +164,17 @@ class AfterSalesDecisionEngine:
         if outcome == "needs_human_review":
             requires_human = True
 
+        handoff_reasons = _handoff_reasons(
+            action_type=action_type,
+            outcome=outcome,
+            risk=risk,
+            confidence=confidence,
+            requires_human=requires_human,
+            policy_refs=policy_refs,
+            risk_signals=risk_signals,
+            reason_code=reason_code,
+        )
+
         return AfterSalesDecision(
             outcome=outcome,
             action_type=action_type,  # type: ignore[arg-type]
@@ -171,6 +182,7 @@ class AfterSalesDecisionEngine:
             confidence=round(confidence, 2),
             risk_level=risk,  # type: ignore[arg-type]
             requires_human=requires_human,
+            handoff_reasons=handoff_reasons,
             allowed_actions=allowed,
             blocked_actions=blocked,
             evidence=evidence,
@@ -208,6 +220,46 @@ def verify_decision(decision: AfterSalesDecision) -> VerificationResult:
     else:
         next_step = "execute"
     return VerificationResult(passed=not flags, flags=flags, required_next_step=next_step)
+
+
+def _handoff_reasons(
+    *,
+    action_type: str,
+    outcome: str,
+    risk: str,
+    confidence: float,
+    requires_human: bool,
+    policy_refs: list[str],
+    risk_signals: dict[str, object],
+    reason_code: str,
+) -> list[str]:
+    reasons: list[str] = []
+    if requires_human:
+        reasons.append("human_required_by_policy")
+    if requires_human and action_type in {
+        "refund_request",
+        "cancel_order",
+        "change_address",
+        "invoice_request",
+    }:
+        reasons.append("write_action_requires_review")
+    if requires_human and (action_type == "complaint_escalation" or risk_signals.get("mentions_complaint")):
+        reasons.append("complaint_or_emotional_escalation")
+    if requires_human and (risk == "high" or risk_signals.get("high_value")):
+        reasons.append("high_value_or_high_risk_order")
+    if requires_human and risk_signals.get("has_delivery_delay"):
+        reasons.append("delivery_sla_breach")
+    if requires_human and risk_signals.get("has_low_review"):
+        reasons.append("low_customer_rating")
+    if requires_human and confidence < 0.75:
+        reasons.append("low_decision_confidence")
+    if requires_human and not policy_refs:
+        reasons.append("missing_policy_evidence")
+    if outcome == "ask_clarification":
+        reasons.append("missing_required_customer_information")
+    if requires_human and "refund_requested" in reason_code and risk_signals.get("mentions_compensation"):
+        reasons.append("refund_or_compensation_request")
+    return list(dict.fromkeys(reasons))
 
 
 def draft_customer_reply(

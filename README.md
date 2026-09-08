@@ -8,6 +8,7 @@ The project focuses on a concrete business workflow: a customer asks about an or
 
 - **Customer self-service + staff review**: order status lookup, policy Q&A, after-sales case creation, low-risk auto-handling, and HITL review for refunds, cancellations, address changes, invoices, and complaints.
 - **LangGraph execution graph**: `plan_tasks -> select_next_task -> extract_slots -> retrieve_context -> execute_read_task/build_after_sales_case -> await_confirmation/finalize_escalation -> finalize_answer`.
+- **Dialogue state tracking**: durable `active_order_id`, filled/missing slots, current intent, turn count, retrieved evidence counts, decision outcome, and handoff reasons.
 - **Governed tool calls**: Pydantic schema validation, role/scope checks, customer order ownership guard, tenant-aware cache, async execution, timeout/retry/backoff, fallback, redacted audit logs, Redis side-effect locks, and SQLite idempotency records.
 - **Workflow-constrained RAG**: Olist order facts, review-side risk profiles, markdown policy/FAQ/merchant rules, ResCommons support corpus, BM25 + local VectorStore fusion, and optional Qdrant backend.
 - **MCP boundary**: local MCP server for business tools, stdio/remote MCP client adapters, and a Stripe sandbox adapter for external side-effect integration.
@@ -58,7 +59,7 @@ The repository keeps derived lightweight artifacts and download/build scripts. L
 |---|---:|
 | Unit/integration tests | 106 passed |
 | Ruff | all checks passed |
-| Customer product flow eval | 8/8 pass; checks `/customer/chat`, `/review`, auth, HITL, tool trace, unauthorized order blocking |
+| Customer product flow eval | 9/9 pass; auto-resolution 44.44%, handoff 55.56%, handoff precision 100%, policy grounding 100% |
 | ResCommons retrieval | BM25 intent@1/intent@5 64%/81% -> hybrid 78%/91% |
 | Category alias retrieval | realistic alias Top1 97.5% |
 | Safety regression | customer write confirmation blocked, review token/role/scope enforced, trace redaction tested |

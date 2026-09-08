@@ -32,6 +32,8 @@ def test_after_sales_engine_requires_hitl_for_refund_case() -> None:
     assert case.decision.action_type == "refund_request"
     assert case.decision.outcome == "needs_human_review"
     assert case.decision.requires_human is True
+    assert "write_action_requires_review" in case.decision.handoff_reasons
+    assert "delivery_sla_breach" in case.decision.handoff_reasons
     assert "delay_days=11" in case.decision.evidence
     assert case.verification.required_next_step == "hitl"
     assert "不会承诺退款" in case.customer_reply
@@ -51,6 +53,7 @@ def test_after_sales_engine_rejects_delivered_order_cancellation() -> None:
 
     assert case.decision.outcome == "reject"
     assert case.decision.requires_human is False
+    assert case.decision.handoff_reasons == []
     assert "cancel_order" in case.decision.blocked_actions
     assert case.verification.required_next_step == "stop"
     assert "不能直接执行" in case.customer_reply
@@ -71,6 +74,7 @@ def test_after_sales_engine_routes_complaint_escalation_through_hitl() -> None:
     assert case.decision.action_type == "complaint_escalation"
     assert case.decision.outcome == "needs_human_review"
     assert case.decision.requires_human is True
+    assert "complaint_or_emotional_escalation" in case.decision.handoff_reasons
     assert case.verification.required_next_step == "hitl"
     assert "投诉升级" in case.customer_reply
 
@@ -126,6 +130,7 @@ def test_after_sales_engine_auto_executes_low_risk_support_case() -> None:
 
     assert case.decision.outcome == "approve"
     assert case.decision.requires_human is False
+    assert case.decision.handoff_reasons == []
     assert case.decision.risk_level == "low"
     assert case.verification.required_next_step == "execute"
     assert case.risk_signals["high_value"] is False
@@ -145,5 +150,7 @@ def test_after_sales_engine_keeps_low_score_followup_in_hitl() -> None:
 
     assert case.decision.outcome == "needs_human_review"
     assert case.decision.requires_human is True
+    assert "delivery_sla_breach" in case.decision.handoff_reasons
+    assert "low_customer_rating" in case.decision.handoff_reasons
     assert case.risk_signals["has_delivery_delay"] is True
     assert case.risk_signals["has_low_review"] is True

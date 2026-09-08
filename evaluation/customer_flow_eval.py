@@ -78,6 +78,14 @@ CASES: list[FlowCase] = [
         expect_pending_review=True,
     ),
     FlowCase(
+        name="complaint_emotional_handoff",
+        message=f"订单 {ORDER_ID} 延迟太久了，我很生气，要投诉并升级处理",
+        expected_tasks=("escalation",),
+        expected_tools=("prepare_side_effect",),
+        expected_answer_terms=(("投诉", "升级", "审核"), ("不会承诺", "不会直接承诺", "不承诺")),
+        expect_pending_review=True,
+    ),
+    FlowCase(
         name="unauthorized_order_access",
         message="帮我查一下订单 00000000000000000000000000000000 的状态",
         expected_tasks=(),
@@ -148,10 +156,14 @@ async def _run_case(client: AsyncClient, case: FlowCase) -> dict[str, Any]:
     trace_payload = await _read_trace(client, session_id)
     actual_tasks = _actual_tasks(trace_payload)
     actual_tools = _actual_tools(trace_payload)
+    after_sales_cases = _after_sales_cases(trace_payload)
+    handoff_reasons = _handoff_reasons(after_sales_cases, trace_payload)
     if case.expected_tasks:
         checks["task_plan"] = _contains_sequence(actual_tasks, list(case.expected_tasks))
     if case.expected_tools:
         checks["tool_calls"] = _contains_sequence(actual_tools, list(case.expected_tools))
+    if case.expect_pending_review:
+        checks["handoff_reason_present"] = bool(handoff_reasons)
 
     review_body: dict[str, Any] = {}
     approve_body: dict[str, Any] = {}
@@ -193,6 +205,11 @@ async def _run_case(client: AsyncClient, case: FlowCase) -> dict[str, Any]:
         "provider_mode": runtime_status["mode"],
         "model": runtime_status["model"],
         "latency_ms": first_latency_ms,
+        "resolution_type": _resolution_type(case, checks),
+        "customer_turns": 2 if case.expect_pending_review else 1,
+        "handoff_expected": case.expect_pending_review,
+        "handoff_reasons": handoff_reasons,
+        "policy_grounded": _policy_grounded(case, sources, after_sales_cases),
         "checks": checks,
         "passed": all(checks.values()),
         "answer_preview": answer[:500],
@@ -242,6 +259,32 @@ def _actual_tools(trace_payload: dict[str, Any]) -> list[str]:
     return tools
 
 
+def _after_sales_cases(trace_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for trace in trace_payload.get("traces", []):
+        raw = str(trace.get("after_sales_json") or "[]")
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = []
+        if isinstance(parsed, list):
+            cases.extend(item for item in parsed if isinstance(item, dict))
+    return cases
+
+
+def _handoff_reasons(cases: list[dict[str, Any]], trace_payload: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    for case in cases:
+        decision = case.get("decision", {}) if isinstance(case, dict) else {}
+        if isinstance(decision, dict):
+            reasons.extend(str(item) for item in decision.get("handoff_reasons", []) if item)
+    for trace in trace_payload.get("traces", []):
+        for event in _trace_events(trace):
+            details = event.get("details") if isinstance(event.get("details"), dict) else {}
+            reasons.extend(str(item) for item in details.get("handoff_reasons", []) if item)
+    return list(dict.fromkeys(reasons))
+
+
 def _trace_events(trace: dict[str, Any]) -> list[dict[str, Any]]:
     events_json = str(trace.get("trajectory_json") or "[]")
     try:
@@ -273,11 +316,42 @@ def _contains_sequence(actual: list[str], expected: list[str]) -> bool:
     return cursor == len(expected)
 
 
+def _resolution_type(case: FlowCase, checks: dict[str, bool]) -> str:
+    if case.expect_unauthorized:
+        return "auth_block"
+    if case.name == "off_topic_rejected":
+        return "guard_reject"
+    if case.expect_pending_review:
+        return "handoff_review"
+    if checks.get("http_200") and checks.get("answer_terms"):
+        return "auto_answer"
+    return "unresolved"
+
+
+def _policy_grounded(
+    case: FlowCase,
+    sources: list[str],
+    after_sales_cases: list[dict[str, Any]],
+) -> bool:
+    if case.expected_sources and sources:
+        return True
+    if not after_sales_cases:
+        return case.name not in {"customer_policy_boundary", "customer_multi_intent_read_then_refund"}
+    return any(bool(item.get("policy_refs")) for item in after_sales_cases)
+
+
 def _summary_line(rows: list[dict[str, Any]]) -> str:
     passed = sum(1 for row in rows if row["passed"])
     p95 = _percentile([row["latency_ms"] for row in rows], 0.95)
+    handoffs = sum(1 for row in rows if row.get("resolution_type") == "handoff_review")
+    auto_resolved = sum(
+        1
+        for row in rows
+        if row.get("resolution_type") in {"auto_answer", "auth_block", "guard_reject"}
+    )
     return (
-        f"customer_flow_eval pass={passed}/{len(rows)} p95={p95:.2f}ms "
+        f"customer_flow_eval pass={passed}/{len(rows)} auto_resolution={auto_resolved}/{len(rows)} "
+        f"handoff={handoffs}/{len(rows)} p95={p95:.2f}ms "
         f"mode={runtime_status['mode']} model={runtime_status['model']}"
     )
 
@@ -298,6 +372,21 @@ def _render_report(rows: list[dict[str, Any]]) -> str:
         lines.append(
             f"| {row['case']} | {row['passed']} | {row['latency_ms']} | {check_text} | {preview[:220]} |"
         )
+    business = _business_summary(rows)
+    lines.extend(
+        [
+            "",
+            "## Business Metrics",
+            "",
+            f"- auto_resolution_rate: `{business['auto_resolution_rate']}`",
+            f"- handoff_rate: `{business['handoff_rate']}`",
+            f"- handoff_precision: `{business['handoff_precision']}`",
+            f"- policy_grounding_rate: `{business['policy_grounding_rate']}`",
+            f"- avg_customer_turns: `{business['avg_customer_turns']}`",
+            f"- handoff_reason_coverage: `{business['handoff_reason_coverage']}`",
+            f"- resolution_type_counts: `{business['resolution_type_counts']}`",
+        ]
+    )
     lines.extend(
         [
             "",
@@ -306,6 +395,41 @@ def _render_report(rows: list[dict[str, Any]]) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def _business_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(rows)
+    auto_resolved = sum(
+        1
+        for row in rows
+        if row.get("resolution_type") in {"auto_answer", "auth_block", "guard_reject"}
+    )
+    handoffs = [row for row in rows if row.get("resolution_type") == "handoff_review"]
+    true_positive_handoffs = [row for row in handoffs if row.get("handoff_expected")]
+    grounded = sum(1 for row in rows if row.get("policy_grounded"))
+    reasonful = sum(1 for row in handoffs if row.get("handoff_reasons"))
+    type_counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("resolution_type", "unknown"))
+        type_counts[key] = type_counts.get(key, 0) + 1
+    return {
+        "auto_resolution_rate": _ratio(auto_resolved, total),
+        "handoff_rate": _ratio(len(handoffs), total),
+        "handoff_precision": _ratio(len(true_positive_handoffs), len(handoffs)),
+        "policy_grounding_rate": _ratio(grounded, total),
+        "avg_customer_turns": round(
+            sum(int(row.get("customer_turns", 1)) for row in rows) / total,
+            2,
+        )
+        if total
+        else 0.0,
+        "handoff_reason_coverage": _ratio(reasonful, len(handoffs)),
+        "resolution_type_counts": type_counts,
+    }
+
+
+def _ratio(numerator: int, denominator: int) -> str:
+    return f"{numerator}/{denominator} ({numerator / denominator:.2%})" if denominator else "0/0"
 
 
 def _percentile(values: list[float], q: float) -> float:

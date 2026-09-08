@@ -62,18 +62,27 @@ Live LLM 与 LLM-as-Judge 行读取已落盘结果；修改 LangGraph 节点、p
 | 端到端/轨迹 | 轨迹工具正确率 | 100.00% | 245 | 轨迹中是否调用了 intent 对应工具。 | event.details.tool == expected_tool(expected_intent)。 | 否 |
 | 端到端/轨迹 | 副作用受控终态覆盖率 | 100.00% | 245 | 副作用任务是否进入 HITL、低风险执行、拒绝或澄清等受控终态。 | escalation case 是否出现 awaiting_confirmation/completed/reject/ask_clarification 等合法状态。 | 否 |
 | 端到端/轨迹 | 轨迹无失败率 | 100.00% | 245 | 离线 gold 轨迹是否没有 failed/blocked 事件。 | trajectory statuses 中不含 failed/blocked。 | 否 |
-| 产品主链路 | customer flow pass rate | 100.00% | 8 | 消费者自助售后、人工审核台、越权拦截和审批执行是否按产品边界完成。 | 每条 customer flow case 的 HTTP、answer、task_plan、tool_calls、HITL/auth checks 全部为 true 才算 pass。 | 否 |
-| 产品主链路 | customer flow answer_terms | 100.00% | 8 | 回答是否包含该产品场景必须出现的业务关键词。 | customer_flow_eval_results.jsonl 中 checks.answer_terms=true 的比例。 | 否 |
-| 产品主链路 | customer flow customer_cannot_confirm | 100.00% | 4 | 消费者是否无法通过 yes/no 自己批准高风险写动作。 | customer_flow_eval_results.jsonl 中 checks.customer_cannot_confirm=true 的比例。 | 否 |
-| 产品主链路 | customer flow http_200 | 100.00% | 8 | 消费者入口或审核台接口是否返回成功响应。 | customer_flow_eval_results.jsonl 中 checks.http_200=true 的比例。 | 否 |
-| 产品主链路 | customer flow pending_review | 100.00% | 4 | 高风险售后动作是否暂停并进入审核台。 | customer_flow_eval_results.jsonl 中 checks.pending_review=true 的比例。 | 否 |
+| 产品主链路 | customer flow pass rate | 100.00% | 9 | 消费者自助售后、人工审核台、越权拦截和审批执行是否按产品边界完成。 | 每条 customer flow case 的 HTTP、answer、task_plan、tool_calls、HITL/auth checks 全部为 true 才算 pass。 | 否 |
+| 产品主链路 | customer flow answer_terms | 100.00% | 9 | 回答是否包含该产品场景必须出现的业务关键词。 | customer_flow_eval_results.jsonl 中 checks.answer_terms=true 的比例。 | 否 |
+| 产品主链路 | customer flow customer_cannot_confirm | 100.00% | 5 | 消费者是否无法通过 yes/no 自己批准高风险写动作。 | customer_flow_eval_results.jsonl 中 checks.customer_cannot_confirm=true 的比例。 | 否 |
+| 产品主链路 | customer flow handoff_reason_present | 100.00% | 5 | 进入审核台的 case 是否携带明确的人机切换原因。 | customer_flow_eval_results.jsonl 中 checks.handoff_reason_present=true 的比例。 | 否 |
+| 产品主链路 | customer flow http_200 | 100.00% | 9 | 消费者入口或审核台接口是否返回成功响应。 | customer_flow_eval_results.jsonl 中 checks.http_200=true 的比例。 | 否 |
+| 产品主链路 | customer flow pending_review | 100.00% | 5 | 高风险售后动作是否暂停并进入审核台。 | customer_flow_eval_results.jsonl 中 checks.pending_review=true 的比例。 | 否 |
 | 产品主链路 | customer flow review_approve_executes | 100.00% | 1 | 售后审核员 approve 后是否恢复 checkpoint 并执行幂等写工具。 | customer_flow_eval_results.jsonl 中 checks.review_approve_executes=true 的比例。 | 否 |
-| 产品主链路 | customer flow review_requires_token | 100.00% | 4 | 审核台读取 case 是否必须携带 review token。 | customer_flow_eval_results.jsonl 中 checks.review_requires_token=true 的比例。 | 否 |
-| 产品主链路 | customer flow sources | 100.00% | 8 | 政策问答是否返回可追溯的 policy/FAQ 来源。 | customer_flow_eval_results.jsonl 中 checks.sources=true 的比例。 | 否 |
-| 产品主链路 | customer flow task_plan | 100.00% | 6 | trace replay 中的真实 task_plan 是否覆盖预期任务顺序。 | customer_flow_eval_results.jsonl 中 checks.task_plan=true 的比例。 | 否 |
-| 产品主链路 | customer flow tool_calls | 100.00% | 6 | trace replay 中是否出现预期确定性工具调用。 | customer_flow_eval_results.jsonl 中 checks.tool_calls=true 的比例。 | 否 |
+| 产品主链路 | customer flow review_requires_token | 100.00% | 5 | 审核台读取 case 是否必须携带 review token。 | customer_flow_eval_results.jsonl 中 checks.review_requires_token=true 的比例。 | 否 |
+| 产品主链路 | customer flow sources | 100.00% | 9 | 政策问答是否返回可追溯的 policy/FAQ 来源。 | customer_flow_eval_results.jsonl 中 checks.sources=true 的比例。 | 否 |
+| 产品主链路 | customer flow task_plan | 100.00% | 7 | trace replay 中的真实 task_plan 是否覆盖预期任务顺序。 | customer_flow_eval_results.jsonl 中 checks.task_plan=true 的比例。 | 否 |
+| 产品主链路 | customer flow tool_calls | 100.00% | 7 | trace replay 中是否出现预期确定性工具调用。 | customer_flow_eval_results.jsonl 中 checks.tool_calls=true 的比例。 | 否 |
 | 产品主链路 | customer flow unauthorized_blocked | 100.00% | 1 | 消费者查询非本人订单是否在进入 Agent 图前被拦截。 | customer_flow_eval_results.jsonl 中 checks.unauthorized_blocked=true 的比例。 | 否 |
-| 产品主链路 | customer flow p95 latency | 19.80 ms | 8 | 消费者入口首轮响应的 p95，本地离线模式不包含真实模型网络时间。 | 按 customer_flow_eval 每条 case latency_ms 取 p95。 | 否 |
+| 产品主链路 | customer flow p95 latency | 54.97 ms | 9 | 消费者入口首轮响应的 p95，本地离线模式不包含真实模型网络时间。 | 按 customer_flow_eval 每条 case latency_ms 取 p95。 | 否 |
+| 产品主链路 | auto resolution rate | 44.44% | 9 | 消费者请求无需人工审核即可完成答复、越权拦截或越界拒绝的比例。 | customer_flow_eval 中 resolution_type in auto_answer/auth_block/guard_reject 的比例。 | 否 |
+| 产品主链路 | handoff rate | 55.56% | 9 | 需要进入售后审核台的请求比例。 | customer_flow_eval 中 resolution_type=handoff_review 的比例。 | 否 |
+| 产品主链路 | handoff precision | 100.00% | 5 | 进入审核台的请求是否都是评测集中预期需要人工处理的高风险请求。 | actual handoff 且 handoff_expected=true 的数量 / actual handoff 数量。 | 否 |
+| 产品主链路 | expected handoff recall | 100.00% | 5 | 评测集中应转人工的请求是否全部进入审核台。 | handoff_expected=true 且 resolution_type=handoff_review 的数量 / expected handoff 数量。 | 否 |
+| 产品主链路 | policy grounding rate | 100.00% | 9 | 需要政策或售后判断的回答是否带有可追溯政策依据。 | customer_flow_eval 中 policy_grounded=true 的比例。 | 否 |
+| 产品主链路 | avg customer turns | 1.56 | 9 | 从用户发起到自动答复或进入审核台的平均用户轮次。 | customer_flow_eval 每条 case 的 customer_turns 平均值。 | 否 |
+| 产品主链路 | handoff reason coverage | 100.00% | 5 | 进入审核台的 case 是否带有明确的人机切换原因。 | actual handoff 中 handoff_reasons 非空的比例。 | 否 |
+| 产品主链路 | resolution type counts | {'auto_answer': 2, 'handoff_review': 5, 'auth_block': 1, 'guard_reject': 1} | 9 | 产品链路输出类型分布，用于观察自动答复、转人工、越权拦截和越界拒绝。 | 按 customer_flow_eval 的 resolution_type 聚合计数。 | 否 |
 | 真实 LLM Agent | live eval status | not_run | 0 | 真实 LLM 进入 planner/抽槽/生成/guard 主链路后的端到端评估状态。 | `OPENAI_API_KEY=...` 或 `AIHUBMIX_API_KEY=...` 后运行 `python -m evaluation.live_agent_eval` 会生成结果。 | 是 |
 | 外部Benchmark | tau2-bench retail pass^1 | 91.23% | 114 tasks | 官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。 | tau2-bench 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek retail base split 114-task local run。 | 是 |
 | 外部Benchmark | tau2-bench retail avg reward | 91.23% | 114 | 官方 reward 均值，综合 DB/env/NL assertion 等检查。 | 读取 tau2 result reward_info.reward 后求平均。 | 是 |
@@ -89,9 +98,9 @@ Live LLM 与 LLM-as-Judge 行读取已落盘结果；修改 LangGraph 节点、p
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
-| 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.197 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.028 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | order_status_lookup p95 延迟 | 0.001 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.190 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 0.996 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 2692 | 3 files | 当前 policy/FAQ/merchant rules 知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
