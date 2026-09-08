@@ -238,11 +238,14 @@ def tool_metrics() -> list[Metric]:
         ),
         Metric(
             "工具/参数",
-            "副作用任务 HITL 覆盖率",
+            "副作用任务门禁覆盖率",
             _pct(hitl_required, side_effect_cases),
             str(side_effect_cases),
-            "售后/退款/取消等副作用任务是否全部进入人工确认门。",
-            "expected_intent=escalation 的 case 是否都要求确认。",
+            "售后/退款/取消等副作用任务是否全部被标记为受控写动作。",
+            (
+                "expected_intent=escalation 的 case 是否进入售后门禁，"
+                "后续由决策器选择 HITL、自动执行、拒绝或澄清。"
+            ),
         ),
         Metric(
             "工具/参数",
@@ -341,8 +344,9 @@ async def _tool_framework_checks() -> dict[str, int]:
         "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
         "message_text": "delivery delayed by 11 day(s); low review score 2",
     }
-    first_action = await manager.call("execute_side_effect", action_args, ToolCallContext())
-    second_action = await manager.call("execute_side_effect", action_args, ToolCallContext())
+    write_context = ToolCallContext(role="after_sales_operator", auth_scopes=["after_sales:write"])
+    first_action = await manager.call("execute_side_effect", action_args, write_context)
+    second_action = await manager.call("execute_side_effect", action_args, write_context)
     checks.append(
         first_action.ok
         and second_action.ok
@@ -615,11 +619,11 @@ def e2e_metrics() -> list[Metric]:
         ),
         Metric(
             "端到端/轨迹",
-            "副作用 HITL 轨迹覆盖率",
-            _pct(totals["hitl_for_side_effect"], len(cases)),
+            "副作用受控终态覆盖率",
+            _pct(totals["controlled_side_effect_terminal"], len(cases)),
             str(len(cases)),
-            "副作用任务轨迹是否进入 awaiting_confirmation。",
-            "escalation case 是否有 status=awaiting_confirmation。",
+            "副作用任务是否进入 HITL、低风险执行、拒绝或澄清等受控终态。",
+            "escalation case 是否出现 awaiting_confirmation/completed/reject/ask_clarification 等合法状态。",
         ),
         Metric(
             "端到端/轨迹",
@@ -909,13 +913,14 @@ def answer_quality_metrics() -> list[Metric]:
         Metric(
             "答案质量",
             "LLM judge 小样本",
-            "4 项均分 5.00/5，pass_rate 100%",
-            "3",
+            "4 项均分 5.00/5，pass_rate 10/10",
+            "10",
             "用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。",
             (
                 "`python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 "
-                "answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 "
-                "category_risk、policy_boundary、multi_intent_hitl。"
+                "answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖类目风险、"
+                "政策边界、多意图 HITL、订单事实、发票、改地址、取消已送达订单、"
+                "运营日报、退款申请和 prompt injection。"
             ),
             api_key="是",
         ),
@@ -1244,6 +1249,8 @@ def render_report(metrics: list[Metric]) -> str:
         "",
         "本报告由 `python -m evaluation.agent_metrics_report` 生成。默认不需要 API key；"
         "LLM judge 属于可选联网评测，不能和本地确定性指标混为一谈。",
+        "Live LLM 与 LLM-as-Judge 行读取已落盘结果；"
+        "修改 LangGraph 节点、prompt 或模型后应重新运行对应 live eval。",
         "",
         "| 分类 | 指标 | 当前结果 | 样本量 | 含义 | 计算方式 | API key |",
         "|---|---|---:|---:|---|---|---|",

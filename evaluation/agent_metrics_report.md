@@ -1,6 +1,7 @@
 # Agent Evaluation Metrics Report
 
 本报告由 `python -m evaluation.agent_metrics_report` 生成。默认不需要 API key；LLM judge 属于可选联网评测，不能和本地确定性指标混为一谈。
+Live LLM 与 LLM-as-Judge 行读取已落盘结果；修改 LangGraph 节点、prompt 或模型后应重新运行对应 live eval。
 
 | 分类 | 指标 | 当前结果 | 样本量 | 含义 | 计算方式 | API key |
 |---|---|---:|---:|---|---|---|
@@ -13,7 +14,7 @@
 | 工具/参数 | 工具选择覆盖率 | 100.00% | 245 | 每个 gold route intent 是否都有确定性工具承接。 | expected_intent 是否能映射到预期 tool name。 | 否 |
 | 工具/参数 | order_id 参数修复准确率 | 100.00% | 6 | 工具参数含空格、大小写、前缀、缺失、多 ID 时是否能修复或拒绝。 | repair_order_id 输出 ok/value/error_code 与 gold 是否一致。 | 否 |
 | 工具/参数 | 澄清返回正确率 | 100.00% | 3 | 缺失/不完整/多订单号时，系统是否返回可执行澄清而不是盲目重试。 | 非法参数 case 中 result.ok=false 且 message 非空。 | 否 |
-| 工具/参数 | 副作用任务 HITL 覆盖率 | 100.00% | 120 | 售后/退款/取消等副作用任务是否全部进入人工确认门。 | expected_intent=escalation 的 case 是否都要求确认。 | 否 |
+| 工具/参数 | 副作用任务门禁覆盖率 | 100.00% | 120 | 售后/退款/取消等副作用任务是否全部被标记为受控写动作。 | expected_intent=escalation 的 case 是否进入售后门禁，后续由决策器选择 HITL、自动执行、拒绝或澄清。 | 否 |
 | 工具/参数 | 副作用 action_type 分发覆盖率 | 100.00% | 6 | 工单、退款、取消、改地址、发票、投诉升级六类动作是否都有工具落点。 | 六类 action_type 是否都有可执行的幂等工具模拟。 | 否 |
 | 工具/参数 | ToolCallManager 治理项覆盖率 | 100.00% | 8 | 验证 schema、角色权限、只读缓存、租户隔离、Redis backend、timeout fallback、副作用幂等和审计脱敏是否可用。 | 运行一个无 LLM mini harness，逐项检查 ToolCallManager 的治理能力。 | 否 |
 | RAG/检索 | 类目 RAG exact_underscore Top1 | 32.08% | 240 | 首位召回是否命中正确类目。 | ranked[0] == expected_category。 | 否 |
@@ -59,7 +60,7 @@
 | 端到端/轨迹 | 轨迹包含 plan 节点 | 100.00% | 245 | 每次任务是否先产生可审计 task plan。 | trajectory_events 中是否包含 node=plan_tasks。 | 否 |
 | 端到端/轨迹 | 轨迹 intent 覆盖率 | 100.00% | 245 | 执行轨迹是否覆盖 gold route intent。 | expected_intent 是否出现在 trajectory event intent 列表。 | 否 |
 | 端到端/轨迹 | 轨迹工具正确率 | 100.00% | 245 | 轨迹中是否调用了 intent 对应工具。 | event.details.tool == expected_tool(expected_intent)。 | 否 |
-| 端到端/轨迹 | 副作用 HITL 轨迹覆盖率 | 100.00% | 245 | 副作用任务轨迹是否进入 awaiting_confirmation。 | escalation case 是否有 status=awaiting_confirmation。 | 否 |
+| 端到端/轨迹 | 副作用受控终态覆盖率 | 100.00% | 245 | 副作用任务是否进入 HITL、低风险执行、拒绝或澄清等受控终态。 | escalation case 是否出现 awaiting_confirmation/completed/reject/ask_clarification 等合法状态。 | 否 |
 | 端到端/轨迹 | 轨迹无失败率 | 100.00% | 245 | 离线 gold 轨迹是否没有 failed/blocked 事件。 | trajectory statuses 中不含 failed/blocked。 | 否 |
 | 真实 LLM Agent | live case pass rate | 100.00% | 30 | 真实 LLM 作为 planner/抽槽/生成器进入 Agent 主链路后，端到端 case 是否全部通过。 | 每条 case 的 task/tool/HITL/trace/output/answer checks 全部为 true 才算 pass。 | 是 |
 | 真实 LLM Agent | live task_exact | 100.00% | 30 | LLM planner 生成的任务列表是否与 gold 完全一致。 | live_agent_eval_results.jsonl 中 checks.task_exact=true 的比例。 | 是 |
@@ -83,13 +84,13 @@
 | 外部Benchmark | tau2-bench retail avg total cost | $0.006036 | 114 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
-| 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 100% | 3 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖 category_risk、policy_boundary、multi_intent_hitl。 | 是 |
+| 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 10/10 | 10 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖类目风险、政策边界、多意图 HITL、订单事实、发票、改地址、取消已送达订单、运营日报、退款申请和 prompt injection。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
 | 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.218 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.593 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.217 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.157 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 2692 | 3 files | 当前 policy/FAQ/merchant rules 知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

@@ -420,7 +420,7 @@ LIVE_AGENT_EVAL_LIMIT=30
 python -m evaluation.live_agent_eval
 ```
 
-最近一次 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p50 latency `10830.09ms`，p95 latency `26052.12ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分；但它仍是 30 条项目回归集，不能替代外部 benchmark 或线上 A/B。
+最近一次已落盘 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p50 latency `10830.09ms`，p95 latency `26052.12ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分；但它仍是 30 条项目回归集，不能替代外部 benchmark 或线上 A/B。若修改 LangGraph 节点、prompt 或模型，需要重新运行本命令刷新 `evaluation/live_agent_eval_results.jsonl`。
 
 LLM planner 单项评测：
 
@@ -478,7 +478,7 @@ python -m evaluation.llm_judge_eval
 - `evaluation/llm_judge_eval_results.jsonl`：逐条 JSON 明细。
 - `evaluation/llm_judge_eval_report.md`：可读报告，包含每条 case 的用户输入、期望行为、Agent 输出、轨迹摘要、裁判分数和 rationale。
 
-最近一次小样本结果：category risk、policy boundary、multi-intent HITL 三类样本均通过，answer relevance / faithfulness / tool correctness / HITL correctness 四项均分 `5.00/5`，pass rate `100%`。这是低成本 smoke 级 judge，不等价于大规模线上评测。
+最近一次已落盘 LLM-as-Judge 结果：10 条样本覆盖类目风险、政策边界、多意图 HITL、订单事实、发票、改地址、取消已送达订单、运营日报、退款申请和 prompt injection，answer relevance / faithfulness / tool correctness / HITL correctness 四项均分 `5.00/5`，pass rate `10/10`。这是低成本 smoke 级 judge，不等价于大规模线上评测；修改 LangGraph 节点、prompt 或模型后应重新运行本命令刷新报告。
 
 网页控制台说明：左侧按钮只是预设输入模板，方便现场演示；点击发送后会调用真实 `/chat` API。页面顶部 `/runtime/status` 会显示当前是 `offline_workflow` 还是 `live_llm_agent`，只有用真实 key 启动服务时才是 live LLM。
 
@@ -589,13 +589,13 @@ tests/
 - **MCP 和多 Agent 协议有什么区别？** MCP 解决 Agent 调工具和拿上下文；A2A/Agent Card 解决 Agent 之间能力发现、任务委托和状态协商。这个项目重点是企业工具接入，因此 MCP 是必要层。
 - **为什么接 Stripe MCP？** Stripe 不是最终 OMS，而是最适合个人项目验证真实外部 MCP + sandbox 副作用的 SaaS。它可以演示支付/退款类工具 schema、鉴权、HITL、幂等和 trace；生产里替换为企业内部退款/工单/优惠券 MCP。
 - **副作用怎么防重复？** 路由侧识别风险意图，图执行侧 interrupt 等人工确认，工具侧幂等 key 防止重复创建 case。
-- **怎么证明有效？** 用 Olist/Bitext/policy 三类评测集分别证明任务覆盖、意图覆盖、RAG 召回和工具鲁棒性；LLM judge 小样本验证回答相关性、事实一致性、工具正确性和 HITL 正确性，但不替代确定性 CI。
+- **怎么证明有效？** 用 Olist/Bitext/ResCommons/policy/tau2 分别证明任务覆盖、意图覆盖、RAG 召回、工具鲁棒性和外部客服 benchmark 表现；LLM judge 小样本验证回答相关性、事实一致性、工具正确性和 HITL 正确性，但不替代确定性 CI。
 
 ## 下一步扩展
 
 - 将本地 hybrid retrieval 替换为 Elasticsearch + vector database + learned reranker，并接入更多中文客服 FAQ/商家规则。
 - 增加 tenant/seller ACL、优惠券/退款工具权限、预算限流和分布式 trace。
-- 扩大真实 LLM judge eval：从当前 3 条 smoke 扩到 30-100 条，并把失败样本落盘进入回归集。
+- 扩大真实 LLM judge eval：从当前 10 条 smoke 扩到 30-100 条，并把失败样本落盘进入回归集。
 - 将 SQLite trace 替换为 MySQL/PostgreSQL + Kafka/RocketMQ 审计流，用于线上回放、成本统计和评测飞轮。
 
 ## License

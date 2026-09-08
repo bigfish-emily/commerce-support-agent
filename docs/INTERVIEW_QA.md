@@ -213,7 +213,7 @@ olist-demo:{action_type}:{order_id}:{reason_code}
 
 现在已经新增 `evaluation/live_agent_eval.py`，用 DeepSeek `deepseek-v4-flash` 跑真实 Agent 主链路：30 条 case 覆盖订单查询、类目风险、政策边界、发票/改地址、售后运营决策、多意图 HITL，`case_pass_rate=100%`，`task_exact/tools_used/hitl_correct/output_valid/answer_keywords` 均为 `100%`。
 
-LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulness、tool correctness、HITL correctness，但它不是核心能力证明。
+LLM-as-Judge 保留 10 条 smoke，用来验证 answer relevance、faithfulness、tool correctness、HITL correctness，但它不是核心能力证明。
 
 ### 26. 之前“trajectory 100%”为什么有风险？
 
@@ -291,7 +291,7 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 主要缺口：
 
 - 没有真实企业 OMS/CRM，只能模拟副作用；
-- LLM judge 样本量小；
+- LLM judge 仍是 10 条小样本 smoke；
 - 多租户 ACL 还未落地；
 - policy KB 不是企业真实 SOP；
 - hybrid retrieval 已接 VectorStore/Qdrant 边界，但还没有接 ES + 真实 embedding 模型 + reranker；
@@ -319,6 +319,6 @@ LLM-as-Judge 仍保留 3 条 smoke，用来验证 answer relevance、faithfulnes
 | RAG 能力 | 8.2/10 | 类目 adaptive retrieval、policy KB、ResCommons BM25 + VectorStore 融合检索已接主链路；新增 realistic/noisy alias 分层评测 | ES/BM25 + 真实 embedding + reranker，补 nDCG/context precision |
 | 工具治理 | 9/10 | ToolCallManager 覆盖 schema、角色白名单、in-memory/Redis cache backend、async、timeout/retry/backoff、fallback、标准输出、audit；另有 MCP server/client adapter、SQLite 持久化幂等和 duplicate 响应 | 接企业 IAM/OAuth 和不可变审计流 |
 | 工程规范 | 8/10 | GitHub Actions CI 已配置 push/PR 自动跑 ruff、pytest 和离线 eval | 增加覆盖率报告、pre-commit、依赖安全扫描 |
-| 评测体系 | 9/10 | 76 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、79 项总指标、τ-bench retail base split 114 tasks pass^1 91.23%、bad-case regression 覆盖 task `0/6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累 full split 失败样本回归池 |
+| 评测体系 | 9/10 | 100 tests、245 真实轨迹 eval、1080 intent eval、60 multi-intent、30 条 live LLM eval、93 项总指标、τ-bench retail base split 114 tasks pass^1 91.23%、bad-case regression 覆盖 task `0/6/19/20/22/29` | 扩大 live LLM eval 到 100+ 条，继续积累 full split 失败样本回归池 |
 | 生产化 | 6.5/10 | SQLite trace、runtime status、guard fallback、成本估算 | 多租户 ACL、PII 脱敏、限流、OpenTelemetry/Grafana |
 | 面试可讲性 | 9/10 | 数据来源、架构边界、MCP/RAG/HITL/评测都能被追问 | 做一段 3 分钟 demo script 和失败案例复盘 |

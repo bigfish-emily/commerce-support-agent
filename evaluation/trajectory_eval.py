@@ -32,6 +32,15 @@ def score_trajectory(events: Iterable[dict], expected_intent: str) -> dict[str, 
     intents = [str(event.get("intent")) for event in event_list]
     tools = [str(event.get("details", {}).get("tool", "")) for event in event_list]
     statuses = [str(event.get("status")) for event in event_list]
+    side_effect_terminal_statuses = {
+        "awaiting_confirmation",
+        "completed",
+        "execute",
+        "hitl",
+        "reject",
+        "ask_clarification",
+        "needs_human_review",
+    }
     return {
         "has_plan": any(event.get("node") == "plan_tasks" for event in event_list),
         "intent_covered": expected_intent in intents,
@@ -39,8 +48,10 @@ def score_trajectory(events: Iterable[dict], expected_intent: str) -> dict[str, 
         "expected_tool_used": _expected_tool(expected_intent) in tools
         if _expected_tool(expected_intent)
         else True,
-        "hitl_for_side_effect": (
-            "awaiting_confirmation" in statuses if expected_intent == "escalation" else True
+        "controlled_side_effect_terminal": (
+            any(status in side_effect_terminal_statuses for status in statuses)
+            if expected_intent == "escalation"
+            else True
         ),
     }
 
@@ -62,7 +73,7 @@ async def evaluate() -> None:
         "has_plan": 0,
         "intent_covered": 0,
         "expected_tool_used": 0,
-        "hitl_for_side_effect": 0,
+        "controlled_side_effect_terminal": 0,
         "no_failed_event": 0,
     }
     failures: list[str] = []

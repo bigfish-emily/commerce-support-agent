@@ -173,6 +173,7 @@ class AgentActions:
         update: dict[str, object] = {}
 
         if intent == "order_status":
+            context["primary_tool"] = "get_order_status"
             if slots.get("order_id_ok"):
                 order_id = str(slots["order_id"])
                 result = await self._tool_manager.call(
@@ -184,6 +185,7 @@ class AgentActions:
             else:
                 context["order_id_error"] = str(slots.get("order_id_error", "没有检测到有效订单号。"))
         elif intent == "qa":
+            context["primary_tool"] = "search_category_risk"
             insights = await self._category_insights(text, state)
             support_docs = await self._search_support_docs(text, state)
             context["insights"] = insights
@@ -191,6 +193,7 @@ class AgentActions:
             update["retrieved_insights"] = [*state.get("retrieved_insights", []), *insights]
             update["retrieved_support_docs"] = [*state.get("retrieved_support_docs", []), *support_docs]
         elif intent == "ops_decision":
+            context["primary_tool"] = "generate_after_sales_priority_report"
             report = await self._after_sales_priority_report(text, state)
             context["ops_report"] = report
             update["retrieved_insights"] = [
@@ -198,6 +201,9 @@ class AgentActions:
                 *list(report.get("high_risk_categories", [])),
             ]
         elif intent in {"policy", "escalation"}:
+            context["primary_tool"] = (
+                "search_policy_knowledge" if intent == "policy" else "prepare_side_effect"
+            )
             policy_query = text
             if intent == "escalation":
                 action_type = str(slots.get("action_type") or task.get("action_type") or "open_support_case")
@@ -218,6 +224,7 @@ class AgentActions:
                 "completed",
                 {
                     "task_index": state.get("current_task_index"),
+                    "tool": context.get("primary_tool"),
                     "policy_hits": len(context.get("policy_sections", []))
                     if isinstance(context.get("policy_sections"), list)
                     else 0,
@@ -238,6 +245,7 @@ class AgentActions:
                     "completed",
                     {
                         "task_index": state.get("current_task_index"),
+                        "tool": "search_policy_knowledge",
                         "hit_count": len(context.get("policy_sections", []))
                         if isinstance(context.get("policy_sections"), list)
                         else 0,
@@ -290,7 +298,11 @@ class AgentActions:
                     "execute_read_task",
                     intent,
                     "completed",
-                    {"task_index": idx, "answer_chars": len(answer)},
+                    {
+                        "task_index": idx,
+                        "tool": context.get("primary_tool"),
+                        "answer_chars": len(answer),
+                    },
                 ),
             ],
         }
@@ -310,13 +322,22 @@ class AgentActions:
         events = list(state.get("trajectory_events", []))
 
         if draft is None:
-            completed = _upsert_task_status(completed, idx, "escalation", "failed")
+            completed = _upsert_task_status(completed, idx, "escalation", "completed")
             return {
                 "completed_tasks": completed,
                 "answer_parts": [*state.get("answer_parts", []), f"[售后升级]\n{answer}"],
                 "trajectory_events": [
                     *events,
-                    _event("decision_engine", "escalation", "failed", {"task_index": idx}),
+                    _event(
+                        "decision_engine",
+                        "escalation",
+                        "ask_clarification",
+                        {
+                            "task_index": idx,
+                            "tool": "prepare_side_effect",
+                            "action_type": action_type,
+                        },
+                    ),
                 ],
             }
 
@@ -333,6 +354,7 @@ class AgentActions:
                     str(decision.get("outcome", "unknown")),
                     {
                         "task_index": idx,
+                        "tool": "prepare_side_effect",
                         "action_type": action_type,
                         "risk_level": decision.get("risk_level"),
                         "requires_human": decision.get("requires_human"),
@@ -374,7 +396,12 @@ class AgentActions:
                         "execute_write_action",
                         "escalation",
                         "completed",
-                        {"task_index": idx, "action_type": action_type, "auto_execute": True},
+                        {
+                            "task_index": idx,
+                            "tool": "execute_side_effect",
+                            "action_type": action_type,
+                            "auto_execute": True,
+                        },
                     ),
                 ],
             }
@@ -409,7 +436,12 @@ class AgentActions:
             "pending_side_effect": pending_side_effect,
             "trajectory_events": [
                 *events,
-                _event("hitl_gate", "escalation", "awaiting_confirmation", {"task_index": idx}),
+                _event(
+                    "hitl_gate",
+                    "escalation",
+                    "awaiting_confirmation",
+                    {"task_index": idx, "tool": "prepare_side_effect"},
+                ),
             ],
         }
 

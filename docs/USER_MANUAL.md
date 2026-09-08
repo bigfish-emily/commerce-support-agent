@@ -224,7 +224,7 @@ Case Metrics
 ```text
 OPENAI_API_KEY=你的 deepseek key
 OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-chat
+OPENAI_MODEL=deepseek-v4-flash
 ```
 
 重新启动服务后，规划、抽槽、政策回答、类目分析回答会走真实模型。
