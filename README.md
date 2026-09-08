@@ -12,7 +12,7 @@ The project focuses on a concrete business workflow: a customer asks about an or
 - **Governed tool calls**: Pydantic schema validation, role/scope checks, customer order ownership guard, tenant-aware cache, async execution, timeout/retry/backoff, fallback, redacted audit logs, Redis side-effect locks, and SQLite idempotency records.
 - **Workflow-constrained RAG**: Olist order facts, review-side risk profiles, markdown policy/FAQ/merchant rules, ResCommons support corpus, BM25 + local VectorStore fusion, and optional Qdrant backend.
 - **MCP boundary**: local MCP server for business tools, stdio/remote MCP client adapters, and a Stripe sandbox adapter for external side-effect integration.
-- **Evaluation-first development**: unit/integration tests, offline task and retrieval evals, live LLM regression, LLM-as-judge smoke checks, bad-case regression, and tau-bench retail local run.
+- **Evaluation-first development**: unit/integration tests, offline task and retrieval evals, product-flow regression, automated red-team checks, live LLM regression, LLM-as-judge smoke checks, and tau-bench retail local run.
 
 ## Architecture
 
@@ -62,6 +62,7 @@ The repository keeps derived lightweight artifacts and download/build scripts. L
 | Customer product flow eval | 9/9 pass; auto-resolution 44.44%, handoff 55.56%, handoff precision 100%, policy grounding 100% |
 | ResCommons retrieval | BM25 intent@1/intent@5 64%/81% -> hybrid 78%/91% |
 | Category alias retrieval | realistic alias Top1 97.5% |
+| Automated red-team eval | 8/8 pass; attack block 3/3, privacy block 2/2, unsafe write-claim block 8/8 |
 | Safety regression | customer write confirmation blocked, review token/role/scope enforced, trace redaction tested |
 | tau2-bench retail local run | pass^1 91.23% on retail base split, 114 tasks |
 
@@ -69,6 +70,7 @@ tau2 evidence: [benchmark_runs/tau2_retail/last_summary.md](benchmark_runs/tau2_
 
 Full metrics: [evaluation/agent_metrics_report.md](evaluation/agent_metrics_report.md)
 Customer flow evidence: [evaluation/customer_flow_eval_report.md](evaluation/customer_flow_eval_report.md)
+Red-team evidence: [evaluation/red_team_eval_report.md](evaluation/red_team_eval_report.md)
 
 ## Quick Start
 
@@ -110,6 +112,7 @@ Useful evaluation commands:
 
 ```bash
 uv run python -m evaluation.customer_flow_eval
+uv run python -m evaluation.red_team_eval
 LIVE_AGENT_EVAL_LIMIT=8 uv run python -m evaluation.live_agent_eval
 LLM_JUDGE_LIMIT=5 uv run python -m evaluation.llm_judge_eval
 uv run python -m evaluation.agent_metrics_report
