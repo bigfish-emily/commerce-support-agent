@@ -27,6 +27,11 @@ jobs:
       - name: Ruff
         run: uv run ruff check app evaluation scripts tests benchmark_adapters
 
+      - name: Frontend syntax
+        run: |
+          node --check frontend/assets/customer.js
+          node --check frontend/assets/review.js
+
       - name: Pytest
         env:
           OPENAI_API_KEY: test-key
@@ -43,6 +48,7 @@ jobs:
           uv run python -m evaluation.tool_repair_eval
           uv run python -m evaluation.trajectory_eval
           uv run python -m evaluation.route_drift_eval
+          uv run python -m evaluation.customer_flow_eval
           uv run python -m evaluation.agent_metrics_report
           uv run python scripts/run_tau2_retail_subset.py --tau2-root benchmark-tmp --dry-run
           uv run python scripts/run_bfcl_subset.py --bfcl-root benchmark-tmp --dry-run

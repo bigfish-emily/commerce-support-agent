@@ -1,7 +1,7 @@
 [project]
 name = "commerce-support-agent"
 version = "0.2.0"
-description = "Olist marketplace support Agent - FastAPI + LangGraph + public eval data"
+description = "E-commerce self-service after-sales Agent with staff HITL review"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
