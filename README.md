@@ -1,494 +1,70 @@
 # commerce-support-agent
 
-面向电商客服与售后履约场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，也不是把订单查询、RAG、退款按钮简单拼在一起，而是围绕一次售后 case 的完整解决过程：理解用户诉求、查询订单/物流/支付事实、检索售后政策、形成结构化决策、校验风险、低风险自动处理、高风险 HITL 转人工、拒绝或澄清，并留下可审计、可回放、可评测的执行轨迹。
+An e-commerce customer support and after-sales operations agent built around case resolution, governed tool execution, workflow-constrained RAG, HITL approval, audit traces, and tau-bench retail evaluation.
 
-## 业务场景
+The project focuses on a concrete business workflow: a support agent or after-sales operator receives a customer request, asks the agent to inspect order facts and policies, and lets the system decide whether to answer, clarify, reject, auto-handle a low-risk case, or pause for human approval before any write action.
 
-典型用户输入：
+## Highlights
 
-```text
-我的订单 203096f03d82e0dffbc41ebc2e2bcfb7 晚到了很多天，我想申请退款。请查一下订单和政策，给我处理结果。
-```
+- **Case-resolution workflow**: order status lookup, policy Q&A, category risk analysis, after-sales priority reports, refunds, cancellations, address changes, invoices, and complaint escalation.
+- **LangGraph execution graph**: `plan_tasks -> select_next_task -> extract_slots -> retrieve_context -> execute_read_task/build_after_sales_case -> await_confirmation/finalize_escalation -> finalize_answer`.
+- **Governed tool calls**: Pydantic schema validation, role/scope checks, tenant-aware cache, async execution, timeout/retry/backoff, fallback, redacted audit logs, Redis side-effect locks, and SQLite idempotency records.
+- **Workflow-constrained RAG**: Olist order facts, category profiles, markdown policy/FAQ/merchant rules, ResCommons support corpus, BM25 + local VectorStore fusion, and optional Qdrant backend.
+- **MCP boundary**: local MCP server for business tools, stdio/remote MCP client adapters, and a Stripe sandbox adapter for external side-effect integration.
+- **Evaluation-first development**: unit/integration tests, offline task and retrieval evals, live LLM regression, LLM-as-judge smoke checks, bad-case regression, and tau-bench retail local run.
 
-核心业务对象是 `AfterSalesCase`，不是一条普通聊天消息。一次 case 会经历：
-
-```text
-Case Created
-  -> LLM 理解售后诉求并拆任务
-  -> 订单/物流/支付/评价事实查询
-  -> 售后政策 RAG 检索
-  -> AfterSalesDecisionEngine 形成 approve/reject/review/clarify 决策
-  -> Verifier 校验政策依据、金额/状态事实和副作用边界
-  -> HITL 确认或安全出口
-  -> ToolCallManager 执行幂等 write action
-  -> SQLite trace 记录与回放
-```
-
-系统内部仍使用五类 route intent，但它们服务于售后 case resolution，而不是孤立功能：
-
-| Route Intent | 场景 | LLM 负责 | 确定性工具负责 |
-|---|---|---|---|
-| `order_status` | 精确订单状态、配送、支付、评价查询 | 识别用户是否在查订单、抽取 order_id | 从订单事实索引读取可信业务数据 |
-| `qa` | 类目运营风险、物流风险、低分评价分析 | 将业务问题转成类目检索需求并生成分析口径 | 从全量订单聚合结果中检索类目风险，辅助售后队列判断 |
-| `ops_decision` | 售后运营日报、优先跟进类目/订单、客服主管决策 | 理解运营决策目标，组织报告口径 | 从全量订单和类目风险索引生成只读优先级报告 |
-| `policy` | 退款、取消、发票、支付、账号、配送时效、补偿边界 | 基于检索到的政策段落生成客服回答 | 从 markdown policy KB 检索相关章节 |
-| `escalation` | 退款/补偿申请、取消订单、改地址、发票申请、创建 case | 判断副作用意图，生成面向用户/坐席的回复草稿 | 先由 `assess_after_sales_case` 形成结构化决策，再通过 HITL 和幂等工具执行 |
-
-系统边界：**LLM 处理自然语言不确定性，业务事实、权限、副作用和状态迁移交给确定性系统**。
-
-## 兜底策略
-
-项目实现了分层 fallback，而不是把失败都丢给大模型重试：
-
-| 层级 | 已实现策略 | 业务意义 |
-|---|---|---|
-| 输入风控 | LLM guard 失败时启用启发式 guard，覆盖常见 prompt injection、越权、破坏性 SQL/代码请求；普通客服问题放行 | LLM API 抖动时客服链路仍可用，但不替代生产级策略风控 |
-| 任务规划 | LLM planner 失败或返回非法 intent 时，使用多意图拆解器生成降级任务计划 | 避免因为规划模型失败导致全链路不可用 |
-| 参数抽取 | LLM slot extractor 失败时，用 regex 抽取/归一化 32 位 order_id 和类目别名 | 订单查询这种高确定性任务不依赖模型 |
-| 工具参数 | `repair_order_id` 处理空格、大小写、前缀、不完整、多 ID，并返回结构化错误 | 非法参数让 Agent 修复或澄清，不反复报错 |
-| RAG 检索 | 类目检索按 exact -> token overlap -> adaptive rewrite；policy 未命中则转人工 | 保证召回可解释，检索失败有安全出口 |
-| LLM 生成 | QA/policy answer 生成失败时返回 grounded template，只展示已检索事实/章节 | 防止编造，优先保证事实可用 |
-| 副作用动作 | 售后升级/退款/取消/改地址/发票必须 HITL 确认，工具使用幂等 key | 防重复、避免误发券/误建单/误取消 |
-| 输出风控 | 输出 guard 拒绝空输出、占位符、traceback；失败记录 trace | 防止坏结果直接返回用户 |
-| 审计追踪 | 正常、输入拒绝、输出拒绝都写入 SQLite trace | 方便复盘、评测飞轮和线上排障 |
-
-## Tool Call Framework
-
-主 `/chat` 链路中的确定性业务工具统一经过 `ToolCallManager`，而不是在节点里裸调函数。它覆盖：
-
-| 能力 | 当前实现 |
-|---|---|
-| 参数校验 | 每个工具声明 Pydantic input schema，非法参数返回 `schema_validation_failed` |
-| 权限检查 | `/chat` 按 `role` 补最小默认 scopes；显式 `auth_scopes=[]` 只允许 read 工具；工具侧再做 allowed role 白名单 + `auth_scope` 校验 |
-| 风险分级 | 每个 `ToolSpec` 声明 `risk_level`、`auth_scope` 和 `idempotency_required`，区分只读、决策、critical write |
-| 缓存检查 | 只读工具使用 `tenant_id + sha256(tool+args)` 做 TTL cache，支持 in-memory/Redis backend；副作用工具不缓存 |
-| 异步执行 | async manager 统一调度 sync/async handler，sync handler 通过 `asyncio.to_thread` 执行 |
-| 超时/重试/退避 | 每个 `ToolSpec` 配置 timeout、retry count 和 exponential backoff |
-| 降级策略 | 工具可配置 fallback；例如事实/检索工具失败时返回安全降级结果 |
-| 结果格式化 | 所有工具返回标准 `ToolCallResult(ok/data/cached/attempts/latency/error)` |
-| 审计日志 | 每次调用记录 who/when/tool/args_hash/redacted_args/result/latency，不保存明文长消息 |
-
-代码落点：`app/tool_call/framework.py`；主链路接入点：`app/agent/actions.py`。`ToolCallManager.list_tool_metadata()` 和 MCP `list_enterprise_tool_boundaries` 可直接导出工具 schema、权限范围、风险等级、幂等要求和审计语义。
-
-默认权限采用最小可用模型：`support_agent` 能查订单、检索政策、生成售后草稿；`ops_manager` 能查看运营报表但不能执行写动作；`after_sales_operator/admin` 才能确认执行退款、取消、改地址、发票和工单创建等副作用工具。
-
-### Redis Runtime Store
-
-默认本地启动使用进程内 runtime store；多 worker 部署时可以切 Redis。Redis 不替代 SQLite，而是承担短生命周期运行时治理：
-
-| 能力 | Redis key 语义 | 说明 |
-|---|---|---|
-| 工具缓存 | `tool-cache:{sha256}` | 只缓存只读工具成功结果，按 tenant 隔离并设置 TTL |
-| 请求限流 | `rate:{tenant}:{user}:{window}` | `/chat` 入口固定窗口计数，超限返回可恢复错误并写 trace |
-| HITL TTL | `hitl:{session_id}` | 副作用确认草稿双写 LangGraph checkpoint + Redis TTL，过期后拒绝旧 yes |
-| 副作用锁 | `lock:side-effect:{sha256}` | 多 worker 并发确认同一退款/取消/改地址时，只允许一个执行者进入工具 |
-
-SQLite 仍负责最终 case 幂等记录和 trace 审计，避免 Redis 过期、重启或淘汰导致业务证据丢失。
-
-```bash
-pip install ".[redis]"
-set RUNTIME_STORE_BACKEND=redis
-set REDIS_URL=redis://localhost:6379/0
-set REDIS_PREFIX=olist-agent
-set AGENT_RATE_LIMIT_PER_MINUTE=120
-uvicorn app.main:app --reload
-```
-
-Docker Compose 会启动 `redis:7-alpine` 并让 Agent 默认使用 Redis runtime store。
-
-## 数据来源
-
-项目使用两类公开数据，不把手写小样本当作真实数据。
-
-1. **Olist Brazilian E-Commerce Public Dataset**
-
-原始来源：[Kaggle Olist Brazilian E-Commerce Public Dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)。原始 CSV 下载到 `data/olist_raw/`，不提交到仓库。
-
-原始表包括订单、订单明细、支付、评价、商品、商家、用户、类目翻译等。构建脚本会离线 join 和聚合，生成：
-
-```text
-data/olist_derived/
-├── order_facts_index.json    # 98,666 条全量订单事实，用于精确订单查询
-├── category_risk_index.json  # 73 个类目聚合，用于运营风险/RAG
-├── agent_records.json        # 518 条分层抽样记录，用于轻量 demo
-├── eval_cases.jsonl          # 245 条任务评测集
-└── deepeval_rag_cases.jsonl  # DeepEval/RAG 评测导出
-```
-
-`category risk` 不是“类目危险”，而是从业务数据里计算出的运营风险画像，例如延迟率、低分率、取消率、平均延迟天数、平均评分、平均支付金额和样例订单。真实本地生活/电商业务里也会有类似指标，只是实体从 `category/order/seller` 换成 `store/package/SKU/coupon`。
-
-2. **Bitext Customer Support Dataset**
-
-原始来源：[Bitext customer-support-llm-chatbot-training-dataset](https://github.com/bitext/customer-support-llm-chatbot-training-dataset)。原始 CSV 下载到 `data/bitext_raw/`，不提交到仓库。
-
-该数据集包含约 27k 条英文客服意图样本，覆盖订单、退款、发票、支付、配送、账号、投诉、人工客服等 27 个细粒度 intent。构建脚本生成：
-
-```text
-data/bitext_derived/
-├── intent_eval_cases.jsonl       # 1,080 条意图路由评测，每个 intent 40 条
-├── multi_intent_eval_cases.jsonl # 60 条多意图组合评测
-└── metadata.json                 # 数据血缘、类目分布、支持 intent 列表
-```
-
-这部分用于补齐“真实客服语言多样性”，让项目不只会处理 Olist 的订单 ID 和类目名。
-
-3. **ResCommons Full Ecom Chatbot Dataset**
-
-原始来源：[rescommons/Full-Ecom-Chatbot-Dataset](https://huggingface.co/datasets/rescommons/Full-Ecom-Chatbot-Dataset)。这是 MIT 许可的公开电商客服/Agent 数据，包含 44,031 条样本，覆盖 product discovery、order management、returns、tool-use、RAG-grounded QA 等场景。项目下载 train/test Parquet 到 `data/rescommons_raw/`，不提交原始文件。
-
-构建脚本生成：
-
-```text
-data/rescommons_derived/
-├── support_corpus.jsonl                 # 35,213 条 train 语料，作为客服对话/RAG 检索库
-├── hybrid_retrieval_eval_cases.jsonl    # 500 条 test query，用于离线检索评测
-└── metadata.json                        # response_type、intent、capability 分布
-```
-
-这里故意只用 train split 作为 corpus，test split 作为 eval query，避免把测试样本直接放回检索库造成虚高指标。
-
-4. **V1rtucious Ecom Chatbot Test Set**
-
-原始来源：[V1rtucious/Ecom-Chatbot-Test-Set](https://huggingface.co/datasets/V1rtucious/Ecom-Chatbot-Test-Set)。这是 MIT 许可的 2,000 条电商 chatbot synthetic test set，专门覆盖 tool-calling、RAG 和 escalation。项目下载 test Parquet 到 `data/v1rtucious_raw/`，构建：
-
-```text
-data/v1rtucious_derived/
-├── ecom_agent_eval_cases.jsonl  # 2,000 条标准电商 Agent 测试样本
-└── metadata.json
-```
-
-当前 profile：
-
-```text
-response_type: text 1172, tool_call 828
-intent_category: product_discovery 667, order_management 667, escalation 666
-group: A 667, B 667, C 666
-```
-
-它的下载量不高，不能当“经典 benchmark”吹；价值在于字段贴 Agent 评测，能补充 tool/RAG/escalation 分组样本。
-
-## Agent 流程
+## Architecture
 
 ```mermaid
 flowchart TD
-    Start((User)) --> Pending{Pending HITL?}
-    Pending -- yes --> Resume[Confirm/cancel/timeout resume]
-    Pending -- no --> Guard[Input Guard]
-    Guard --> Planner[LLM plan_tasks]
-    Planner --> Select[select_next_task]
-    Select --> Extract[extract_slots]
-    Extract --> Retrieve[retrieve_context]
-    Retrieve --> Branch{side_effect?}
-    Branch -- no --> Read[execute_read_task]
-    Read --> Select
-    Branch -- yes --> Case[build_after_sales_case]
+    U[User / Support operator] --> API[FastAPI /chat]
+    API --> Guard[Input Guard]
+    Guard --> Planner[LLM Planner]
+    Planner --> Graph[LangGraph workflow]
+    Graph --> Read[Read-only tools]
+    Graph --> RAG[Policy / FAQ / support RAG]
+    Graph --> Case[AfterSalesCase]
     Case --> Decision[Decision Engine + Verifier]
-    Decision -- stop/clarify --> Select
-    Decision -- low-risk execute --> Tool[ToolCallManager]
-    Decision -- hitl --> Interrupt[LangGraph interrupt]
-    Resume --> Tool
-    Tool --> Write[execute_side_effect]
-    Write --> Select
-    Select -- done --> Final[finalize_answer]
-    Final --> Trace[(SQLite Trace + Case Metrics)]
+    Decision --> Safe[Answer / reject / clarify]
+    Decision --> HITL[HITL interrupt]
+    HITL --> Tool[ToolCallManager]
+    Tool --> Write[Refund / cancel / address / invoice / complaint tools]
+    Tool --> Redis[Redis cache / lock / TTL / rate limit]
+    Graph --> Trace[SQLite trace + replay metrics]
+    Trace --> Eval[Regression evals + tau-bench reports]
 ```
 
-当前实现偏 **workflow-constrained Agent**，不是完全自主 ReAct。原因是客服/售后场景有明确的业务边界和副作用风险：有 API key 时，LLM task planner 是第一步，负责把用户消息拆成有序任务计划；确定性 executor 负责顺序、副作用、幂等和 trace。只读任务可以连续执行，遇到退款、取消订单、改地址、发票、投诉升级等副作用任务时，系统会先构造 `AfterSalesCase`，用 `AfterSalesDecisionEngine` 和 `Verifier` 判断是批准、拒绝、补充信息还是转人工。只有需要执行 write action 的 case 才进入 HITL。HITL 不表示自动提权；它只是把“业务决策 + 客户回复草稿 + 预期动作”交给用户或人工坐席确认。确认后 executor 才会调用对应企业工具，本项目用本地幂等工具模拟 `open_support_case`、`refund_request`、`cancel_order`、`change_address`、`invoice_request` 和 `complaint_escalation`。
+More diagrams: [docs/ARCHITECTURE_DIAGRAMS.md](docs/ARCHITECTURE_DIAGRAMS.md)
 
-## RAG 与检索策略
+## Data
 
-项目里有三条检索链路。严格说，当前实现是 workflow-constrained RAG，而不是完全自主的 Agentic RAG：LLM 可以做意图拆解、抽槽和答案生成，是否检索、检索哪个源、何时进入 HITL 由 LangGraph 业务流程控制。
+The repository keeps derived lightweight artifacts and download/build scripts. Large raw datasets are not committed.
 
-1. **结构化实体检索**：面向 Olist 类目/订单。订单查询是精确事实工具，不包装成 RAG；类目检索先做 query rewriting，把 `health beauty`、`health-beauty`、`healthbeauty` 等用户写法统一到真实类目 `health_beauty`，再结合业务别名词表和 token overlap fallback。
-2. **售后知识库 Hybrid RAG**：面向 `data/knowledge_base/*.md`，当前包含 `support_policy.md`、`support_faq.md` 和 `merchant_rules.md` 三类来源。系统按 markdown section 切分，先做 lexical overlap 候选召回，再按 query intent 与 `source_type` 做轻量 rerank，检索退款、取消、补偿、发票、配送、人工审核、退货标签、投诉升级和商家/类目特殊规则。每个 hit 带 `source` 和 `source_type`，回答与售后决策都能区分政策、FAQ、商家规则。
-3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。当前实现为 BM25 + `VectorStore` + RRF 风格融合：默认使用本地 hashing embedding 向量索引，适合 CI 和本地无外部依赖复现；Docker 部署可通过 `SUPPORT_VECTOR_BACKEND=qdrant` 切换到 Qdrant。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可继续替换为 Elasticsearch/BM25 + 真实 embedding model + vector DB + learned reranker。
-
-为什么当前没有强依赖 embedding：
-
-- 订单 ID、类目名、政策标题是高精度实体和短文本，确定性归一化比 embedding 更可控、可解释、低成本。
-- 对大量客服对话、FAQ 和商家规则，项目已经接入本地多源 KB、ResCommons hybrid baseline 和可选 Qdrant vector store。默认 hashing embedding 不声称具备商用语义向量模型的泛化能力，它的价值是把向量库接入边界、融合公式、评测指标和部署路径跑通；生产版把 embedder 换成 BGE/Jina/OpenAI/企业自研 embedding 后，业务链路不用重写。
-
-### Vector Store 配置
-
-默认本地模式不需要外部服务：
-
-```bash
-set SUPPORT_VECTOR_BACKEND=local
-uvicorn app.main:app --reload
-```
-
-Docker Compose 会同时启动 Redis 和 Qdrant，并让 Agent 使用 Qdrant：
-
-```bash
-docker compose up --build
-```
-
-手动切换 Qdrant：
-
-```bash
-pip install ".[vector]"
-set SUPPORT_VECTOR_BACKEND=qdrant
-set QDRANT_URL=http://localhost:6333
-set QDRANT_COLLECTION=olist_support_examples
-uvicorn app.main:app --reload
-```
-
-## MCP 接入
-
-项目同时实现了 MCP server 和 MCP client adapter：
-
-```bash
-python -m app.mcp_server
-```
-
-本项目暴露的 MCP tools：
-
-| Tool | 用途 |
+| Source | Use |
 |---|---|
-| `get_order_status` | 查询订单状态、配送、支付、评价事实 |
-| `search_category_risk` | 查询类目运营风险 |
-| `generate_after_sales_priority_report` | 生成高风险类目和优先跟进订单的只读运营决策报告 |
-| `assess_after_sales_case` | 对退款、取消、改地址、发票等售后请求形成结构化决策和 verifier 结果 |
-| `draft_escalation` | 生成售后升级草稿 |
-| `list_enterprise_tool_boundaries` | 导出 MCP 工具的 input schema、auth scope、risk level、幂等要求和审计语义 |
+| Olist Brazilian E-Commerce Public Dataset | 98,666 order facts and 73 category risk profiles |
+| Bitext customer support dataset | intent mapping and multi-intent evaluation |
+| ResCommons Full Ecom Chatbot Dataset | support corpus and hybrid retrieval evaluation |
+| V1rtucious Ecom Chatbot Test Set | tool/RAG/escalation profile cases |
+| Local policy/FAQ/merchant rules | after-sales policy retrieval and decision grounding |
 
-MCP 在项目中承担企业工具边界：Agent 可以作为 MCP client 接 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 MCP server，方便外部 Agent 客户端复用和测试。`list_enterprise_tool_boundaries` 的作用是把“工具能不能被 Agent 安全调用”显式化：每个工具都能回答 schema 是什么、谁有权限调用、是否有副作用、风险等级、是否要求幂等、审计里记录什么。
+## Results
 
-适合继续接入的外部 MCP：
+| Area | Result |
+|---|---:|
+| Unit/integration tests | 100 passed |
+| Ruff | all checks passed |
+| ResCommons retrieval | BM25 intent@1/intent@5 64%/81% -> hybrid 78%/91% |
+| Category alias retrieval | realistic alias Top1 97.5% |
+| Live LLM agent regression | 30/30 pass, p95 26.05s |
+| LLM-as-judge smoke | 10/10 pass |
+| tau2-bench retail local run | pass^1 91.23% on retail base split, 114 tasks |
 
-| MCP | 协议/传输 | 鉴权 | 真实能力 | 是否接入本项目 |
-|---|---|---|---|---|
-| Stripe MCP | MCP over remote HTTP/Streamable HTTP | Stripe API key / OAuth | payments、refunds、customers、invoices、Stripe docs | 已补可选 adapter，适合 sandbox 演示退款副作用 |
-| Shopify Order MCP | JSON-RPC HTTP；Shopify 文档还提到 UCP capability negotiation | JWT + shop/order scope | `get_order` 等订单查询能力，但受 agent tier/scope 限制 | 暂不强接，业务很贴但个人接入门槛高 |
-| Zendesk MCP/action flows | Zendesk 文档强调 HTTP/OAuth，不支持 stdio | OAuth/API token | 工单、客服 action flow、人工升级生态 | 可作为后续客服工单接入 |
-| PostgreSQL/MySQL MCP | 常见 stdio 或 Streamable HTTP | DB 凭证/内网鉴权 | 企业订单事实、商家规则、工单状态 | 当前用 Olist deterministic tools 模拟，生产替换价值高 |
-| Filesystem/GitHub MCP | 常见 stdio | 本地权限/GitHub token | policy markdown、商家规则仓库、SOP 版本 | 可选，适合规则版本管理 |
+tau2 evidence: [benchmark_runs/tau2_retail/last_summary.md](benchmark_runs/tau2_retail/last_summary.md)
 
-个人项目拿不到企业真实 OMS/CRM 凭证是正常的，但可以用公开 MCP server + demo account 验证协议打通，用本地 MCP server 模拟企业工具 schema、权限、幂等和副作用治理。
+Full metrics: [evaluation/agent_metrics_report.md](evaluation/agent_metrics_report.md)
 
-本项目新增了 `RemoteMcpToolClient` 和 `StripeMcpAdapter`：
-
-```text
-app/mcp_client.py   # stdio + remote Streamable HTTP MCP client
-app/stripe_mcp.py   # Stripe payment/refund MCP adapter
-```
-
-这不是把 Stripe 当作最终业务系统，而是用它验证外部 SaaS MCP 的接入形态。进入真实企业后，Stripe adapter 的位置会被公司内部 OMS/CRM/refund/coupon MCP 替换，Agent graph、HITL、trace、幂等和工具 schema 治理都可以复用。
-
-## 副作用治理
-
-售后升级、补偿、取消订单、改地址、发券、发票申请都属于有副作用动作。项目采用四层保护：
-
-- **意图侧**：Bitext intent mapping 标记 `side_effect_risk`，把投诉、退款、取消、改订单、人工客服等归入 `escalation`。
-- **决策侧**：`AfterSalesDecisionEngine` 根据订单状态、延迟天数、支付金额、评价分和政策命中输出 `approve/reject/needs_human_review/ask_clarification`。
-- **执行侧**：LangGraph `interrupt()` 在调用副作用工具前暂停，必须确认后才继续。
-- **工具侧**：工具调用用幂等 key，重复确认不会重复创建业务 case/退款单/取消单。
-
-当前支持的副作用动作：
-
-| action_type | 真实系统映射 | 当前实现 |
-|---|---|---|
-| `open_support_case` | CRM/Zendesk/工单系统 | `CASE-...` 幂等工单 |
-| `refund_request` | 支付/退款系统，如 Stripe 或企业财务工具 | `REFUND-...` 幂等申请 |
-| `cancel_order` | OMS 订单取消接口 | `CANCEL-...` 幂等申请 |
-| `change_address` | OMS/物流改地址接口 | `ADDR-...` 幂等申请 |
-| `invoice_request` | 发票/财务系统 | `INV-...` 幂等申请 |
-| `complaint_escalation` | CRM/Zendesk/投诉升级队列 | `COMP-...` 幂等投诉升级单 |
-
-## 可观测性与回放
-
-每次 `/chat` 请求都会写入 SQLite trace，记录 session、route intent、用户输入、最终回答、来源、售后 case、状态和延迟。项目提供三个在线调试接口：
-
-```text
-GET /observability/summary
-GET /observability/case-metrics
-GET /observability/traces/{session_id}?limit=20
-```
-
-`/observability/case-metrics` 面向业务指标，而不是普通日志：
-
-| 指标 | 含义 |
-|---|---|
-| `auto_resolution_rate` | 拒绝/澄清/低风险执行等不需要 HITL 的 case 占比 |
-| `hitl_rate` | 进入人工确认或人工复核的 case 占比 |
-| `wrong_write_blocked` | 已送达取消、缺政策依据退款等错误写动作被拦截次数 |
-| `policy_hit_rate` | case 决策是否命中政策/FAQ/商家规则依据 |
-| `tool_error_rate` | trace 中工具失败事件占比 |
-| `p95_latency_ms` | 售后 case 请求链路 p95 延迟 |
-| `cost_per_case` | 已记录模型成本样本的单 case 平均成本 |
-
-这不是完整监控平台，但已经覆盖 case resolution 的核心可观测需求：能按 session 回放一次 Agent 轨迹，能看路由分布、失败状态、业务 case 指标和延迟分布。生产中可以把同一份 trace 事件同步到 Kafka/RocketMQ 审计流，再接 Prometheus/Grafana 或 OpenTelemetry。
-
-## CI
-
-仓库已配置 GitHub Actions：
-
-```text
-.github/workflows/ci.yml
-```
-
-每次 push / pull request 会自动执行：
-
-- `ruff check app evaluation scripts tests`
-- `python -m pytest -q`
-- intent、multi-intent、task、RAG、policy KB、ops decision、tool repair、trajectory 和 metrics report 离线评估
-
-CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或产生不可控费用。需要模型实测时，在本地或受控 runner 设置 `OPENAI_API_KEY` 后运行 `python -m evaluation.live_agent_eval`。
-
-## 评测结果
-
-所有本地评测默认不需要真实 API key，适合 CI 和离线回归。LLM planner/judge eval 单独放到 `eval-llm`。
-
-```bash
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\ruff.exe check app evaluation scripts tests benchmark_adapters
-.\.venv\Scripts\python.exe -m evaluation.intent_eval
-.\.venv\Scripts\python.exe -m evaluation.multi_intent_eval
-.\.venv\Scripts\python.exe -m evaluation.task_eval
-.\.venv\Scripts\python.exe -m evaluation.rag_retrieval_eval
-.\.venv\Scripts\python.exe -m evaluation.hybrid_retrieval_eval
-.\.venv\Scripts\python.exe -m evaluation.v1rtucious_eval_profile
-.\.venv\Scripts\python.exe -m evaluation.knowledge_eval
-.\.venv\Scripts\python.exe -m evaluation.ops_decision_eval
-.\.venv\Scripts\python.exe -m evaluation.tool_repair_eval
-.\.venv\Scripts\python.exe -m evaluation.performance_eval
-.\.venv\Scripts\python.exe -m evaluation.live_agent_eval   # requires OPENAI_API_KEY
-.\.venv\Scripts\python.exe -m evaluation.agent_metrics_report
-```
-
-当前本地结果：
-
-| 指标 | 结果 | 含义 |
-|---|---:|---|
-| Unit/Integration Tests | 100 passed | 覆盖主流程、MCP、RAG、参数修复、trace、多意图执行、LLM fallback、副作用动作分发、HITL 状态清理、HITL 超时取消、多副作用恢复、SQLite 持久化幂等、duplicate 响应、guard fallback、副作用排序、跨子任务槽位继承、ToolCallManager 治理、Redis runtime store、VectorStore、租户级 cache 隔离、售后运营决策、AfterSalesCase 决策/Verifier、投诉升级 case、MCP 企业工具边界、benchmark summary parser 和 tau2 bad-case guard |
-| Ruff | All checks passed | 代码静态检查通过 |
-| Olist task eval | 245/245, 100% | 订单/类目/升级 gold cases 均能被事实索引支持 |
-| Bitext intent mapping | 1,080/1,080, 100% | 27 个客服 intent 到业务 route intent 的确定性映射正确 |
-| Multi-intent decomposition | exact/contains/order/side-effect 均为 100% | 验证一句话多意图拆解，不漏副作用任务，不重复执行同类任务；取消订单等副作用动作优先进入 HITL |
-| Category retrieval exact_underscore | Top1 32.08% | 只支持原始下划线类目名，真实用户写法容易失败 |
-| Category retrieval token_overlap | Top1 62.92%, Recall@3 66.67% | 能处理空格/连字符，但 compact alias、中文别名和未登录俗称仍会失败 |
-| Category retrieval adaptive_rewrite | Top1 92.08%, Recall@3 92.50% | 当前主链路使用，覆盖机械别名和已登录业务别名；noisy holdout Top1 10%，说明仍需 query log/embedding/reranker 补强 |
-| ResCommons hybrid retrieval | BM25 intent@5 81%, local VectorStore intent@5 91%, hybrid intent@5 91% | 35k train corpus + 100 条 test query 的本地快速评测，已接入 `/chat` QA/Policy 主链路 |
-| ResCommons baseline delta | BM25 intent@1/intent@5 64%/81% -> hybrid 78%/91% | 用公开客服对话语料验证 BM25 + VectorStore 融合比纯 BM25 更稳，不只报单点最高值 |
-| V1rtucious eval profile | 2,000 cases; text 1,172; tool_call 828 | 专门覆盖 product_discovery/order_management/escalation |
-| Policy/FAQ/Merchant KB retrieval | Top1/Recall@3/MRR@3 100% | 19 条中文售后问题覆盖政策、FAQ、商家规则、退货标签、投诉升级和类目特殊规则；这是小型 KB regression，不是公开 benchmark |
-| After-sales ops decision eval | 7/7, 100% | 高风险类目、优先订单、排序、行动建议和只读/HITL 边界检查通过 |
-| Live LLM Agent eval | 30/30, 100% | DeepSeek `deepseek-v4-flash` 真实进入 input guard、planner、抽槽、生成、output guard 主链路；task/tool/HITL/trace/output/answer checks 全过 |
-| Route drift eval | first-intent/task-sequence match 100% | 读取 live eval 结果，比较 expected/actual 任务分布，用于发现 prompt/model 版本变更造成的路由漂移 |
-| Tool argument repair | 6/6, 100% | order_id 大小写、空格、前缀、缺失、不完整、多 ID 均可处理 |
-| Deterministic latency | order p95 0.002ms, category p95 0.274ms, policy p95 0.825ms, escalation p95 0.002ms | 不含 LLM 网络延迟，衡量本地工具层性能 |
-| Layered metrics report | 93 metrics | 规划、工具、RAG、运营决策、端到端轨迹、真实 LLM Agent、答案质量、安全、性能、业务 case 指标和可观测性总表，见 `evaluation/agent_metrics_report.md` |
-
-外部 benchmark 适配：
-
-本项目的 Olist/Bitext/ResCommons 评测属于公开数据驱动的业务评测，不等价于 leaderboard-style benchmark。为补充横向可比性，项目新增 τ-bench retail adapter（`sierra-research/tau2-bench` v1.0.1）：
-
-- `benchmark_adapters/tau2_retail_agent.py`：实现 tau2 `HalfDuplexAgent` 接口，运行时接收 tau2 retail policy 与工具。
-- `scripts/run_tau2_retail_subset.py`：在外部 tau2-bench checkout 中运行 retail subset，并记录可复现 manifest。
-- `benchmark_runs/tau2_retail/last_summary.md`：保存 tau2 retail 本地运行摘要。
-
-τ-bench 当前 `tau2` package 需要 Python `>=3.12,<3.14`，而本项目服务端使用 Python 3.11，因此 benchmark 在独立环境中运行，不进入主应用依赖：
-
-```bash
-python scripts/run_tau2_retail_subset.py \
-  --tau2-root D:/benchmarks/tau2-bench \
-  --agent-llm openai/gpt-4.1-mini \
-  --user-llm openai/gpt-4.1-mini \
-  --num-tasks 5 \
-  --dry-run
-```
-
-去掉 `--dry-run` 并配置 API key 后即可运行真实 retail subset；结果由 tau2 写入 `data/simulations/`。
-
-当前已落盘的官方 benchmark：
-
-| Benchmark | 模型 | 范围 | 结果 |
-|---|---|---|---|
-| τ-bench retail (`tau2-bench` v1.0.1) | DeepSeek `deepseek/deepseek-chat` 作为 agent/user/judge | `base` split, 114 tasks, 1 trial, serial concurrency | pass^1 91.23%（104/114），avg reward 91.23%，DB match 105/114，read action 346/357，write action 162/176，NL assertions 58/61，p95 32.77s，avg total cost `$0.006036`/conversation（61/114 cost-complete samples），failed tasks: 10 |
-
-证据文件：`benchmark_runs/tau2_retail/last_summary.md` 和 `benchmark_runs/tau2_retail/last_summary.json`。这是本地 full-base 运行结果，不是公开 leaderboard submission。
-
-说明：这是 τ-bench retail `base` split 的本地完整运行，不是公开 leaderboard submission。之前 30-task 自选 smoke subset 在 bad-case 修复后达到 30/30，只作为快速回归证据保留；full run 暴露的失败集中在复杂退换货、地址状态推断、最终答复金额绑定和 benchmark/user-simulator 边界，已记录到 `docs/BAD_CASE_REGRESSION.md`。
-
-真实 LLM Agent 主链路评测：
-
-```bash
-OPENAI_API_KEY=<your-key>
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-flash
-LIVE_AGENT_EVAL_LIMIT=30
-python -m evaluation.live_agent_eval
-```
-
-最近一次已落盘 live eval：`case_pass_rate=100%`，`task_exact=100%`，`tools_used=100%`，`hitl_correct=100%`，`output_valid=100%`，`answer_keywords=100%`，p50 latency `10830.09ms`，p95 latency `26052.12ms`。这是真实 LLM 进入 Agent 主链路的评估，不是 judge model 事后打分；但它仍是 30 条项目回归集，不能替代外部 benchmark 或线上 A/B。若修改 LangGraph 节点、prompt 或模型，需要重新运行本命令刷新 `evaluation/live_agent_eval_results.jsonl`。
-
-LLM planner 单项评测：
-
-```bash
-OPENAI_API_KEY=<your-key>
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-flash
-LLM_EVAL_LIMIT=20
-python -m evaluation.intent_planner_eval
-```
-
-也支持：
-
-```bash
-RUN_LLM_ROUTER_EVAL=1 LLM_EVAL_LIMIT=20 python -m evaluation.intent_eval
-```
-
-DeepSeek 可以跑，因为 `langchain-openai` 支持 OpenAI-compatible API。需要记录 provider、model、temperature、prompt version、评测日期，避免把不同模型的数字混在一起。
-
-低成本 live smoke：
-
-```bash
-OPENAI_API_KEY=<your-key>
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-flash
-LIVE_SMOKE_OFFSET=2
-LIVE_SMOKE_LIMIT=1
-python -m evaluation.live_agent_smoke
-```
-
-最近一次小样本验证：`deepseek-v4-flash` 不支持 native `response_format`，项目会自动降级到 JSON-text structured fallback，再用 Pydantic 做本地 schema 校验。复合任务 live smoke 结果为 `tasks=['order_status', 'policy', 'escalation']`，`statuses=['completed', 'completed', 'awaiting_confirmation']`，`hitl=True`，`output_valid=True`。
-
-LLM-as-Judge 小样本：
-
-```bash
-OPENAI_API_KEY=<your-key>
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-flash
-LLM_JUDGE_LIMIT=10
-python -m evaluation.llm_judge_eval
-```
-
-AIHubMix 也可以作为 OpenAI-compatible provider 运行同一套评测：
-
-```powershell
-AIHUBMIX_API_KEY=<your-key>
-OPENAI_BASE_URL=https://aihubmix.com/v1
-OPENAI_MODEL=coding-glm-5-free
-LLM_JUDGE_LIMIT=10
-python -m evaluation.llm_judge_eval
-```
-
-运行后会生成：
-
-- `evaluation/llm_judge_eval_results.jsonl`：逐条 JSON 明细。
-- `evaluation/llm_judge_eval_report.md`：可读报告，包含每条 case 的用户输入、期望行为、Agent 输出、轨迹摘要、裁判分数和 rationale。
-
-最近一次已落盘 LLM-as-Judge 结果：10 条样本覆盖类目风险、政策边界、多意图 HITL、订单事实、发票、改地址、取消已送达订单、运营日报、退款申请和 prompt injection，answer relevance / faithfulness / tool correctness / HITL correctness 四项均分 `5.00/5`，pass rate `10/10`。这是低成本 smoke 级 judge，不等价于大规模线上评测；修改 LangGraph 节点、prompt 或模型后应重新运行本命令刷新报告。
-
-网页控制台说明：左侧按钮只是预设输入模板，方便现场演示；点击发送后会调用真实 `/chat` API。页面顶部 `/runtime/status` 会显示当前是 `offline_workflow` 还是 `live_llm_agent`，只有用真实 key 启动服务时才是 live LLM。
-
-项目也导出了 DeepEval 兼容 case，并预留 Ragas/TruLens 指标口径。相关框架：
-
-- [DeepEval](https://deepeval.com/docs/metrics-introduction)：answer relevancy、faithfulness、contextual precision/recall、tool correctness。
-- [Ragas](https://docs.ragas.io/en/stable/)：RAG answer correctness、context precision、context recall、faithfulness。
-- [TruLens RAG Triad](https://www.trulens.org/getting_started/core_concepts/rag_triad/)：context relevance、groundedness、answer relevance。
-
-## 快速开始
+## Quick Start
 
 ```bash
 uv sync --extra dev
@@ -497,13 +73,17 @@ uv run python scripts/build_olist_dataset.py
 uv run python scripts/build_bitext_dataset.py
 uv run --extra data python scripts/download_rescommons_parquet.py
 uv run --extra data python scripts/build_rescommons_dataset.py
-uv run --extra data python scripts/download_v1rtucious_eval.py
-uv run --extra data python scripts/build_v1rtucious_eval.py
-uv run python -m pytest
+uv run python -m pytest -q
 uv run uvicorn app.main:app --reload
 ```
 
-DeepSeek/OpenAI-compatible 配置见 `.env.example`：
+Open:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Optional OpenAI-compatible LLM configuration:
 
 ```text
 OPENAI_API_KEY=your-key
@@ -511,78 +91,54 @@ OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-v4-flash
 ```
 
-示例请求：
+Docker Compose starts the app with Redis and Qdrant:
 
 ```bash
-curl -X POST http://localhost:8000/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"message\":\"退款补偿能不能直接承诺？\",\"session_id\":\"demo-policy\"}"
+docker compose up --build
 ```
 
-```bash
-curl -X POST http://localhost:8000/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"message\":\"帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态\",\"session_id\":\"demo-order\"}"
-```
-
-```bash
-curl -X POST http://localhost:8000/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"message\":\"生成售后运营风险日报，列出优先跟进类目和订单\",\"session_id\":\"demo-ops\"}"
-```
-
-```bash
-curl -X POST http://localhost:8000/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"message\":\"订单 203096f03d82e0dffbc41ebc2e2bcfb7 延迟且低分，生成客服跟进话术\",\"session_id\":\"demo-case\"}"
-```
-
-## 项目结构
+## Example Requests
 
 ```text
-app/
-├── agent/          # LangGraph graph/state/business action nodes
-├── intent/         # Bitext intent 到业务 route intent 的映射
-├── llm/            # intent planner、guard、slot extractor、answer generator
-├── olist/          # Olist index loader、业务工具、policy KB retrieval
-├── tools/          # tool argument repair
-├── config/         # dependency injection
-├── mcp_server.py   # MCP tool server
-├── mcp_client.py   # MCP client adapter
-├── trace_store.py  # SQLite audit trace
-└── main.py         # FastAPI entrypoint
-scripts/
-├── download_olist_data.py
-├── build_olist_dataset.py
-└── build_bitext_dataset.py
-evaluation/
-├── intent_eval.py
-├── intent_planner_eval.py
-├── task_eval.py
-├── rag_retrieval_eval.py
-├── knowledge_eval.py
-├── ops_decision_eval.py
-├── tool_repair_eval.py
-├── performance_eval.py
-├── live_agent_eval.py
-├── deepeval_export.py
-└── deepeval_optional.py
-data/
-├── olist_derived/
-├── bitext_derived/
-├── rescommons_derived/
-├── v1rtucious_derived/
-└── knowledge_base/
-tests/
+帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态
 ```
 
-## 下一步扩展
+```text
+退款补偿能不能直接承诺？
+```
 
-- 将本地 hybrid retrieval 替换为 Elasticsearch + vector database + learned reranker，并接入更多中文客服 FAQ/商家规则。
-- 增加 tenant/seller ACL、优惠券/退款工具权限、预算限流和分布式 trace。
-- 扩大真实 LLM judge eval：从当前 10 条 smoke 扩到 30-100 条，并把失败样本落盘进入回归集。
-- 将 SQLite trace 替换为 MySQL/PostgreSQL + Kafka/RocketMQ 审计流，用于线上回放、成本统计和评测飞轮。
+```text
+生成售后运营风险日报，列出优先跟进类目和订单
+```
+
+```text
+查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并说明退款政策，然后生成售后升级话术
+```
+
+## Repository Layout
+
+```text
+app/                 FastAPI app, LangGraph workflow, tools, MCP, RAG
+benchmark_adapters/  tau2 retail adapter and guards
+benchmark_runs/      persisted benchmark summaries
+data/                derived sample data and local knowledge base
+docs/                architecture, user manual, and bad-case regression notes
+evaluation/          offline evals, live LLM evals, metrics reports
+scripts/             data builders and benchmark launchers
+tests/               unit and integration tests
+```
+
+## Documentation
+
+- [User manual](docs/USER_MANUAL.md)
+- [Architecture diagrams](docs/ARCHITECTURE_DIAGRAMS.md)
+- [Bad-case regression notes](docs/BAD_CASE_REGRESSION.md)
+- [Metrics report](evaluation/agent_metrics_report.md)
+
+## Scope
+
+This is a public-data project for a support and after-sales agent workflow. The production integration points are represented through MCP adapters, Redis runtime coordination, SQLite traces, and deterministic tool interfaces. Enterprise deployment would replace the Olist-backed services with internal OMS, CRM, payment, invoice, coupon, IAM, and observability systems.
 
 ## License
 
-MIT - see `LICENSE`.
+MIT
