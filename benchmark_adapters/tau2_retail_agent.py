@@ -38,7 +38,7 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tau2 env
     raise SystemExit(
         "This adapter must be executed inside a tau2-bench environment. "
-        "See docs/BENCHMARK_PROJECTS.md for setup steps."
+        "See README.md for setup steps."
     ) from exc
 
 

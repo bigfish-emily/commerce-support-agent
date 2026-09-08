@@ -1,8 +1,0 @@
-flowchart LR
-    A[Agent 想调工具] --> S[Schema 校验]
-    S --> Auth[权限检查]
-    Auth --> Risk[风险分级]
-    Risk --> Lock[缓存/锁/限流]
-    Lock --> Exec[执行工具]
-    Exec --> Audit[脱敏审计]
-    Audit --> R[标准结果返回]

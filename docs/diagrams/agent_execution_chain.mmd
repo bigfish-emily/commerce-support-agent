@@ -1,33 +1,35 @@
 flowchart TD
-    Request[User message] --> Pending{Pending HITL in session?}
-    Pending -- yes --> PendingPolicy{Confirm / cancel / timeout?}
-    PendingPolicy -- confirm --> Resume[Resume LangGraph checkpoint]
-    PendingPolicy -- cancel or timeout --> Cleanup[Clear pending state]
-    PendingPolicy -- unrelated text --> Reminder[Ask user to confirm or cancel first]
-
-    Pending -- no --> InputGuard[Input guard]
-    InputGuard -- rejected --> Reject[Off-topic or unsafe rejection]
-    InputGuard -- accepted --> Plan[LLM structured task plan]
-    Plan --> Sort[Read-only tasks first, side-effect tasks later]
-    Sort --> Execute[Execute task plan]
-
-    Execute --> Order[Order status tool]
-    Execute --> Policy[Policy / FAQ / merchant RAG]
-    Execute --> Ops[After-sales priority report]
-    Execute --> Side[After-sales side-effect task]
-
-    Side --> Case[Build AfterSalesCase]
-    Case --> Decision[Decision + Verifier]
-    Decision -- reject / clarify --> SafeAnswer[Safe answer without write]
-    Decision -- requires HITL --> Interrupt[interrupt and persist checkpoint]
-    Interrupt --> Draft[Return draft and confirmation question]
-
-    Resume --> Finalize[finalize_escalation]
-    Finalize --> ToolCall[execute_side_effect through ToolCallManager]
-    ToolCall --> FinalAnswer[Final answer]
-    Order --> FinalAnswer
-    Policy --> FinalAnswer
-    Ops --> FinalAnswer
-    SafeAnswer --> FinalAnswer
-    Cleanup --> FinalAnswer
-    Reminder --> FinalAnswer
+    A[1 User message /chat<br/>support agent or ops manager] --> B{2 Pending side effect<br/>in current session?}
+    B -- yes --> C{3 Reply type}
+    C -- confirm --> D[Resume LangGraph checkpoint<br/>enter finalize_escalation]
+    C -- cancel or timeout --> E[Clear pending state<br/>record canceled/timeout]
+    C -- unrelated text --> F[Ask user to confirm or cancel first<br/>prevent HITL bypass]
+    B -- no --> G[4 Input Guard<br/>business domain + injection risk]
+    G -- rejected --> H[Safe rejection<br/>no tool execution]
+    G -- accepted --> I[5 LLM Planner<br/>decompose task_plan]
+    I --> J[6 select_next_task<br/>read-only first, side effects later]
+    J --> K[7 extract_slots<br/>slot extraction + argument repair]
+    K --> L[8 retrieve_context<br/>facts / policy / support corpus / category evidence]
+    L --> M{9 Side-effect task?}
+    M -- no --> N[10 execute_read_task]
+    N --> J
+    M -- yes --> O[11 build_after_sales_case]
+    O --> P[12 Decision Engine]
+    P --> Q[13 Verifier]
+    Q --> R{14 Next action}
+    R -- stop --> S[Safe rejection]
+    R -- clarify --> T[Ask for missing information]
+    R -- execute --> U[Low-risk automatic execution]
+    R -- hitl --> V[LangGraph interrupt<br/>wait for confirmation]
+    U --> W[15 ToolCallManager]
+    D --> W
+    W --> Y[16 execute_side_effect<br/>Redis lock + SQLite idempotency]
+    S --> Z[17 finalize_answer]
+    T --> Z
+    E --> Z
+    F --> Z
+    H --> Z
+    Y --> J
+    J -- no remaining task --> Z
+    Z --> AA[18 SQLite trace + case metrics]
+    AA --> AB[Return answer / sources / session_id]

@@ -1,10 +1,10 @@
 # Architecture Diagrams
 
-这份文档集中保存项目中最适合面试讲解的 Mermaid 图。所有图都和当前代码链路对齐，尤其是 LangGraph 已拆成显式节点：`plan_tasks`、`select_next_task`、`extract_slots`、`retrieve_context`、`execute_read_task`、`build_after_sales_case`、`await_confirmation`、`finalize_escalation`、`finalize_answer`。
+这份文档集中保存项目核心 Mermaid 架构图。所有图都和当前代码链路对齐，尤其是 LangGraph 已拆成显式节点：`plan_tasks`、`select_next_task`、`extract_slots`、`retrieve_context`、`execute_read_task`、`build_after_sales_case`、`await_confirmation`、`finalize_escalation`、`finalize_answer`。
 
 ## 1. 一张图讲完整主链路
 
-源文件：`docs/diagrams/interview_main_chain_zh.mmd`
+源文件：`docs/diagrams/agent_execution_chain.mmd`
 
 ```mermaid
 flowchart TD
@@ -43,7 +43,7 @@ flowchart TD
     AA --> AB[返回 answer/sources/session_id]
 ```
 
-这张图是面试主图。每条线代表一次真实状态迁移：pending 检查防止绕过 HITL，planner 负责拆任务，select 节点保证只读先执行，retrieve 节点统一拉证据，售后副作用进入 `AfterSalesCase -> Decision -> Verifier`，写动作必须通过 ToolCallManager 和幂等存储。
+每条线代表一次真实状态迁移：pending 检查防止绕过 HITL，planner 负责拆任务，select 节点保证只读先执行，retrieve 节点统一拉证据，售后副作用进入 `AfterSalesCase -> Decision -> Verifier`，写动作必须通过 ToolCallManager 和幂等存储。
 
 ## 2. ToolCallManager 治理链路
 
@@ -76,7 +76,7 @@ flowchart TD
     Audit --> Done[标准 ToolCallResult]
 ```
 
-这张图回答“工具调用框架完善吗”。当前实现覆盖 schema、role、scope、tenant cache、异步执行、超时重试、fallback、审计和 side-effect lock。副作用工具不缓存，最终幂等记录落 SQLite case store。
+当前工具调用框架覆盖 schema、role、scope、tenant cache、异步执行、超时重试、fallback、审计和 side-effect lock。副作用工具不缓存，最终幂等记录落 SQLite case store。
 
 ## 3. 售后 Case 决策链路
 
@@ -101,7 +101,7 @@ flowchart TD
     Verify --> Next{execute / hitl / clarify / stop}
 ```
 
-这张图回答“业务决策是不是样例规则”。当前 Olist 数据能直接支撑订单状态、金额、延迟、低分和政策命中，因此这些字段进入真实判断；`risk_signals` 预留了已退款、部分退款、优惠券/积分、疑似滥用等企业常见字段，当前公开数据没有这些事实来源时按安全默认值处理。低风险自动执行门禁已经落地，但不能把它夸成完整售后风控系统。
+当前 Olist 数据能直接支撑订单状态、金额、延迟、低分和政策命中，因此这些字段进入真实判断；`risk_signals` 预留了已退款、部分退款、优惠券/积分、疑似滥用等企业常见字段，当前公开数据没有这些事实来源时按安全默认值处理。低风险自动执行门禁已经落地，完整售后风控需要接入企业真实退款、支付、会员和风控事实。
 
 ## 4. HITL 中断与恢复
 
@@ -135,7 +135,7 @@ stateDiagram-v2
     FinalizeAnswer --> [*]
 ```
 
-这张图回答“用户回复之后会发生什么”。用户确认后恢复到 `finalize_escalation`，执行已保存的草稿动作；取消或超时则清理 pending；执行后继续跑剩余任务。
+用户确认后恢复到 `finalize_escalation`，执行已保存的草稿动作；取消或超时则清理 pending；执行后继续跑剩余任务。
 
 ## 5. MCP 企业工具边界
 
@@ -179,6 +179,6 @@ flowchart TD
 
 评测飞轮分层证明项目能力：单测和离线 eval 证明确定性模块稳定；真实 LLM 回归证明模型进入主链路后可用；LLM-as-Judge 看回答质量；tau2-bench retail 给出第三方客服环境的横向指标。
 
-## 总结口径
+## 总结
 
-面试时先讲第 1 张主链路图，再按追问展开 ToolCallManager、售后决策、HITL、MCP 和评测飞轮。最重要的一句话是：这个项目把自然语言理解和企业执行边界拆开，LLM 生成结构化计划，业务规则、RAG、工具治理、HITL、Redis 锁、SQLite 幂等和 trace 共同保证售后动作可控、可审计、可评测。
+项目把自然语言理解和企业执行边界拆开：LLM 生成结构化计划，业务规则、RAG、工具治理、HITL、Redis 锁、SQLite 幂等和 trace 共同保证售后动作可控、可审计、可评测。

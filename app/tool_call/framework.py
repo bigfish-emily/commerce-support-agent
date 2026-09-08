@@ -342,8 +342,8 @@ class ToolSpec:
 class ToolCallManager:
     """Governed tool runner for deterministic business tools.
 
-    The manager centralizes the eight production concerns interviewers usually
-    ask about: schema validation, role allowlists, cache, async execution,
+    The manager centralizes the production concerns around tool execution:
+    schema validation, role allowlists, cache, async execution,
     timeout/retry/backoff, fallback, normalized output, and audit events.
     """
 

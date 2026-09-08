@@ -36,7 +36,7 @@ async def client() -> AsyncClient:
 async def test_web_console_available(client: AsyncClient) -> None:
     response = await client.get("/")
     assert response.status_code == 200
-    assert "E-Commerce After-Sales Case Agent" in response.text
+    assert "commerce-support-agent" in response.text
     assert "/observability/summary" in response.text
 
 

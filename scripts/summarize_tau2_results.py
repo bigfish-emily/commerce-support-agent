@@ -2,7 +2,7 @@
 
 tau2 can save either a single JSON file or a directory containing results.json
 and per-simulation JSON files. This script reads both formats and writes a small
-markdown/json summary that can be quoted in a resume only after a real run.
+markdown/json summary for reproducible benchmark reporting.
 """
 
 from __future__ import annotations

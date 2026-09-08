@@ -34,7 +34,7 @@ Case Created
 | `policy` | 退款、取消、发票、支付、账号、配送时效、补偿边界 | 基于检索到的政策段落生成客服回答 | 从 markdown policy KB 检索相关章节 |
 | `escalation` | 退款/补偿申请、取消订单、改地址、发票申请、创建 case | 判断副作用意图，生成面向用户/坐席的回复草稿 | 先由 `assess_after_sales_case` 形成结构化决策，再通过 HITL 和幂等工具执行 |
 
-这个边界是面试中的核心：**LLM 处理自然语言不确定性，业务事实、权限、副作用和状态迁移交给确定性系统**。
+系统边界：**LLM 处理自然语言不确定性，业务事实、权限、副作用和状态迁移交给确定性系统**。
 
 ## 兜底策略
 
@@ -201,7 +201,7 @@ flowchart TD
 
 1. **结构化实体检索**：面向 Olist 类目/订单。订单查询是精确事实工具，不包装成 RAG；类目检索先做 query rewriting，把 `health beauty`、`health-beauty`、`healthbeauty` 等用户写法统一到真实类目 `health_beauty`，再结合业务别名词表和 token overlap fallback。
 2. **售后知识库 Hybrid RAG**：面向 `data/knowledge_base/*.md`，当前包含 `support_policy.md`、`support_faq.md` 和 `merchant_rules.md` 三类来源。系统按 markdown section 切分，先做 lexical overlap 候选召回，再按 query intent 与 `source_type` 做轻量 rerank，检索退款、取消、补偿、发票、配送、人工审核、退货标签、投诉升级和商家/类目特殊规则。每个 hit 带 `source` 和 `source_type`，回答与售后决策都能区分政策、FAQ、商家规则。
-3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。当前实现为 BM25 + `VectorStore` + RRF 风格融合：默认使用本地 hashing embedding 向量索引，适合 CI 和面试现场无外部依赖复现；Docker 部署可通过 `SUPPORT_VECTOR_BACKEND=qdrant` 切换到 Qdrant。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可继续替换为 Elasticsearch/BM25 + 真实 embedding model + vector DB + learned reranker。
+3. **客服对话 Hybrid Retrieval**：面向 ResCommons 35k train corpus。当前实现为 BM25 + `VectorStore` + RRF 风格融合：默认使用本地 hashing embedding 向量索引，适合 CI 和本地无外部依赖复现；Docker 部署可通过 `SUPPORT_VECTOR_BACKEND=qdrant` 切换到 Qdrant。当前 `/chat` 主链路已把 TopK 历史客服语料作为 QA/Policy 的补充上下文；生产版可继续替换为 Elasticsearch/BM25 + 真实 embedding model + vector DB + learned reranker。
 
 为什么当前没有强依赖 embedding：
 
@@ -252,7 +252,7 @@ python -m app.mcp_server
 | `draft_escalation` | 生成售后升级草稿 |
 | `list_enterprise_tool_boundaries` | 导出 MCP 工具的 input schema、auth scope、risk level、幂等要求和审计语义 |
 
-面试中要说清楚：**MCP 是工具上下文协议，不是多 Agent 协作协议**。生产里 Agent 会作为 MCP client 接企业 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 server，方便外部 Agent 客户端复用和测试。`list_enterprise_tool_boundaries` 的作用是把“工具能不能被 Agent 安全调用”显式化：每个工具都能回答 schema 是什么、谁有权限调用、是否有副作用、风险等级、是否要求幂等、审计里记录什么。
+MCP 在项目中承担企业工具边界：Agent 可以作为 MCP client 接 OMS/CRM/工单/优惠券/知识库等外部 MCP servers；本项目也把本地业务工具暴露成 MCP server，方便外部 Agent 客户端复用和测试。`list_enterprise_tool_boundaries` 的作用是把“工具能不能被 Agent 安全调用”显式化：每个工具都能回答 schema 是什么、谁有权限调用、是否有副作用、风险等级、是否要求幂等、审计里记录什么。
 
 适合继续接入的外部 MCP：
 
@@ -317,7 +317,7 @@ GET /observability/traces/{session_id}?limit=20
 | `p95_latency_ms` | 售后 case 请求链路 p95 延迟 |
 | `cost_per_case` | 已记录模型成本样本的单 case 平均成本 |
 
-这不是完整监控平台，但已经覆盖面试中最关键的问题：能按 session 回放一次 Agent 轨迹，能看路由分布、失败状态、业务 case 指标和延迟分布。生产中可以把同一份 trace 事件同步到 Kafka/RocketMQ 审计流，再接 Prometheus/Grafana 或 OpenTelemetry。
+这不是完整监控平台，但已经覆盖 case resolution 的核心可观测需求：能按 session 回放一次 Agent 轨迹，能看路由分布、失败状态、业务 case 指标和延迟分布。生产中可以把同一份 trace 事件同步到 Kafka/RocketMQ 审计流，再接 Prometheus/Grafana 或 OpenTelemetry。
 
 ## CI
 
@@ -337,7 +337,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 ## 评测结果
 
-所有本地评测默认不需要真实 API key，适合 CI 和面试现场演示。LLM planner/judge eval 单独放到 `eval-llm`。
+所有本地评测默认不需要真实 API key，适合 CI 和离线回归。LLM planner/judge eval 单独放到 `eval-llm`。
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest
@@ -385,7 +385,7 @@ CI 默认不跑真实 LLM live eval，避免在公共 CI 里暴露 API key 或�
 
 - `benchmark_adapters/tau2_retail_agent.py`：实现 tau2 `HalfDuplexAgent` 接口，运行时接收 tau2 retail policy 与工具。
 - `scripts/run_tau2_retail_subset.py`：在外部 tau2-bench checkout 中运行 retail subset，并记录可复现 manifest。
-- `docs/BENCHMARK_PROJECTS.md`：说明 tau2 retail、banking_knowledge、BFCL、SWE-bench Lite 等 benchmark 的价值、难度和 ROI。
+- `benchmark_runs/tau2_retail/last_summary.md`：保存 tau2 retail 本地运行摘要。
 
 τ-bench 当前 `tau2` package 需要 Python `>=3.12,<3.14`，而本项目服务端使用 Python 3.11，因此 benchmark 在独立环境中运行，不进入主应用依赖：
 
@@ -575,21 +575,6 @@ data/
 └── knowledge_base/
 tests/
 ```
-
-## 面试讲法
-
-一句话定位：
-
-> 我做的是一个面向电商客服与售后的 case resolution Agent，不是泛聊天 demo。前台是自然语言助手，后台按售后任务进入受控 workflow：LLM 做意图拆解、槽位抽取、query rewriting 和回复生成；Olist 全量订单事实、政策 RAG、AfterSalesDecisionEngine、Verifier、ToolCallManager、HITL、Redis 锁和 SQLite trace 共同约束退款、取消、改地址、发票等副作用动作。项目用 Bitext/ResCommons/V1rtucious 补客服语言和检索评测，用 τ-bench retail 验证公开客服域 tool-use、policy compliance 和 write action correctness。
-
-容易被追问的问题和回答方向：
-
-- **为什么不用完全自主 Agent？** 客服/运营动作有权限、合规和副作用，完全自主会增加成本和不可控性；我选择 workflow-constrained Agent，把不确定性限制在路由、抽槽、改写、总结里。
-- **为什么 RAG 不一开始全用 embedding？** 订单 ID 查询必须走精确工具；类目名和政策章节先用可解释 retrieval 与业务别名词表；大量客服对话已经接入 ResCommons BM25 + VectorStore 融合检索。当前 noisy holdout 表明纯规则覆盖不足，生产版会把本地 hashing embedder 替换为 BGE/Jina/OpenAI/企业 embedding，并接 ES + vector DB + learned reranker。
-- **MCP 和多 Agent 协议有什么区别？** MCP 解决 Agent 调工具和拿上下文；A2A/Agent Card 解决 Agent 之间能力发现、任务委托和状态协商。这个项目重点是企业工具接入，因此 MCP 是必要层。
-- **为什么接 Stripe MCP？** Stripe 不是最终 OMS，而是最适合个人项目验证真实外部 MCP + sandbox 副作用的 SaaS。它可以演示支付/退款类工具 schema、鉴权、HITL、幂等和 trace；生产里替换为企业内部退款/工单/优惠券 MCP。
-- **副作用怎么防重复？** 路由侧识别风险意图，图执行侧 interrupt 等人工确认，工具侧幂等 key 防止重复创建 case。
-- **怎么证明有效？** 用 Olist/Bitext/ResCommons/policy/tau2 分别证明任务覆盖、意图覆盖、RAG 召回、工具鲁棒性和外部客服 benchmark 表现；LLM judge 小样本验证回答相关性、事实一致性、工具正确性和 HITL 正确性，但不替代确定性 CI。
 
 ## 下一步扩展
 

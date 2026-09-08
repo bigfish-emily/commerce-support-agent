@@ -2,7 +2,7 @@
 
 BFCL evaluates model/tool-calling capability, not the Olist business graph. This
 launcher keeps the dependency outside the main service environment and writes a
-reproducible manifest for interview/demo runs.
+reproducible manifest for benchmark runs.
 """
 
 from __future__ import annotations
