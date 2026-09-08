@@ -33,7 +33,7 @@ def test_decompose_category_risk_as_qa() -> None:
 
 
 def test_decompose_after_sales_ops_decision_as_read_only_task() -> None:
-    tasks = decompose_business_message("生成售后运营风险日报，列出优先跟进类目和订单")
+    tasks = decompose_business_message("生成审核台优先处理队列，列出最需要人工跟进的类目和订单")
     assert [task.intent for task in tasks] == ["ops_decision"]
     assert tasks[0].side_effect is False
 

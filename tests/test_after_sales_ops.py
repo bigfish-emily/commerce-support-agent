@@ -3,7 +3,7 @@ from app.olist.service import InMemoryCaseService, OlistService, SQLiteCaseServi
 
 def test_after_sales_priority_report_is_ranked_and_read_only() -> None:
     service = OlistService()
-    report = service.after_sales_priority_report("生成售后运营风险日报")
+    report = service.after_sales_priority_report("生成审核台优先处理队列")
 
     categories = report["high_risk_categories"]
     orders = report["priority_orders"]
@@ -23,7 +23,7 @@ def test_after_sales_priority_report_is_ranked_and_read_only() -> None:
     rendered = format_after_sales_report(report)
     assert "高风险类目 Top" in rendered
     assert "优先跟进订单 Top" in rendered
-    assert "只读运营建议" in rendered
+    assert "只读" in rendered
 
 
 def test_case_service_returns_duplicate_for_same_business_action() -> None:

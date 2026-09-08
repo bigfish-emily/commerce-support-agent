@@ -29,6 +29,34 @@ def test_record_trace_writes_sqlite_row(tmp_path, monkeypatch) -> None:
     assert summary["status_counts"] == {"ok": 1}
 
 
+def test_record_trace_redacts_sensitive_fields(tmp_path, monkeypatch) -> None:
+    import app.trace_store as trace_store
+
+    order_id = "203096f03d82e0dffbc41ebc2e2bcfb7"
+    monkeypatch.setattr(trace_store, "TRACE_DB", tmp_path / "traces.db")
+    record_trace(
+        session_id="s-redact",
+        user_message=f"手机号 18336782812，邮箱 user@example.com，订单 {order_id}",
+        result={
+            "route_intent": "escalation",
+            "final_answer": f"已处理订单 {order_id}，联系 user@example.com",
+            "trajectory_events": [{"details": {"order_id": order_id}}],
+            "after_sales_cases": [{"order_id": order_id, "customer_reply": "联系 18336782812"}],
+        },
+        latency_ms=10.0,
+        status="ok",
+    )
+
+    trace = list_session_traces("s-redact")[0]
+    serialized = " ".join(str(value) for value in trace.values())
+    assert order_id not in serialized
+    assert "18336782812" not in serialized
+    assert "user@example.com" not in serialized
+    assert "203096f0...cfb7" in serialized
+    assert "183****2812" in serialized
+    assert "u***@example.com" in serialized
+
+
 def test_case_metrics_aggregates_after_sales_cases(tmp_path, monkeypatch) -> None:
     import app.trace_store as trace_store
 

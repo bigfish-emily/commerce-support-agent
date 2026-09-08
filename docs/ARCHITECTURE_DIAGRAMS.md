@@ -8,28 +8,28 @@
 
 ```mermaid
 flowchart TD
-    A[1 用户输入 /chat<br/>客服坐席或售后运营主管] --> B{2 当前 Session<br/>是否有待确认副作用?}
-    B -- 有 --> C{3 用户回复类型}
-    C -- yes/确认 --> D[恢复 LangGraph checkpoint<br/>进入 finalize_escalation]
-    C -- no/取消/超时 --> E[清理 pending<br/>记录 canceled/timeout]
-    C -- 普通新问题 --> F[提示先确认或取消<br/>阻止绕过 HITL]
+    A[1 消费者输入 /customer/chat] --> B{2 当前 Session<br/>是否有待审核 case?}
+    Staff[售后审核台<br/>/review/sessions] --> C{3 审核决定}
+    B -- 有 --> F[告知用户正在等待工作人员审核]
+    C -- approve --> D[以 after_sales_operator 身份<br/>恢复 LangGraph checkpoint]
+    C -- reject/timeout --> E[清理 pending<br/>记录 rejected/timeout]
     B -- 无 --> G[4 Input Guard<br/>业务域 + 注入风险检查]
     G -- 拒绝 --> H[安全拒绝<br/>不进入工具]
     G -- 通过 --> I[5 LLM Planner<br/>拆多意图 task_plan]
     I --> J[6 select_next_task<br/>只读优先, 副作用后置]
-    J --> K[7 extract_slots<br/>抽槽 + 参数修复]
-    K --> L[8 retrieve_context<br/>事实/政策/语料/类目证据]
-    L --> M{9 是否副作用任务?}
-    M -- 否 --> N[10 execute_read_task]
+    J --> K[7 extract_slots<br/>抽订单号/类目/action_type]
+    K --> L[8 retrieve_context<br/>订单事实/政策/FAQ/语料证据]
+    L --> M{9 是否写动作?}
+    M -- 否 --> N[10 execute_read_task<br/>直接回答消费者]
     N --> J
     M -- 是 --> O[11 build_after_sales_case]
-    O --> P[12 Decision Engine]
-    P --> Q[13 Verifier]
+    O --> P[12 Decision Engine<br/>规则决策]
+    P --> Q[13 Verifier<br/>政策一致性/信息充分性]
     Q --> R{14 下一步}
-    R -- stop --> S[安全拒绝]
+    R -- stop --> S[拒绝并解释]
     R -- clarify --> T[要求补充信息]
     R -- execute --> U[低风险自动执行]
-    R -- hitl --> V[interrupt 等确认]
+    R -- hitl --> V[interrupt<br/>生成审核包]
     U --> W[15 ToolCallManager]
     D --> W
     W --> Y[16 execute_side_effect<br/>Redis lock + SQLite idempotency]
@@ -37,13 +37,14 @@ flowchart TD
     T --> Z
     E --> Z
     F --> Z
-    Y --> Z
+    H --> Z
+    Y --> J
     J -- 无剩余任务 --> Z
-    Z --> AA[18 trace + metrics]
+    Z --> AA[18 trace + case metrics]
     AA --> AB[返回 answer/sources/session_id]
 ```
 
-每条线代表一次真实状态迁移：pending 检查防止绕过 HITL，planner 负责拆任务，select 节点保证只读先执行，retrieve 节点统一拉证据，售后副作用进入 `AfterSalesCase -> Decision -> Verifier`，写动作必须通过 ToolCallManager 和幂等存储。
+主入口是消费者自助对话。只读问题直接回答，写动作先生成售后 case；低风险动作走自动门禁，高风险动作由 LangGraph `interrupt()` 暂停，审核台读取同一个 checkpoint 里的 draft、policy evidence 和 Verifier 结果，审核通过后再恢复执行。
 
 ## 2. ToolCallManager 治理链路
 
@@ -109,33 +110,37 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NewRequest: 用户请求进入 /chat
+    [*] --> NewRequest: 消费者请求进入 /customer/chat
     NewRequest --> CheckPending: 读取 checkpoint + Redis TTL
     CheckPending --> InputGuard: 没有 pending
-    CheckPending --> PendingHandling: 有 pending
-    PendingHandling --> TimeoutPath: 过期
-    PendingHandling --> ResumeConfirm: yes/确认
-    PendingHandling --> ResumeCancel: no/取消
-    PendingHandling --> RemindUser: 普通新问题
+    CheckPending --> CustomerPendingReply: 有 pending
+    CustomerPendingReply --> [*]: 告知等待工作人员审核
+
+    [*] --> StaffReview: 售后人员进入 /review/sessions
+    StaffReview --> TimeoutPath: 已超时
+    StaffReview --> ResumeConfirm: approve
+    StaffReview --> ResumeCancel: reject
+
     InputGuard --> PlanTasks
     PlanTasks --> SelectNextTask
     SelectNextTask --> ExtractSlots
     ExtractSlots --> RetrieveContext
     RetrieveContext --> ExecuteReadTask: 只读任务
     ExecuteReadTask --> SelectNextTask
-    RetrieveContext --> BuildAfterSalesCase: 副作用任务
-    BuildAfterSalesCase --> AwaitConfirmation: 需要 HITL
+    RetrieveContext --> BuildAfterSalesCase: 写动作任务
+    BuildAfterSalesCase --> SelectNextTask: reject/clarify/low-risk execute
+    BuildAfterSalesCase --> AwaitConfirmation: high-risk HITL
     AwaitConfirmation --> Interrupted: interrupt()
-    Interrupted --> [*]: 返回草稿
+    Interrupted --> [*]: 返回用户安全话术并生成审核包
     TimeoutPath --> FinalizeEscalation
-    ResumeConfirm --> FinalizeEscalation
-    ResumeCancel --> FinalizeEscalation
+    ResumeConfirm --> FinalizeEscalation: __review_approve__
+    ResumeCancel --> FinalizeEscalation: no
     FinalizeEscalation --> SelectNextTask
     SelectNextTask --> FinalizeAnswer: 无剩余任务
     FinalizeAnswer --> [*]
 ```
 
-用户确认后恢复到 `finalize_escalation`，执行已保存的草稿动作；取消或超时则清理 pending；执行后继续跑剩余任务。
+消费者不会直接触发高风险写动作。审核台 approve 后以 `after_sales_operator` 权限恢复中断状态，执行保存的草稿动作；reject 或超时会清理 pending 并记录审计。
 
 ## 5. MCP 企业工具边界
 
@@ -181,4 +186,4 @@ flowchart TD
 
 ## 总结
 
-项目把自然语言理解和企业执行边界拆开：LLM 生成结构化计划，业务规则、RAG、工具治理、HITL、Redis 锁、SQLite 幂等和 trace 共同保证售后动作可控、可审计、可评测。
+项目面向消费者自助售后：LLM 生成结构化计划，业务规则、RAG、工具治理、HITL、Redis 锁、SQLite 幂等和 trace 共同保证售后动作可控、可审计、可评测。

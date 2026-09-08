@@ -93,4 +93,4 @@ def _fallback_answer(text: str) -> str:
         return "离线模式：已根据命中的政策章节生成回答；涉及退款、补偿或创建工单时需要人工确认。"
     if "risk" in text.lower() or "风险" in text:
         return "离线模式：已根据类目聚合统计生成运营风险摘要，建议关注延迟率、低分率和取消率。"
-    return "离线模式：已完成处理。配置 OPENAI_API_KEY 后可启用真实模型生成。"
+    return "离线模式：已完成处理。配置 OpenAI-compatible API key 后可启用真实模型生成。"

@@ -1455,7 +1455,7 @@ wheels = [
 ]
 
 [[package]]
-name = "olist-marketplace-support-agent"
+name = "commerce-support-agent"
 version = "0.2.0"
 source = { virtual = "." }
 dependencies = [

@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from app.agent.actions import AgentActions
 from app.agent.graph import AgentGraph
+from app.config.llm_settings import resolve_llm_settings
 from app.llm.client import LlmClient
 from app.llm.guardrail import Guardrail
 from app.llm.intent_planner import IntentPlanner
@@ -31,10 +32,11 @@ tool_manager = build_business_tool_manager(
     runtime_store=runtime_store,
 )
 
+llm_settings = resolve_llm_settings(default_model="gpt-4o-mini")
 llm_client = LlmClient(
-    api_key=os.environ.get("OPENAI_API_KEY", "offline"),
-    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-    base_url=os.environ.get("OPENAI_BASE_URL"),
+    api_key=llm_settings.api_key,
+    model=llm_settings.model,
+    base_url=llm_settings.base_url,
 )
 runtime_backend = (
     os.environ.get("RUNTIME_STORE_BACKEND")
@@ -54,6 +56,7 @@ runtime_status = {
     "mode": llm_client.mode,
     "model": llm_client.model,
     "base_url": llm_client.base_url,
+    "provider": llm_settings.provider,
     "runtime_backend": runtime_backend,
     "rate_limit_per_minute": _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 1000),
 }

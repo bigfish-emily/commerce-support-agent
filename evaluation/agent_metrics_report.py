@@ -68,6 +68,7 @@ def main() -> None:
     metrics.extend(rag_metrics())
     metrics.extend(after_sales_ops_metrics())
     metrics.extend(e2e_metrics())
+    metrics.extend(customer_flow_metrics())
     metrics.extend(live_agent_metrics())
     metrics.extend(route_drift_metrics())
     metrics.extend(benchmark_metrics())
@@ -281,7 +282,7 @@ async def _tool_framework_checks() -> dict[str, int]:
 
     permission = await manager.call(
         "generate_after_sales_priority_report",
-        {"query": "生成售后运营日报"},
+        {"query": "生成审核台优先处理队列"},
         ToolCallContext(role="support_agent"),
     )
     checks.append((not permission.ok) and permission.error_code == "permission_denied")
@@ -513,7 +514,7 @@ def hybrid_metrics() -> list[Metric]:
 
 def after_sales_ops_metrics() -> list[Metric]:
     service = OlistService()
-    report = service.after_sales_priority_report("生成售后运营风险日报，列出优先跟进类目和订单")
+    report = service.after_sales_priority_report("生成审核台优先处理队列，列出最需要人工跟进的类目和订单")
     categories = list(report["high_risk_categories"])
     orders = list(report["priority_orders"])
 
@@ -525,31 +526,31 @@ def after_sales_ops_metrics() -> list[Metric]:
 
     return [
         Metric(
-            "运营决策",
+            "审核台辅助",
             "高风险类目覆盖率",
             _pct(len(categories), 5),
             "Top5",
-            "售后运营日报是否能输出可跟进的高风险类目列表。",
+            "审核台优先处理队列是否能输出可跟进的高风险类目列表。",
             "after_sales_priority_report 返回 high_risk_categories 的数量 / 5。",
         ),
         Metric(
-            "运营决策",
+            "审核台辅助",
             "高风险类目排序正确率",
             _pct(int(category_sorted), 1),
             str(len(categories)),
-            "类目是否按风险分从高到低排序，便于运营优先处理。",
+            "类目是否按风险分从高到低排序，便于审核台优先处理。",
             "risk_score 序列是否单调递减。",
         ),
         Metric(
-            "运营决策",
+            "审核台辅助",
             "类目行动建议覆盖率",
             _pct(category_actionable, len(categories)),
             str(len(categories)),
-            "每个高风险类目是否都有可执行的运营建议。",
+            "每个高风险类目是否都有可执行的审核建议。",
             "recommended_action 非空的比例。",
         ),
         Metric(
-            "运营决策",
+            "审核台辅助",
             "优先跟进订单覆盖率",
             _pct(len(orders), 8),
             "Top8",
@@ -557,7 +558,7 @@ def after_sales_ops_metrics() -> list[Metric]:
             "after_sales_priority_report 返回 priority_orders 的数量 / 8。",
         ),
         Metric(
-            "运营决策",
+            "审核台辅助",
             "优先跟进订单排序正确率",
             _pct(int(order_sorted), 1),
             str(len(orders)),
@@ -565,7 +566,7 @@ def after_sales_ops_metrics() -> list[Metric]:
             "priority_score 序列是否单调递减。",
         ),
         Metric(
-            "运营决策",
+            "审核台辅助",
             "订单行动建议覆盖率",
             _pct(order_actionable, len(orders)),
             str(len(orders)),
@@ -573,11 +574,11 @@ def after_sales_ops_metrics() -> list[Metric]:
             "recommended_action 非空且 reasons 非空的比例。",
         ),
         Metric(
-            "运营决策",
-            "运营建议只读/HITL 边界命中率",
+            "审核台辅助",
+            "审核建议只读/HITL 边界命中率",
             _pct(int(read_only_policy), 1),
             "1",
-            "运营决策报告是否明确把建议和退款/取消等副作用执行分开。",
+            "审核台建议是否明确把排序建议和退款/取消等副作用执行分开。",
             "decision_rules 中是否声明副作用仍需 HITL。",
         ),
     ]
@@ -636,6 +637,63 @@ def e2e_metrics() -> list[Metric]:
     ]
 
 
+def customer_flow_metrics() -> list[Metric]:
+    path = ROOT / "evaluation" / "customer_flow_eval_results.jsonl"
+    if not path.exists():
+        return [
+            Metric(
+                "产品主链路",
+                "customer flow eval status",
+                "not_run",
+                "0",
+                "消费者自助入口与审核台的端到端产品链路评估状态。",
+                "`python -m evaluation.customer_flow_eval` 会走 /customer/chat、/review 和 trace replay。",
+            )
+        ]
+    rows = load_jsonl(path)
+    if not rows:
+        return []
+    check_names = sorted({name for row in rows for name in row.get("checks", {})})
+    metrics = [
+        Metric(
+            "产品主链路",
+            "customer flow pass rate",
+            _pct(sum(bool(row.get("passed")) for row in rows), len(rows)),
+            str(len(rows)),
+            "消费者自助售后、人工审核台、越权拦截和审批执行是否按产品边界完成。",
+            (
+                "每条 customer flow case 的 HTTP、answer、task_plan、tool_calls、"
+                "HITL/auth checks 全部为 true 才算 pass。"
+            ),
+        )
+    ]
+    for name in check_names:
+        applicable_rows = [row for row in rows if name in row.get("checks", {})]
+        passed_count = sum(bool(row.get("checks", {}).get(name)) for row in applicable_rows)
+        metrics.append(
+            Metric(
+                "产品主链路",
+                f"customer flow {name}",
+                _pct(passed_count, len(applicable_rows)),
+                str(len(applicable_rows)),
+                _customer_flow_check_meaning(name),
+                f"customer_flow_eval_results.jsonl 中 checks.{name}=true 的比例。",
+            )
+        )
+    latencies = [float(row["latency_ms"]) for row in rows if isinstance(row.get("latency_ms"), int | float)]
+    metrics.append(
+        Metric(
+            "产品主链路",
+            "customer flow p95 latency",
+            f"{_percentile(latencies, 95):.2f} ms",
+            str(len(latencies)),
+            "消费者入口首轮响应的 p95，本地离线模式不包含真实模型网络时间。",
+            "按 customer_flow_eval 每条 case latency_ms 取 p95。",
+        )
+    )
+    return metrics
+
+
 def live_agent_metrics() -> list[Metric]:
     path = ROOT / "evaluation" / "live_agent_eval_results.jsonl"
     if not path.exists():
@@ -646,7 +704,8 @@ def live_agent_metrics() -> list[Metric]:
                 "not_run",
                 "0",
                 "真实 LLM 进入 planner/抽槽/生成/guard 主链路后的端到端评估状态。",
-                "`OPENAI_API_KEY=... python -m evaluation.live_agent_eval` 会生成结果。",
+                "`OPENAI_API_KEY=...` 或 `AIHUBMIX_API_KEY=...` 后运行 "
+                "`python -m evaluation.live_agent_eval` 会生成结果。",
                 api_key="是",
             )
         ]
@@ -893,7 +952,7 @@ def answer_quality_metrics() -> list[Metric]:
     for _query, answer, keywords in relevance_cases:
         relevant += int(any(keyword.lower() in answer.lower() for keyword in keywords))
 
-    return [
+    metrics = [
         Metric(
             "答案质量",
             "deterministic groundedness proxy",
@@ -910,21 +969,55 @@ def answer_quality_metrics() -> list[Metric]:
             "无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。",
             "answer 是否包含 query 期望的业务关键词。",
         ),
+    ]
+    judge_path = ROOT / "evaluation" / "llm_judge_eval_results.jsonl"
+    if not judge_path.exists():
+        metrics.append(
+            Metric(
+                "答案质量",
+                "LLM judge status",
+                "not_run",
+                "0",
+                "真实模型裁判评估状态；需要 API key 才能运行。",
+                (
+                    "`OPENAI_API_KEY=...` 或 `AIHUBMIX_API_KEY=...` 后运行 "
+                    "`python -m evaluation.llm_judge_eval` "
+                    "会生成 llm_judge_eval_results.jsonl。"
+                ),
+                api_key="是",
+            )
+        )
+        return metrics
+
+    judge_rows = load_jsonl(judge_path)
+    passed = sum(bool(row.get("scores", {}).get("pass_overall")) for row in judge_rows)
+    score_names = ["answer_relevance", "faithfulness", "tool_correctness", "hitl_correctness"]
+    averages = []
+    for name in score_names:
+        values = [
+            float(row.get("scores", {}).get(name))
+            for row in judge_rows
+            if isinstance(row.get("scores", {}).get(name), int | float)
+        ]
+        if values:
+            averages.append(f"{name}={sum(values) / len(values):.2f}/5")
+    metrics.append(
         Metric(
             "答案质量",
             "LLM judge 小样本",
-            "4 项均分 5.00/5，pass_rate 10/10",
-            "10",
+            f"pass_rate {passed}/{len(judge_rows)}; " + "; ".join(averages),
+            str(len(judge_rows)),
             "用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。",
             (
                 "`python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 "
                 "answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖类目风险、"
                 "政策边界、多意图 HITL、订单事实、发票、改地址、取消已送达订单、"
-                "运营日报、退款申请和 prompt injection。"
+                "审核台优先队列、退款申请和 prompt injection。"
             ),
             api_key="是",
-        ),
-    ]
+        )
+    )
+    return metrics
 
 
 def safety_metrics() -> list[Metric]:
@@ -1195,6 +1288,21 @@ def _live_check_meaning(name: str) -> str:
         "output_valid": "输出 guard 是否放行真实 Agent 回答。",
         "answer_keywords": "回答是否包含该业务问题必须出现的实体/政策/动作关键词或同义表达。",
     }.get(name, "真实 LLM Agent eval 检查项。")
+
+
+def _customer_flow_check_meaning(name: str) -> str:
+    return {
+        "http_200": "消费者入口或审核台接口是否返回成功响应。",
+        "answer_terms": "回答是否包含该产品场景必须出现的业务关键词。",
+        "sources": "政策问答是否返回可追溯的 policy/FAQ 来源。",
+        "task_plan": "trace replay 中的真实 task_plan 是否覆盖预期任务顺序。",
+        "tool_calls": "trace replay 中是否出现预期确定性工具调用。",
+        "review_requires_token": "审核台读取 case 是否必须携带 review token。",
+        "pending_review": "高风险售后动作是否暂停并进入审核台。",
+        "customer_cannot_confirm": "消费者是否无法通过 yes/no 自己批准高风险写动作。",
+        "review_approve_executes": "售后审核员 approve 后是否恢复 checkpoint 并执行幂等写工具。",
+        "unauthorized_blocked": "消费者查询非本人订单是否在进入 Agent 图前被拦截。",
+    }.get(name, "消费者自助售后产品链路检查项。")
 
 
 def _measure(fn: Callable[[], object], warmup: int = 20, runs: int = 200) -> list[float]:

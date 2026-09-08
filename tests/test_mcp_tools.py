@@ -22,7 +22,7 @@ def test_mcp_category_risk_tool() -> None:
 
 
 def test_mcp_after_sales_priority_report_tool() -> None:
-    result = generate_after_sales_priority_report("生成售后运营风险日报")
+    result = generate_after_sales_priority_report("生成审核台优先处理队列")
     assert result["high_risk_categories"]
     assert result["priority_orders"]
     assert "HITL" in result["decision_rules"][-1]

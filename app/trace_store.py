@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -39,7 +40,9 @@ def record_trace(
             """
         )
         _ensure_trace_schema(conn)
-        sources = result.get("retrieved_insights", []) or result.get("retrieved_policy", [])
+        sources = _redact_value(result.get("retrieved_insights", []) or result.get("retrieved_policy", []))
+        trajectory = _redact_value(result.get("trajectory_events", []))
+        after_sales_cases = _redact_value(result.get("after_sales_cases", []))
         conn.execute(
             """
             INSERT INTO agent_trace (
@@ -52,11 +55,11 @@ def record_trace(
                 time.time(),
                 session_id,
                 result.get("route_intent", ""),
-                user_message[:1000],
-                str(result.get("final_answer", ""))[:2000],
+                _redact_text(user_message)[:1000],
+                _redact_text(str(result.get("final_answer", "")))[:2000],
                 json.dumps(sources, ensure_ascii=False),
-                json.dumps(result.get("trajectory_events", []), ensure_ascii=False),
-                json.dumps(result.get("after_sales_cases", []), ensure_ascii=False),
+                json.dumps(trajectory, ensure_ascii=False),
+                json.dumps(after_sales_cases, ensure_ascii=False),
                 latency_ms,
                 status,
             ),
@@ -241,3 +244,31 @@ def _p95(values: list[float]) -> float:
     if not ordered:
         return 0.0
     return round(ordered[int(0.95 * (len(ordered) - 1))], 2)
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _redact_text(value)
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _redact_value(item) for key, item in value.items()}
+    return value
+
+
+def _redact_text(text: str) -> str:
+    redacted = re.sub(
+        r"\b[0-9a-fA-F]{32}\b",
+        lambda match: f"{match.group(0)[:8]}...{match.group(0)[-4:]}",
+        text,
+    )
+    redacted = re.sub(
+        r"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*(@[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
+        r"\1***\2",
+        redacted,
+    )
+    return re.sub(
+        r"\b1[3-9]\d{9}\b",
+        lambda match: f"{match.group(0)[:3]}****{match.group(0)[-4:]}",
+        redacted,
+    )

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>消费者自助售后 - commerce-support-agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="title-block">
+        <h1>消费者自助售后</h1>
+        <div class="subtitle">订单查询、政策解释和售后申请由 Agent 直接处理；高风险动作进入人工审核。</div>
+      </div>
+      <nav class="nav" aria-label="页面导航">
+        <a class="primary" href="/customer">消费者入口</a>
+        <a href="/review">审核台</a>
+        <a href="/">项目首页</a>
+      </nav>
+    </div>
+  </header>
+  <main class="grid">
+    <aside class="panel">
+      <div class="panel-head"><h2>常见诉求</h2></div>
+      <div class="panel-body stack" id="examples"></div>
+    </aside>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>和 Agent 对话</h2>
+        <div class="toolbar">
+          <button class="secondary" onclick="newSession()">新 session</button>
+          <button class="secondary" onclick="clearChat()">清空</button>
+        </div>
+      </div>
+      <div class="panel-body stack">
+        <div id="modeNotice" class="notice">正在检测模型运行模式...</div>
+        <div>
+          <label for="session">Session ID</label>
+          <input id="session" value="" autocomplete="off" />
+        </div>
+        <div>
+          <label for="message">你的问题</label>
+          <textarea id="message">帮我查一下订单 203096f03d82e0dffbc41ebc2e2bcfb7 的状态</textarea>
+        </div>
+        <div class="toolbar">
+          <button class="primary" id="sendButton" onclick="sendMessage()">发送</button>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="chat" id="chat" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/customer.js"></script>
+</body>
+</html>

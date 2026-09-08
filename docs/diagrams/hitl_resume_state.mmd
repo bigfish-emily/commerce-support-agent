@@ -1,12 +1,14 @@
 stateDiagram-v2
-    [*] --> NewRequest: 用户请求进入 /chat
+    [*] --> NewRequest: 消费者请求进入 /customer/chat
     NewRequest --> CheckPending: 读取 LangGraph checkpoint + Redis HITL TTL
     CheckPending --> InputGuard: 没有 pending
-    CheckPending --> PendingHandling: 有 pending
-    PendingHandling --> TimeoutPath: Redis TTL 不存在或 expires_at 过期
-    PendingHandling --> ResumeConfirm: yes / confirm / 确认
-    PendingHandling --> ResumeCancel: no / cancel / 取消
-    PendingHandling --> RemindUser: 普通新问题
+    CheckPending --> CustomerPendingReply: 有 pending
+    CustomerPendingReply --> [*]: 告知等待工作人员审核
+
+    [*] --> StaffReview: 售后人员进入 /review/sessions
+    StaffReview --> TimeoutPath: Redis TTL 不存在或 expires_at 过期
+    StaffReview --> ResumeConfirm: approve
+    StaffReview --> ResumeCancel: reject
 
     InputGuard --> PlanTasks: 业务域与安全检查通过
     PlanTasks --> SelectNextTask: 生成 task_plan
@@ -18,12 +20,11 @@ stateDiagram-v2
     BuildAfterSalesCase --> SelectNextTask: reject / clarify / low-risk execute 已结束
     BuildAfterSalesCase --> AwaitConfirmation: high-risk write 需要 HITL
     AwaitConfirmation --> Interrupted: interrupt() 持久化状态
-    Interrupted --> [*]: 首轮 HTTP 返回草稿和 yes/no 问题
+    Interrupted --> [*]: 返回用户安全话术并生成审核包
 
     TimeoutPath --> FinalizeEscalation: Command(resume="__hitl_timeout__")
-    ResumeConfirm --> FinalizeEscalation: Command(resume=user_message)
-    ResumeCancel --> FinalizeEscalation: Command(resume=user_message)
-    RemindUser --> [*]: 要求先确认或取消
+    ResumeConfirm --> FinalizeEscalation: Command(resume="__review_approve__")
+    ResumeCancel --> FinalizeEscalation: Command(resume="no")
     FinalizeEscalation --> SelectNextTask: 执行/取消后继续剩余任务
     SelectNextTask --> FinalizeAnswer: 无剩余任务
     FinalizeAnswer --> [*]: 返回最终 answer/sources/trace

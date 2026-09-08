@@ -1,5 +1,5 @@
 [project]
-name = "olist-marketplace-support-agent"
+name = "commerce-support-agent"
 version = "0.2.0"
 description = "Olist marketplace support Agent - FastAPI + LangGraph + public eval data"
 requires-python = ">=3.11"

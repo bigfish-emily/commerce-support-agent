@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.agent.actions import AgentActions
 from app.agent.graph import AgentGraph
 from app.agent.state import AgentState
+from app.config.llm_settings import resolve_llm_settings
 from app.llm.client import LlmClient
 from app.llm.guardrail import Guardrail
 from app.llm.intent_planner import IntentPlanner
@@ -68,7 +69,7 @@ CASES = [
         name="multi_intent_hitl",
         message=(
             "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，"
-            "并且说明退款政策，然后生成售后升级话术"
+            "并且说明退款政策，然后提交退款申请"
         ),
         expected=(
             "Agent should query order facts, answer refund policy, prepare escalation draft, "
@@ -109,7 +110,7 @@ CASES = [
     ),
     JudgeCase(
         name="ops_priority_queue",
-        message="生成一份售后运营日报，列出最该优先跟进的类目和订单",
+        message="生成审核台优先处理队列，列出最该人工跟进的类目和订单",
         expected=(
             "Answer should call the operations report tool, provide high-risk categories, "
             "priority orders, and make clear suggestions are read-only."
@@ -154,19 +155,16 @@ async def main() -> None:
     load_dotenv()
     offset = int(os.environ.get("LLM_JUDGE_OFFSET", "0"))
     limit = int(os.environ.get("LLM_JUDGE_LIMIT", "10"))
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("AIHUBMIX_API_KEY")
-    if not api_key:
+    settings = resolve_llm_settings(default_model="coding-glm-5-free")
+    if settings.provider == "offline":
         raise SystemExit(
             "OPENAI_API_KEY or AIHUBMIX_API_KEY is not set. Put one in a local .env file "
             "or the current shell before running LLM-as-Judge."
         )
-    base_url = os.environ.get("OPENAI_BASE_URL")
-    if not base_url and os.environ.get("AIHUBMIX_API_KEY"):
-        base_url = "https://aihubmix.com/v1"
     llm_client = LlmClient(
-        api_key=api_key,
-        model=os.environ.get("OPENAI_MODEL", "coding-glm-5-free"),
-        base_url=base_url or "https://api.deepseek.com",
+        api_key=settings.api_key,
+        model=settings.model,
+        base_url=settings.base_url or "https://api.deepseek.com",
     )
     graph = _build_graph(llm_client)
     guardrail = Guardrail(llm_client.chat_openai)

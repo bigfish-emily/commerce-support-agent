@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>售后审核台 - commerce-support-agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="title-block">
+        <h1>售后审核台</h1>
+        <div class="subtitle">查看 Agent 生成的售后 case、证据、政策依据和执行草稿，再决定是否调用写工具。</div>
+      </div>
+      <nav class="nav" aria-label="页面导航">
+        <a href="/customer">消费者入口</a>
+        <a class="primary" href="/review">审核台</a>
+        <a href="/">项目首页</a>
+      </nav>
+    </div>
+  </header>
+  <main class="review-grid">
+    <section class="panel">
+      <div class="panel-head"><h2>审核操作</h2></div>
+      <div class="panel-body stack">
+        <div class="notice">输入消费者对话中的 Session ID，读取待审核售后 case。审核通过后才会恢复 LangGraph checkpoint 并调用写工具。</div>
+        <div>
+          <label for="session">Session ID</label>
+          <input id="session" value="" autocomplete="off" />
+        </div>
+        <div>
+          <label for="reviewToken">Review Token</label>
+          <input id="reviewToken" value="local-review-demo" autocomplete="off" />
+        </div>
+        <div class="toolbar">
+          <button class="primary" onclick="loadReview()">读取审核包</button>
+          <button onclick="approveReview()">审核通过</button>
+          <button onclick="rejectReview()">审核驳回</button>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="panel">
+          <div class="panel-head"><h2>Case 摘要</h2></div>
+          <div class="panel-body" id="caseSummary"></div>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>审核包与观测</h2>
+        <div class="toolbar">
+          <button onclick="loadCaseMetrics()">Case Metrics</button>
+          <button onclick="loadSummary()">Trace Summary</button>
+          <button onclick="loadTraces()">Session Trace</button>
+        </div>
+      </div>
+      <div class="panel-body stack">
+        <pre id="observability"></pre>
+      </div>
+    </section>
+  </main>
+  <script src="/static/review.js"></script>
+</body>
+</html>

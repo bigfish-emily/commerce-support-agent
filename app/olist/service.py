@@ -371,7 +371,7 @@ def format_order_status(status: OrderStatusView | None) -> str:
 def format_after_sales_report(report: dict[str, object]) -> str:
     categories = report.get("high_risk_categories", [])
     orders = report.get("priority_orders", [])
-    lines = ["售后运营决策建议：", str(report.get("summary", "")), "", "高风险类目 Top："]
+    lines = ["审核台优先处理建议：", str(report.get("summary", "")), "", "高风险类目 Top："]
     for item in categories[:5]:
         lines.append(
             "- {category}: risk_score={risk_score:.3f}, delay={delay_rate:.2%}, "
@@ -398,7 +398,7 @@ def format_after_sales_report(report: dict[str, object]) -> str:
             )
         )
     lines.append("")
-    lines.append("注意：以上是只读运营建议；退款、取消、改地址、发票和工单创建仍需 HITL 确认。")
+    lines.append("注意：以上是审核台只读排序建议；退款、取消、改地址、发票和工单创建仍需 HITL 确认。")
     return "\n".join(lines)
 
 

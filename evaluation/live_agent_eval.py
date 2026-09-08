@@ -14,6 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from app.agent.actions import AgentActions
 from app.agent.graph import AgentGraph
 from app.agent.state import AgentState
+from app.config.llm_settings import resolve_llm_settings
 from app.llm.client import LlmClient
 from app.llm.guardrail import Guardrail
 from app.llm.intent_planner import IntentPlanner
@@ -68,7 +69,7 @@ CASES = [
     ),
     LiveCase(
         name="ops_decision",
-        message="生成售后运营风险日报，列出优先跟进类目和订单",
+        message="生成审核台优先处理队列，列出最需要人工跟进的类目和订单",
         expected_tasks=["ops_decision"],
         expected_tools=["generate_after_sales_priority_report"],
         requires_hitl=False,
@@ -78,7 +79,7 @@ CASES = [
         name="multi_intent_hitl",
         message=(
             "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，"
-            "然后生成售后升级话术"
+            "然后提交退款申请"
         ),
         expected_tasks=["order_status", "policy", "escalation"],
         expected_tools=["get_order_status", "search_policy_knowledge", "prepare_side_effect"],
@@ -207,11 +208,11 @@ CASES = [
     ),
     LiveCase(
         name="ops_decision_daily_report",
-        message="输出今天的售后运营日报",
+        message="输出审核台今天的优先处理队列",
         expected_tasks=["ops_decision"],
         expected_tools=["generate_after_sales_priority_report"],
         requires_hitl=False,
-        answer_keyword_groups=(("售后运营决策", "运营日报"), ("高风险类目",), ("优先跟进订单",)),
+        answer_keyword_groups=(("审核台优先处理", "优先处理"), ("高风险类目",), ("优先跟进订单",)),
     ),
     LiveCase(
         name="ops_decision_priority_orders",
@@ -271,11 +272,11 @@ CASES = [
     ),
     LiveCase(
         name="multi_ops_policy",
-        message="生成售后风险日报，同时说明退款补偿边界",
+        message="生成审核台优先处理队列，同时说明退款补偿边界",
         expected_tasks=["ops_decision", "policy"],
         expected_tools=["generate_after_sales_priority_report", "search_policy_knowledge"],
         requires_hitl=False,
-        answer_keyword_groups=(("售后运营决策",), ("政策问答",), ("补偿", "退款")),
+        answer_keyword_groups=(("审核台优先处理",), ("政策问答",), ("补偿", "退款")),
     ),
     LiveCase(
         name="multi_qa_escalation",
@@ -292,10 +293,16 @@ async def main() -> None:
     limit = int(os.environ.get("LIVE_AGENT_EVAL_LIMIT", "30"))
     offset = int(os.environ.get("LIVE_AGENT_EVAL_OFFSET", "0"))
     cases = CASES[offset : offset + limit]
+    settings = resolve_llm_settings(default_model="deepseek-v4-flash")
+    if settings.provider == "offline":
+        raise SystemExit(
+            "OPENAI_API_KEY or AIHUBMIX_API_KEY is not set. Set one in the current "
+            "shell before running live Agent evaluation."
+        )
     llm_client = LlmClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model=os.environ.get("OPENAI_MODEL", "deepseek-v4-flash"),
-        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+        api_key=settings.api_key,
+        model=settings.model,
+        base_url=settings.base_url or "https://api.deepseek.com",
     )
     graph = _build_graph(llm_client)
     guardrail = Guardrail(llm_client.chat_openai)

@@ -5,9 +5,10 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     session_id: str | None = None
     tenant_id: str = Field(default="olist-demo", min_length=1, max_length=64)
-    user_id: str = Field(default="demo-user", min_length=1, max_length=128)
-    role: str = Field(default="support_agent", min_length=1, max_length=64)
+    user_id: str = Field(default="demo-customer", min_length=1, max_length=128)
+    role: str = Field(default="customer", min_length=1, max_length=64)
     auth_scopes: list[str] | None = None
+    channel: str = Field(default="customer_self_service", min_length=1, max_length=64)
 
 
 class ChatResponse(BaseModel):
@@ -48,3 +49,21 @@ class RuntimeStatusResponse(BaseModel):
     base_url: str
     runtime_backend: str = "memory"
     rate_limit_per_minute: int = 1000
+
+
+class ReviewSessionResponse(BaseModel):
+    session_id: str
+    has_pending: bool
+    pending_side_effect: dict = Field(default_factory=dict)
+    escalation_draft: dict = Field(default_factory=dict)
+    after_sales_cases: list[dict] = Field(default_factory=list)
+    completed_tasks: list[dict] = Field(default_factory=list)
+    trajectory_events: list[dict] = Field(default_factory=list)
+    customer_safe_summary: str = ""
+
+
+class ReviewActionRequest(BaseModel):
+    reviewer_id: str = Field(default="demo-reviewer", min_length=1, max_length=128)
+    tenant_id: str = Field(default="olist-demo", min_length=1, max_length=64)
+    role: str = Field(default="after_sales_operator", min_length=1, max_length=64)
+    auth_scopes: list[str] | None = None

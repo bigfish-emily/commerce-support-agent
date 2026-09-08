@@ -5,7 +5,7 @@ from app.olist.service import OrderStatusView
 
 
 class AfterSalesDecisionEngine:
-    """Rule-backed decision layer for e-commerce after-sales case resolution.
+    """Rule-backed decision layer for e-commerce after-sales handling.
 
     LLMs can understand the customer's wording, but refund/cancellation/address
     writes need deterministic policy gates. This engine turns order facts and

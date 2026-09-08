@@ -4,6 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.config.llm_settings import resolve_llm_settings
 from app.llm.client import LlmClient
 from app.llm.intent_planner import IntentPlanner
 
@@ -11,10 +12,16 @@ load_dotenv()
 
 EVAL_PATH = Path(__file__).resolve().parents[1] / "data" / "olist_derived" / "eval_cases.jsonl"
 
+settings = resolve_llm_settings(default_model="gpt-4o-mini")
+if settings.provider == "offline":
+    raise SystemExit(
+        "OPENAI_API_KEY or AIHUBMIX_API_KEY is not set. Set one before running "
+        "intent planner live evaluation."
+    )
 llm_client = LlmClient(
-    api_key=os.environ["OPENAI_API_KEY"],
-    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-    base_url=os.environ.get("OPENAI_BASE_URL"),
+    api_key=settings.api_key,
+    model=settings.model,
+    base_url=settings.base_url,
 )
 
 intent_planner = IntentPlanner(llm_client.chat_openai)

@@ -1,9 +1,9 @@
 flowchart TD
-    A[1 User message /chat<br/>support agent or ops manager] --> B{2 Pending side effect<br/>in current session?}
-    B -- yes --> C{3 Reply type}
-    C -- confirm --> D[Resume LangGraph checkpoint<br/>enter finalize_escalation]
-    C -- cancel or timeout --> E[Clear pending state<br/>record canceled/timeout]
-    C -- unrelated text --> F[Ask user to confirm or cancel first<br/>prevent HITL bypass]
+    A[1 Customer message /customer/chat] --> B{2 Pending staff review<br/>in current session?}
+    Staff[Staff review console<br/>/review/sessions] --> C{3 Review decision}
+    B -- yes --> F[Tell customer case is waiting<br/>staff review]
+    C -- approve --> D[Resume LangGraph checkpoint<br/>as after_sales_operator]
+    C -- reject or timeout --> E[Clear pending state<br/>record rejected/timeout]
     B -- no --> G[4 Input Guard<br/>business domain + injection risk]
     G -- rejected --> H[Safe rejection<br/>no tool execution]
     G -- accepted --> I[5 LLM Planner<br/>decompose task_plan]
@@ -20,7 +20,7 @@ flowchart TD
     R -- stop --> S[Safe rejection]
     R -- clarify --> T[Ask for missing information]
     R -- execute --> U[Low-risk automatic execution]
-    R -- hitl --> V[LangGraph interrupt<br/>wait for confirmation]
+    R -- hitl --> V[LangGraph interrupt<br/>create staff review packet]
     U --> W[15 ToolCallManager]
     D --> W
     W --> Y[16 execute_side_effect<br/>Redis lock + SQLite idempotency]

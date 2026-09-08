@@ -13,6 +13,7 @@ class AgentState(TypedDict):
     user_id: NotRequired[str]
     role: NotRequired[str]
     auth_scopes: NotRequired[list[str]]
+    channel: NotRequired[str]
     messages: list[dict[str, str]]
     route_intent: str
     task_plan: list[dict[str, object]]

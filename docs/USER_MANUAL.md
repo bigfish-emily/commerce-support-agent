@@ -1,6 +1,6 @@
 # E-Commerce Support Agent 使用手册
 
-这是一套面向电商客服与售后 case resolution 的 Agent。你可以把自己当成客服、售后主管或消费者，通过网页输入一句自然语言，让 Agent 完成订单查询、政策问答、类目风险分析、退款/取消/改地址等售后请求判断，并在需要改动业务状态时进入 HITL 确认。
+这是一套面向消费者自助售后和人工审核的 Agent。消费者在网页里直接输入订单查询、退款、取消、改地址、发票或投诉诉求；Agent 会先回答可直接处理的问题，遇到退款/取消/改地址/投诉升级这类高风险写动作时生成售后 case，并交给右侧审核台确认后再执行。
 
 ## 1. 启动方式
 
@@ -14,6 +14,8 @@
 
 ```text
 http://127.0.0.1:8000/
+http://127.0.0.1:8000/customer
+http://127.0.0.1:8000/review
 ```
 
 如果只想看 API 文档，打开：
@@ -22,18 +24,31 @@ http://127.0.0.1:8000/
 http://127.0.0.1:8000/docs
 ```
 
-默认不配置 API key 也能测试，系统会进入离线模式：任务规划、抽取、风控和回答生成使用本地 fallback。配置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL` 后会启用真实 OpenAI-compatible 模型，例如 DeepSeek。
+默认不配置 API key 也能测试，系统会进入离线模式：任务规划、抽取、风控和回答生成使用本地 fallback。配置 `OPENAI_API_KEY` 或 `AIHUBMIX_API_KEY` 后会启用真实 OpenAI-compatible 模型；模型名用 `OPENAI_MODEL` 指定。
+
+消费者入口会做订单归属检查。默认 demo 账号只允许查询样例订单 `203096f03d82e0dffbc41ebc2e2bcfb7`，真实部署时这里应接企业 IAM/OMS 的订单归属接口。
 
 ## 2. 网页上怎么操作
 
-打开首页后，你会看到三栏：
+打开首页后，你会看到两个入口：
 
-- 左侧：示例任务按钮，点击后会把测试句子填入输入框。
-- 中间：对话测试区，填写 `Session ID` 和用户输入，点击发送。
-- 右侧：Trace 与可观测性，可以查看整体 summary 或当前 session 的执行轨迹。
-- 右侧 `Case Metrics`：按售后 case 聚合自动解决率、HITL 占比、错误写动作拦截、政策命中率、工具错误率、p95 延迟和单 case 成本。
+- `消费者入口`：面向真实用户的自助售后对话。
+- `审核台`：面向售后人员的 HITL case 审核。
 
-`Session ID` 很重要。售后升级、退款、取消订单这类 HITL 流程需要同一个 session 才能继续确认。
+消费者入口包含两栏：
+
+- 左侧：消费者诉求模板，点击后会把测试句子填入输入框。
+- 右侧：消费者自助对话区，填写 `Session ID` 和用户输入，点击发送。
+
+审核台包含两栏：
+
+- 左侧：读取待审核 case，并执行 approve/reject。
+- 右侧：查看审核包、case metrics、trace summary 和当前 session 轨迹。
+- `Case Metrics`：按售后 case 聚合自动解决率、HITL 占比、错误写动作拦截、政策命中率、工具错误率、p95 延迟和单 case 成本。
+
+审核台和单 session trace replay 默认携带本地演示 token：`X-Review-Token: local-review-demo`。可以用环境变量 `REVIEW_API_TOKEN` 改成本机自己的值。
+
+`Session ID` 很重要。消费者提交高风险售后申请后，审核台会按同一个 session 读取 case 草稿、证据、政策依据和 Verifier 结果。
 
 ## 3. 推荐测试路径
 
@@ -65,7 +80,21 @@ http://127.0.0.1:8000/docs
 - sources 会出现相关政策章节，例如补偿边界或人工审核类章节。
 - trace 中会看到 `search_policy_knowledge`。
 
-### 3.3 类目运营风险
+### 3.3 订单归属保护
+
+输入：
+
+```text
+帮我查一下订单 00000000000000000000000000000000 的状态
+```
+
+预期结果：
+
+- 消费者入口会拒绝查询不属于当前账号的订单。
+- trace 中记录 `unauthorized_order_access`，但会对用户消息和订单号做脱敏。
+- 内部审核台或企业后台可以在具备权限的情况下查看完整 case 证据包。
+
+### 3.4 内部风险画像
 
 输入：
 
@@ -75,37 +104,38 @@ health beauty 类目有什么运营风险？
 
 预期结果：
 
-- 返回 `health_beauty` 类目的订单量、延迟率、低分率、取消率等运营风险摘要。
-- 这条链路会测试 query rewriting：用户写 `health beauty`，系统能命中真实类目 `health_beauty`。
+- 内部 `/chat` 可返回 `health_beauty` 类目的订单量、延迟率、低分率、取消率等风险摘要。
+- 消费者入口 `/customer/chat` 默认没有运营分析权限，真实部署中这类问题属于商家/运营后台。
+- 这类画像主要用于审核台排序、case 风险解释和运营复盘，不是消费者自助主链路。
 
-### 3.4 多意图 + HITL
+### 3.5 多意图 + 人工审核
 
 先输入：
 
 ```text
-查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后生成售后升级话术
+查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后申请退款
 ```
 
 预期结果：
 
 - Agent 会先查订单。
 - 再检索退款政策。
-- 最后生成售后升级草稿。
-- 因为最后一步是副作用动作，会停在 HITL，询问是否确认执行。
+- 最后生成售后申请。
+- 因为最后一步是副作用动作，会停在 HITL，消费者侧显示“已提交审核”。
 
-然后保持同一个 `Session ID`，输入：
+然后保持同一个 `Session ID`，在右侧点击：
 
 ```text
-yes
+审核包 -> 审核通过
 ```
 
 预期结果：
 
 - 系统恢复上一次中断的 LangGraph 状态。
-- 执行幂等副作用工具。
+- 以售后人员权限执行幂等副作用工具。
 - 返回类似 `CASE-...` 的工单结果。
 
-### 3.5 退款申请
+### 3.6 退款申请
 
 输入：
 
@@ -116,10 +146,10 @@ yes
 预期结果：
 
 - Agent 生成退款/补偿申请草稿。
-- 停在 HITL。
-- 同 session 回复 `确认` 后，返回 `REFUND-...`。
+- 消费者侧提示已进入审核。
+- 右侧审核台点击 `审核通过` 后，返回 `REFUND-...`。
 
-### 3.6 投诉升级
+### 3.7 投诉升级
 
 输入：
 
@@ -130,10 +160,10 @@ yes
 预期结果：
 
 - Agent 会构造 `complaint_escalation` 类型的 `AfterSalesCase`。
-- 决策层会给出证据、政策依据、Verifier 结果和客户回复草稿。
-- 因为这是写入 CRM/投诉队列的副作用动作，会进入 HITL；确认后返回 `COMP-...`。
+- 消费者侧只显示安全回复。
+- 审核台可以看到证据、政策依据、Verifier 结果和客户回复草稿；通过后返回 `COMP-...`。
 
-### 3.7 参数澄清
+### 3.8 参数澄清
 
 输入：
 
@@ -225,6 +255,13 @@ Case Metrics
 OPENAI_API_KEY=你的 deepseek key
 OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-v4-flash
+```
+
+也可以使用 AIHubMix：
+
+```powershell
+$env:AIHUBMIX_API_KEY="你的 key"
+$env:OPENAI_MODEL="平台上的低价 chat 模型"
 ```
 
 重新启动服务后，规划、抽槽、政策回答、类目分析回答会走真实模型。

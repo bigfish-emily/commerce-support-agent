@@ -587,7 +587,7 @@ def build_business_tool_manager(
     cache_backend: ToolCacheBackend | None = None,
     runtime_store: RuntimeStore | None = None,
 ) -> ToolCallManager:
-    support_roles = frozenset({"support_agent", "after_sales_operator", "ops_manager", "admin"})
+    support_roles = frozenset({"customer", "support_agent", "after_sales_operator", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
     after_sales_engine = AfterSalesDecisionEngine()
 

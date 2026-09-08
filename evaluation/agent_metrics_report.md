@@ -50,30 +50,31 @@ Live LLM 与 LLM-as-Judge 行读取已落盘结果；修改 LangGraph 节点、p
 | RAG/检索 | 客服对话 hybrid hybrid_rerank capability@1 | 77.00% | 100 | 首位召回文档的能力标签是否匹配。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid hybrid_rerank capability@5 | 90.00% | 100 | Top5 是否出现同 capability 文档。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
 | RAG/检索 | 客服对话 hybrid hybrid_rerank capability_mrr@5 | 82.57% | 100 | 同 capability 文档越靠前分数越高。 | ResCommons test query 检索 train corpus，比较召回文档 metadata。 | 否 |
-| 运营决策 | 高风险类目覆盖率 | 100.00% | Top5 | 售后运营日报是否能输出可跟进的高风险类目列表。 | after_sales_priority_report 返回 high_risk_categories 的数量 / 5。 | 否 |
-| 运营决策 | 高风险类目排序正确率 | 100.00% | 5 | 类目是否按风险分从高到低排序，便于运营优先处理。 | risk_score 序列是否单调递减。 | 否 |
-| 运营决策 | 类目行动建议覆盖率 | 100.00% | 5 | 每个高风险类目是否都有可执行的运营建议。 | recommended_action 非空的比例。 | 否 |
-| 运营决策 | 优先跟进订单覆盖率 | 100.00% | Top8 | 是否能从订单事实中挑出售后优先跟进队列。 | after_sales_priority_report 返回 priority_orders 的数量 / 8。 | 否 |
-| 运营决策 | 优先跟进订单排序正确率 | 100.00% | 8 | 订单队列是否按售后优先级从高到低排序。 | priority_score 序列是否单调递减。 | 否 |
-| 运营决策 | 订单行动建议覆盖率 | 100.00% | 8 | 每个优先订单是否给出原因和建议动作。 | recommended_action 非空且 reasons 非空的比例。 | 否 |
-| 运营决策 | 运营建议只读/HITL 边界命中率 | 100.00% | 1 | 运营决策报告是否明确把建议和退款/取消等副作用执行分开。 | decision_rules 中是否声明副作用仍需 HITL。 | 否 |
+| 审核台辅助 | 高风险类目覆盖率 | 100.00% | Top5 | 审核台优先处理队列是否能输出可跟进的高风险类目列表。 | after_sales_priority_report 返回 high_risk_categories 的数量 / 5。 | 否 |
+| 审核台辅助 | 高风险类目排序正确率 | 100.00% | 5 | 类目是否按风险分从高到低排序，便于审核台优先处理。 | risk_score 序列是否单调递减。 | 否 |
+| 审核台辅助 | 类目行动建议覆盖率 | 100.00% | 5 | 每个高风险类目是否都有可执行的审核建议。 | recommended_action 非空的比例。 | 否 |
+| 审核台辅助 | 优先跟进订单覆盖率 | 100.00% | Top8 | 是否能从订单事实中挑出售后优先跟进队列。 | after_sales_priority_report 返回 priority_orders 的数量 / 8。 | 否 |
+| 审核台辅助 | 优先跟进订单排序正确率 | 100.00% | 8 | 订单队列是否按售后优先级从高到低排序。 | priority_score 序列是否单调递减。 | 否 |
+| 审核台辅助 | 订单行动建议覆盖率 | 100.00% | 8 | 每个优先订单是否给出原因和建议动作。 | recommended_action 非空且 reasons 非空的比例。 | 否 |
+| 审核台辅助 | 审核建议只读/HITL 边界命中率 | 100.00% | 1 | 审核台建议是否明确把排序建议和退款/取消等副作用执行分开。 | decision_rules 中是否声明副作用仍需 HITL。 | 否 |
 | 端到端/轨迹 | 轨迹包含 plan 节点 | 100.00% | 245 | 每次任务是否先产生可审计 task plan。 | trajectory_events 中是否包含 node=plan_tasks。 | 否 |
 | 端到端/轨迹 | 轨迹 intent 覆盖率 | 100.00% | 245 | 执行轨迹是否覆盖 gold route intent。 | expected_intent 是否出现在 trajectory event intent 列表。 | 否 |
 | 端到端/轨迹 | 轨迹工具正确率 | 100.00% | 245 | 轨迹中是否调用了 intent 对应工具。 | event.details.tool == expected_tool(expected_intent)。 | 否 |
 | 端到端/轨迹 | 副作用受控终态覆盖率 | 100.00% | 245 | 副作用任务是否进入 HITL、低风险执行、拒绝或澄清等受控终态。 | escalation case 是否出现 awaiting_confirmation/completed/reject/ask_clarification 等合法状态。 | 否 |
 | 端到端/轨迹 | 轨迹无失败率 | 100.00% | 245 | 离线 gold 轨迹是否没有 failed/blocked 事件。 | trajectory statuses 中不含 failed/blocked。 | 否 |
-| 真实 LLM Agent | live case pass rate | 100.00% | 30 | 真实 LLM 作为 planner/抽槽/生成器进入 Agent 主链路后，端到端 case 是否全部通过。 | 每条 case 的 task/tool/HITL/trace/output/answer checks 全部为 true 才算 pass。 | 是 |
-| 真实 LLM Agent | live task_exact | 100.00% | 30 | LLM planner 生成的任务列表是否与 gold 完全一致。 | live_agent_eval_results.jsonl 中 checks.task_exact=true 的比例。 | 是 |
-| 真实 LLM Agent | live tools_used | 100.00% | 30 | 真实轨迹是否调用了该任务需要的确定性工具。 | live_agent_eval_results.jsonl 中 checks.tools_used=true 的比例。 | 是 |
-| 真实 LLM Agent | live hitl_correct | 100.00% | 30 | 副作用任务是否进入 HITL，只读任务是否不误触发 HITL。 | live_agent_eval_results.jsonl 中 checks.hitl_correct=true 的比例。 | 是 |
-| 真实 LLM Agent | live no_failed_event | 100.00% | 30 | 真实轨迹里是否没有 failed/blocked 事件。 | live_agent_eval_results.jsonl 中 checks.no_failed_event=true 的比例。 | 是 |
-| 真实 LLM Agent | live output_valid | 100.00% | 30 | 输出 guard 是否放行真实 Agent 回答。 | live_agent_eval_results.jsonl 中 checks.output_valid=true 的比例。 | 是 |
-| 真实 LLM Agent | live answer_keywords | 100.00% | 30 | 回答是否包含该业务问题必须出现的实体/政策/动作关键词或同义表达。 | live_agent_eval_results.jsonl 中 checks.answer_keywords=true 的比例。 | 是 |
-| 真实 LLM Agent | live p50 latency | 10830.09 ms | 30 | 包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p50。 | 按 live_agent_eval 每条 case latency_ms 取 p50。 | 是 |
-| 真实 LLM Agent | live p95 latency | 26052.12 ms | 30 | 包含真实 LLM 网络调用、JSON fallback、工具执行和 output guard 的端到端 p95。 | 按 live_agent_eval 每条 case latency_ms 取 p95。 | 是 |
-| 性能/成本 | live approx p50 turn tokens | not_recorded | 30 | 旧版 live eval 结果未记录 token 估算字段；下一次 live eval 会自动写入。 | 重新运行 evaluation.live_agent_eval 后按 approx_turn_tokens 取 p50。 | 是 |
-| 真实 LLM Agent | route drift first-intent match | 100.00% | 30 | 同一 live 回归集上，LLM planner 首个业务意图是否偏离 pinned expectation。 | first(actual_tasks) == first(expected_tasks)。 | 是 |
-| 真实 LLM Agent | route drift task-sequence match | 100.00% | 30 | 同一 live 回归集上，多任务序列是否偏离 pinned expectation，用于检测 prompt/model 版本漂移。 | actual_tasks == expected_tasks。 | 是 |
+| 产品主链路 | customer flow pass rate | 100.00% | 8 | 消费者自助售后、人工审核台、越权拦截和审批执行是否按产品边界完成。 | 每条 customer flow case 的 HTTP、answer、task_plan、tool_calls、HITL/auth checks 全部为 true 才算 pass。 | 否 |
+| 产品主链路 | customer flow answer_terms | 100.00% | 8 | 回答是否包含该产品场景必须出现的业务关键词。 | customer_flow_eval_results.jsonl 中 checks.answer_terms=true 的比例。 | 否 |
+| 产品主链路 | customer flow customer_cannot_confirm | 100.00% | 4 | 消费者是否无法通过 yes/no 自己批准高风险写动作。 | customer_flow_eval_results.jsonl 中 checks.customer_cannot_confirm=true 的比例。 | 否 |
+| 产品主链路 | customer flow http_200 | 100.00% | 8 | 消费者入口或审核台接口是否返回成功响应。 | customer_flow_eval_results.jsonl 中 checks.http_200=true 的比例。 | 否 |
+| 产品主链路 | customer flow pending_review | 100.00% | 4 | 高风险售后动作是否暂停并进入审核台。 | customer_flow_eval_results.jsonl 中 checks.pending_review=true 的比例。 | 否 |
+| 产品主链路 | customer flow review_approve_executes | 100.00% | 1 | 售后审核员 approve 后是否恢复 checkpoint 并执行幂等写工具。 | customer_flow_eval_results.jsonl 中 checks.review_approve_executes=true 的比例。 | 否 |
+| 产品主链路 | customer flow review_requires_token | 100.00% | 4 | 审核台读取 case 是否必须携带 review token。 | customer_flow_eval_results.jsonl 中 checks.review_requires_token=true 的比例。 | 否 |
+| 产品主链路 | customer flow sources | 100.00% | 8 | 政策问答是否返回可追溯的 policy/FAQ 来源。 | customer_flow_eval_results.jsonl 中 checks.sources=true 的比例。 | 否 |
+| 产品主链路 | customer flow task_plan | 100.00% | 6 | trace replay 中的真实 task_plan 是否覆盖预期任务顺序。 | customer_flow_eval_results.jsonl 中 checks.task_plan=true 的比例。 | 否 |
+| 产品主链路 | customer flow tool_calls | 100.00% | 6 | trace replay 中是否出现预期确定性工具调用。 | customer_flow_eval_results.jsonl 中 checks.tool_calls=true 的比例。 | 否 |
+| 产品主链路 | customer flow unauthorized_blocked | 100.00% | 1 | 消费者查询非本人订单是否在进入 Agent 图前被拦截。 | customer_flow_eval_results.jsonl 中 checks.unauthorized_blocked=true 的比例。 | 否 |
+| 产品主链路 | customer flow p95 latency | 19.80 ms | 8 | 消费者入口首轮响应的 p95，本地离线模式不包含真实模型网络时间。 | 按 customer_flow_eval 每条 case latency_ms 取 p95。 | 否 |
+| 真实 LLM Agent | live eval status | not_run | 0 | 真实 LLM 进入 planner/抽槽/生成/guard 主链路后的端到端评估状态。 | `OPENAI_API_KEY=...` 或 `AIHUBMIX_API_KEY=...` 后运行 `python -m evaluation.live_agent_eval` 会生成结果。 | 是 |
 | 外部Benchmark | tau2-bench retail pass^1 | 91.23% | 114 tasks | 官方 retail 客服任务中至少一次完成任务并通过 reward 的比例。 | tau2-bench 对每个 task 的 reward>=1 计算 pass^1；当前是 DeepSeek retail base split 114-task local run。 | 是 |
 | 外部Benchmark | tau2-bench retail avg reward | 91.23% | 114 | 官方 reward 均值，综合 DB/env/NL assertion 等检查。 | 读取 tau2 result reward_info.reward 后求平均。 | 是 |
 | 外部Benchmark | tau2-bench retail DB match | 105/114 (92.11%) | 114 | 副作用工具执行后，最终数据库状态是否与官方 gold state 匹配。 | reward_info.db_check.db_match=true 的数量 / 有 DB check 的 simulation 数。 | 是 |
@@ -84,13 +85,13 @@ Live LLM 与 LLM-as-Judge 行读取已落盘结果；修改 LangGraph 节点、p
 | 外部Benchmark | tau2-bench retail avg total cost | $0.006036 | 114 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
-| 答案质量 | LLM judge 小样本 | 4 项均分 5.00/5，pass_rate 10/10 | 10 | 用裁判模型评估 answer relevance、faithfulness、tool correctness、HITL correctness。 | `python -m evaluation.llm_judge_eval` 真实运行 Agent 后把 answer/task_plan/trace/context 交给 DeepSeek judge；当前覆盖类目风险、政策边界、多意图 HITL、订单事实、发票、改地址、取消已送达订单、运营日报、退款申请和 prompt injection。 | 是 |
+| 答案质量 | LLM judge status | not_run | 0 | 真实模型裁判评估状态；需要 API key 才能运行。 | `OPENAI_API_KEY=...` 或 `AIHUBMIX_API_KEY=...` 后运行 `python -m evaluation.llm_judge_eval` 会生成 llm_judge_eval_results.jsonl。 | 是 |
 | 安全/风控 | 启发式输入拒绝准确率 | 100.00% | 5 | LLM guard 不可用时，明显越界/注入请求是否被拒绝。 | unsafe fixture 中 on_topic=false 的比例。 | 否 |
 | 安全/风控 | 启发式输入放行准确率 | 100.00% | 5 | 正常客服问题和 HITL 短回复是否不会被误杀。 | safe fixture 中 on_topic=true 的比例。 | 否 |
 | 安全/风控 | 输出坏结果拦截准确率 | 100.00% | 4 | 空输出、TODO、traceback 是否被拦截，正常回答是否放行。 | deterministic output guard 与 expected label 是否一致。 | 否 |
 | 性能/成本 | order_status_lookup p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | category_risk_retrieval p95 延迟 | 0.217 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
-| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.157 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | category_risk_retrieval p95 延迟 | 0.197 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
+| 性能/成本 | policy_kb_retrieval p95 延迟 | 1.028 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | escalation_draft p95 延迟 | 0.002 ms | 200 | 不含 LLM 网络时间的确定性工具层 p95 延迟。 | warmup 20 次后运行 200 次，取 p95。 | 否 |
 | 性能/成本 | route eval prompt 估算 token | 18378 | 245 cases | 评估集整体输入体量，用于估算跑 LLM eval 的成本。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |
 | 性能/成本 | policy KB 估算 token | 2692 | 3 files | 当前 policy/FAQ/merchant rules 知识库规模，用于上下文预算。 | ASCII/4 + 非 ASCII*1.5 的粗略估算。 | 否 |

@@ -50,7 +50,7 @@ async def test_tool_call_schema_validation_and_audit_redaction(manager) -> None:
 async def test_tool_call_role_whitelist_denies_ops_tool(manager) -> None:
     result = await manager.call(
         "generate_after_sales_priority_report",
-        {"query": "生成售后运营日报"},
+        {"query": "生成审核台优先处理队列"},
         ToolCallContext(role="support_agent"),
     )
 

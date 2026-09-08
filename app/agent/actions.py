@@ -546,6 +546,7 @@ class AgentActions:
                 action_type,
                 draft,
                 requires_confirmation=False,
+                customer_view=_is_customer_channel(state),
             )
             return answer, draft
 
@@ -555,9 +556,13 @@ class AgentActions:
             action_type,
             draft,
             requires_confirmation=bool(draft.get("requires_confirmation")),
+            customer_view=_is_customer_channel(state),
         )
         if draft.get("requires_confirmation"):
-            answer = f"我准备为订单 {order_id} 执行：{action_label}。\n\n{decision_block}"
+            if _is_customer_channel(state):
+                answer = decision_block
+            else:
+                answer = f"我准备为订单 {order_id} 执行：{action_label}。\n\n{decision_block}"
         else:
             answer = f"订单 {order_id} 的{action_label}通过低风险自动执行门禁。\n\n{decision_block}"
         return answer, draft
@@ -571,7 +576,8 @@ class AgentActions:
 
     async def finalize_escalation(self, state: AgentState) -> dict:
         user_response: str = state.get("user_response", "")
-        confirmed: bool = user_response.lower().strip() in (
+        normalized_response = user_response.lower().strip()
+        confirmed: bool = normalized_response in (
             "yes",
             "yeah",
             "y",
@@ -581,17 +587,26 @@ class AgentActions:
             "确认",
             "创建",
             "升级",
+            "__review_approve__",
         )
         draft = state.get("escalation_draft", {})
         pending = state.get("pending_side_effect", {})
         task_index = _maybe_int(pending.get("task_index") or draft.get("task_index"))
         if confirmed and draft:
-            answer = await self._execute_escalation_draft(draft, state)
+            reviewer_override = (
+                "after_sales_operator" if normalized_response == "__review_approve__" else None
+            )
+            answer = await self._execute_escalation_draft(
+                draft,
+                state,
+                role_override=reviewer_override,
+                auth_scopes_override=["after_sales:write"] if reviewer_override else None,
+            )
             status = "completed"
         elif confirmed:
             answer = "没有找到可提交的升级草稿，请重新发起。"
             status = "failed"
-        elif user_response.lower().strip() == "__hitl_timeout__":
+        elif normalized_response == "__hitl_timeout__":
             answer = "待确认的售后动作已超时自动取消；如果仍需处理，请重新发起任务。"
             status = "timeout_canceled"
         else:
@@ -626,7 +641,14 @@ class AgentActions:
             ],
         }
 
-    async def _execute_escalation_draft(self, draft: dict[str, object], state: AgentState) -> str:
+    async def _execute_escalation_draft(
+        self,
+        draft: dict[str, object],
+        state: AgentState,
+        *,
+        role_override: str | None = None,
+        auth_scopes_override: list[str] | None = None,
+    ) -> str:
         action_type = str(draft.get("action_type", "open_support_case"))
         tool_result = await self._tool_manager.call(
             "execute_side_effect",
@@ -635,7 +657,7 @@ class AgentActions:
                 "order_id": str(draft["order_id"]),
                 "message_text": str(draft["message_text"]),
             },
-            self._tool_context(state),
+            self._tool_context(state, role=role_override, auth_scopes=auth_scopes_override),
         )
         action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
         if not tool_result.ok:
@@ -712,13 +734,17 @@ class AgentActions:
         return list(result.data.get("docs", [])) if result.ok else []
 
     @staticmethod
-    def _tool_context(state: AgentState, role: str | None = None) -> ToolCallContext:
+    def _tool_context(
+        state: AgentState,
+        role: str | None = None,
+        auth_scopes: list[str] | None = None,
+    ) -> ToolCallContext:
         return ToolCallContext(
             session_id=state.get("session_id", "unknown"),
             tenant_id=state.get("tenant_id", "olist-demo"),
             user_id=state.get("user_id", "demo-user"),
             role=role or state.get("role", "support_agent"),
-            auth_scopes=list(state.get("auth_scopes", [])),
+            auth_scopes=list(auth_scopes if auth_scopes is not None else state.get("auth_scopes", [])),
         )
 
 
@@ -734,6 +760,7 @@ def _format_after_sales_decision_answer(
     draft: dict[str, object],
     *,
     requires_confirmation: bool,
+    customer_view: bool = False,
 ) -> str:
     decision = dict(draft.get("decision", {}))
     verification = dict(draft.get("verification", {}))
@@ -748,6 +775,16 @@ def _format_after_sales_decision_answer(
     flags = verification.get("flags", [])
     flags_text = "；".join(str(flag) for flag in flags) if isinstance(flags, list) and flags else "无"
     next_step = str(verification.get("required_next_step", "hitl"))
+
+    if customer_view:
+        return _format_customer_after_sales_answer(
+            order_id=order_id,
+            action_label=action_label,
+            outcome=outcome,
+            next_step=next_step,
+            draft=draft,
+            requires_confirmation=requires_confirmation,
+        )
 
     lines = [
         "售后 case 决策：",
@@ -784,6 +821,44 @@ def _format_after_sales_decision_answer(
     return "\n".join(lines)
 
 
+def _is_customer_channel(state: AgentState) -> bool:
+    return state.get("channel") == "customer_self_service" or state.get("role") == "customer"
+
+
+def _format_customer_after_sales_answer(
+    *,
+    order_id: str,
+    action_label: str,
+    outcome: str,
+    next_step: str,
+    draft: dict[str, object],
+    requires_confirmation: bool,
+) -> str:
+    reply = str(draft.get("message_text", "")).strip().replace("。。", "。")
+    short_order_id = order_id[:8]
+
+    if outcome == "reject" or next_step == "stop":
+        return (
+            f"订单 {short_order_id} 的{action_label}暂时无法直接办理。\n"
+            f"{reply or '我已经根据订单状态和售后规则完成核查，如需继续处理可以补充新的凭证或诉求。'}"
+        )
+    if outcome == "ask_clarification" or next_step == "clarify":
+        return (
+            f"订单 {short_order_id} 的{action_label}还需要补充信息。\n"
+            f"{reply or '请补充问题描述、期望处理方式或必要凭证，我会继续帮你生成售后申请。'}"
+        )
+    if requires_confirmation:
+        return (
+            f"已为订单 {short_order_id} 生成售后处理单：{action_label}，并提交给售后人员审核。\n"
+            f"{reply or '工作人员会结合订单事实、物流状态和平台政策复核后处理。'}\n"
+            "该类请求涉及退款、取消、改地址或投诉升级，系统会先冻结为待审核 case，审核通过后再调用企业工具。"
+        )
+    return (
+        f"订单 {short_order_id} 的{action_label}已通过低风险自动处理门禁。\n"
+        f"{reply or '系统会继续完成后续处理，并保留审计记录。'}"
+    )
+
+
 _ACTION_LABELS = {
     "open_support_case": "创建售后工单",
     "refund_request": "提交退款/补偿申请",
@@ -796,7 +871,7 @@ _ACTION_LABELS = {
 _INTENT_LABELS = {
     "order_status": "订单查询",
     "qa": "运营分析",
-    "ops_decision": "售后运营决策",
+    "ops_decision": "审核台优先处理",
     "policy": "政策问答",
     "escalation": "售后处理",
 }

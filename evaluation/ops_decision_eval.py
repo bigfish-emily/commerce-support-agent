@@ -5,7 +5,7 @@ from app.olist.service import OlistService, format_after_sales_report
 
 def main() -> None:
     service = OlistService()
-    report = service.after_sales_priority_report("生成售后运营风险日报，列出优先跟进类目和订单")
+    report = service.after_sales_priority_report("生成审核台优先处理队列，列出最需要人工跟进的类目和订单")
     categories = list(report["high_risk_categories"])
     orders = list(report["priority_orders"])
 

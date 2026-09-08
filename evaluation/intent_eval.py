@@ -40,14 +40,21 @@ def deterministic_eval() -> None:
 
 
 async def llm_planner_eval(limit: int = 200) -> None:
+    from app.config.llm_settings import resolve_llm_settings
     from app.llm.client import LlmClient
     from app.llm.intent_planner import IntentPlanner
 
     load_dotenv()
+    settings = resolve_llm_settings(default_model="gpt-4o-mini")
+    if settings.provider == "offline":
+        raise SystemExit(
+            "OPENAI_API_KEY or AIHUBMIX_API_KEY is not set. Set one before running "
+            "RUN_LLM_ROUTER_EVAL=1."
+        )
     client = LlmClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-        base_url=os.environ.get("OPENAI_BASE_URL"),
+        api_key=settings.api_key,
+        model=settings.model,
+        base_url=settings.base_url,
     )
     planner = IntentPlanner(client.chat_openai)
     cases = load_jsonl(INTENT_CASES)[:limit]

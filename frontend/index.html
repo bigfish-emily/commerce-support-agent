@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>commerce-support-agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="title-block">
+        <h1>commerce-support-agent</h1>
+        <div class="subtitle">消费者自助售后 Agent 与员工审核台</div>
+      </div>
+      <nav class="nav" aria-label="应用入口">
+        <a class="primary" href="/customer">消费者入口</a>
+        <a href="/review">审核台</a>
+        <a href="/docs">API Docs</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <div class="home-grid">
+      <a class="entry-card" href="/customer">
+        <strong>消费者自助售后</strong>
+        <span>用户直接询问订单状态、退款政策、取消订单、改地址、发票和投诉。只读问题直接回答，高风险动作生成待审核售后 case。</span>
+      </a>
+      <a class="entry-card" href="/review">
+        <strong>售后审核台</strong>
+        <span>工作人员按 Session ID 查看 Agent 生成的 case、订单事实、政策依据、Verifier 结果和执行草稿，并决定通过或驳回。</span>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

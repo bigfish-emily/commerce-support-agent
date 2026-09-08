@@ -1,10 +1,13 @@
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import StateGraph
 from langgraph.types import Command
@@ -16,17 +19,33 @@ from app.models import (
     CaseMetricsResponse,
     ChatRequest,
     ChatResponse,
+    ReviewActionRequest,
+    ReviewSessionResponse,
     RuntimeStatusResponse,
     TraceReplayResponse,
     TraceSummaryResponse,
 )
 from app.trace_store import case_metrics, list_session_traces, record_trace, trace_summary
-from app.web_console import WEB_CONSOLE_HTML
 
 agent: StateGraph | None = None
 logger = setup_logger("agent")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+ORDER_ID_RE = re.compile(r"\b[0-9a-fA-F]{32}\b")
+DEFAULT_CUSTOMER_ORDER_IDS: dict[str, set[str]] = {
+    "demo-customer": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
+    "customer-demo": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
+    "customer-smoke": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
+}
 
 DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
+    "customer": [
+        "orders:read",
+        "policy:read",
+        "support_examples:read",
+        "after_sales:assess",
+        "after_sales:draft",
+    ],
     "support_agent": [
         "orders:read",
         "analytics:read",
@@ -67,15 +86,27 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Olist Marketplace Support Agent", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
-def web_console() -> HTMLResponse:
-    return HTMLResponse(WEB_CONSOLE_HTML)
+@app.get("/", response_class=FileResponse)
+def app_index() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/customer", response_class=FileResponse)
+def customer_app() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "customer" / "index.html")
+
+
+@app.get("/review", response_class=FileResponse)
+def review_app() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "review" / "index.html")
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
+    """Internal/debug entrypoint. Product traffic should use /customer/chat."""
     session_id: str = request.session_id or str(uuid.uuid4())
     config: dict = {"configurable": {"thread_id": session_id}}
     auth_scopes = _resolve_auth_scopes(request.role, request.auth_scopes)
@@ -122,8 +153,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         rejected_result = {
             "route_intent": "input_guard",
             "final_answer": (
-                "I can only help with Olist marketplace support, order status, "
-                "category risk, and escalation tasks."
+                "I can only help with e-commerce after-sales support: order status, "
+                "policy questions, and refund/cancellation/address/invoice/complaint requests."
             ),
         }
         record_trace(
@@ -157,6 +188,20 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 session_id=session_id,
                 sources=_response_sources(result),
             )
+        if _is_customer_request(request):
+            pending_result = _pending_confirmation_response(snapshot.values, customer_view=True)
+            record_trace(
+                session_id=session_id,
+                user_message=request.message,
+                result=pending_result,
+                latency_ms=(time.perf_counter() - t_start) * 1000,
+                status="pending_staff_review",
+            )
+            return ChatResponse(
+                answer=str(pending_result["final_answer"]),
+                session_id=session_id,
+                sources=[],
+            )
         if not _is_confirmation_reply(request.message):
             pending_result = _pending_confirmation_response(snapshot.values)
             record_trace(
@@ -180,6 +225,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "user_id": request.user_id,
             "role": request.role,
             "auth_scopes": auth_scopes,
+            "channel": request.channel,
             "messages": [{"role": "user", "content": request.message}],
             "route_intent": "",
             "task_plan": [],
@@ -243,6 +289,75 @@ async def chat(request: ChatRequest) -> ChatResponse:
     )
 
 
+@app.post("/customer/chat", response_model=ChatResponse)
+async def customer_chat(request: ChatRequest) -> ChatResponse:
+    """Customer-facing self-service entrypoint with minimal read/draft scopes."""
+    customer_user_id = request.user_id if request.user_id != "demo-user" else "demo-customer"
+    ownership_denial = _customer_order_access_denied(request, customer_user_id=customer_user_id)
+    if ownership_denial is not None:
+        return ownership_denial
+    customer_request = request.model_copy(
+        update={
+            "role": "customer",
+            "channel": "customer_self_service",
+            "auth_scopes": _resolve_auth_scopes("customer", request.auth_scopes),
+            "user_id": customer_user_id,
+        }
+    )
+    return await chat(customer_request)
+
+
+@app.get("/review/sessions/{session_id}", response_model=ReviewSessionResponse)
+async def get_review_session(
+    session_id: str,
+    role: str = Query(default="after_sales_operator"),
+    auth_scopes: list[str] | None = Query(default=None),
+    x_review_token: str | None = Header(default=None, alias="X-Review-Token"),
+) -> ReviewSessionResponse:
+    """Return the staff-facing HITL review packet for a paused case."""
+    _authorize_review(role, auth_scopes, x_review_token)
+    config: dict = {"configurable": {"thread_id": session_id}}
+    snapshot = await agent.aget_state(config)
+    values = dict(snapshot.values or {})
+    return _review_session_response(session_id, bool(snapshot.next), values)
+
+
+@app.post("/review/sessions/{session_id}/approve", response_model=ChatResponse)
+async def approve_review_session(
+    session_id: str,
+    request: ReviewActionRequest | None = None,
+    x_review_token: str | None = Header(default=None, alias="X-Review-Token"),
+) -> ChatResponse:
+    """Approve a paused side-effect case as an after-sales operator."""
+    role = request.role if request else "after_sales_operator"
+    auth_scopes = request.auth_scopes if request else None
+    _authorize_review(role, auth_scopes, x_review_token)
+    return await _resume_review_session(
+        session_id,
+        resume_value="__review_approve__",
+        status="review_approved",
+        reviewer_id=(request.reviewer_id if request else "demo-reviewer"),
+    )
+
+
+@app.post("/review/sessions/{session_id}/reject", response_model=ChatResponse)
+async def reject_review_session(
+    session_id: str,
+    request: ReviewActionRequest | None = None,
+    x_review_token: str | None = Header(default=None, alias="X-Review-Token"),
+) -> ChatResponse:
+    """Reject a paused side-effect case and clear the HITL checkpoint."""
+    role = request.role if request else "after_sales_operator"
+    auth_scopes = request.auth_scopes if request else None
+    _authorize_review(role, auth_scopes, x_review_token)
+    return await _resume_review_session(
+        session_id,
+        resume_value="no",
+        status="review_rejected",
+        reviewer_id=(request.reviewer_id if request else "demo-reviewer"),
+    )
+
+
 def _response_sources(result: dict) -> list[str]:
     artifacts = result.get("artifacts", {})
     if isinstance(artifacts, dict):
@@ -259,8 +374,79 @@ def _response_sources(result: dict) -> list[str]:
 
 def _resolve_auth_scopes(role: str, provided_scopes: list[str] | None) -> list[str]:
     if provided_scopes is not None:
+        if role == "customer":
+            allowed = set(DEFAULT_ROLE_SCOPES["customer"])
+            return [scope for scope in provided_scopes if scope in allowed]
         return list(provided_scopes)
     return list(DEFAULT_ROLE_SCOPES.get(role, []))
+
+
+def _customer_order_access_denied(
+    request: ChatRequest,
+    *,
+    customer_user_id: str,
+) -> ChatResponse | None:
+    requested_order_ids = _extract_order_ids(request.message)
+    if not requested_order_ids:
+        return None
+    allowed_order_ids = _allowed_customer_order_ids(customer_user_id)
+    unauthorized = [order_id for order_id in requested_order_ids if order_id not in allowed_order_ids]
+    if not unauthorized:
+        return None
+
+    session_id = request.session_id or str(uuid.uuid4())
+    answer = (
+        "为了保护订单隐私，我只能处理当前账号名下的订单。"
+        "请确认登录账号或订单号后再试。"
+    )
+    record_trace(
+        session_id=session_id,
+        user_message=request.message,
+        result={
+            "route_intent": "auth_guard",
+            "final_answer": answer,
+            "trajectory_events": [
+                {
+                    "node": "customer_order_access_guard",
+                    "intent": "auth_guard",
+                    "status": "blocked_unauthorized_order",
+                    "details": {
+                        "user_id": customer_user_id,
+                        "requested_count": len(requested_order_ids),
+                    },
+                }
+            ],
+        },
+        latency_ms=0,
+        status="unauthorized_order_access",
+    )
+    return ChatResponse(answer=answer, session_id=session_id, sources=[])
+
+
+def _extract_order_ids(text: str) -> list[str]:
+    return [match.group(0).lower() for match in ORDER_ID_RE.finditer(text)]
+
+
+def _allowed_customer_order_ids(user_id: str) -> set[str]:
+    allowed = set(DEFAULT_CUSTOMER_ORDER_IDS.get(user_id, set()))
+    configured = os.environ.get("DEMO_CUSTOMER_ORDER_IDS", "")
+    allowed.update(order_id.strip().lower() for order_id in configured.split(",") if order_id.strip())
+    return allowed
+
+
+def _authorize_review(
+    role: str,
+    provided_scopes: list[str] | None,
+    review_token: str | None,
+) -> None:
+    expected_token = os.environ.get("REVIEW_API_TOKEN", "local-review-demo")
+    if review_token != expected_token:
+        raise HTTPException(status_code=403, detail="review_token_required")
+    scopes = _resolve_auth_scopes(role, provided_scopes)
+    if role not in {"after_sales_operator", "admin"}:
+        raise HTTPException(status_code=403, detail="review_role_required")
+    if "*" not in scopes and "after_sales:write" not in scopes:
+        raise HTTPException(status_code=403, detail="after_sales_write_scope_required")
 
 
 def _is_confirmation_reply(message: str) -> bool:
@@ -287,7 +473,7 @@ def _is_confirmation_reply(message: str) -> bool:
     }
 
 
-def _pending_confirmation_response(state: dict) -> dict[str, object]:
+def _pending_confirmation_response(state: dict, *, customer_view: bool = False) -> dict[str, object]:
     pending = state.get("pending_side_effect", {}) if state else {}
     action_type = pending.get("type", "side_effect")
     expires_at = pending.get("expires_at")
@@ -295,13 +481,22 @@ def _pending_confirmation_response(state: dict) -> dict[str, object]:
     if isinstance(expires_at, (int, float)):
         remaining = max(int(expires_at - time.time()), 0)
         expires_hint = f"\n该确认将在 {remaining} 秒后超时自动取消。"
-    return {
-        "route_intent": "pending_confirmation",
-        "final_answer": (
+    if customer_view:
+        final_answer = (
+            f"你的售后申请正在等待工作人员审核：{action_type}。\n"
+            "涉及退款、取消、改地址或投诉升级的动作需要由售后人员在审核台确认；"
+            "你无需回复 yes/no 来触发执行。"
+            f"{expires_hint}"
+        )
+    else:
+        final_answer = (
             f"当前 session 还有一个待确认的副作用动作：{action_type}。\n"
             "请先回复 yes/确认 执行，或 no/取消 放弃；如果要开始新任务，请换一个 Session ID。"
             f"{expires_hint}"
-        ),
+        )
+    return {
+        "route_intent": "pending_confirmation",
+        "final_answer": final_answer,
         "trajectory_events": [
             {
                 "node": "chat",
@@ -333,6 +528,65 @@ async def _pending_confirmation_expired(session_id: str, state: dict) -> bool:
     return isinstance(expires_at, (int, float)) and time.time() >= float(expires_at)
 
 
+async def _resume_review_session(
+    session_id: str,
+    *,
+    resume_value: str,
+    status: str,
+    reviewer_id: str,
+) -> ChatResponse:
+    config: dict = {"configurable": {"thread_id": session_id}}
+    snapshot = await agent.aget_state(config)
+    if not snapshot.next:
+        return ChatResponse(answer="该 session 当前没有待审核售后动作。", session_id=session_id, sources=[])
+
+    t_start = time.perf_counter()
+    if await _pending_confirmation_expired(session_id, snapshot.values):
+        result = await agent.ainvoke(Command(resume="__hitl_timeout__"), config)
+        status = "hitl_timeout_canceled"
+    else:
+        result = await agent.ainvoke(Command(resume=resume_value), config)
+    record_trace(
+        session_id=session_id,
+        user_message=f"[staff_review:{status}:{reviewer_id}]",
+        result=result,
+        latency_ms=(time.perf_counter() - t_start) * 1000,
+        status=status,
+    )
+    return ChatResponse(
+        answer=str(result.get("final_answer", "")),
+        session_id=session_id,
+        sources=_response_sources(result),
+    )
+
+
+def _review_session_response(session_id: str, has_pending: bool, state: dict) -> ReviewSessionResponse:
+    draft = dict(state.get("escalation_draft", {}) or {})
+    pending = dict(state.get("pending_side_effect", {}) or {})
+    cases = list(state.get("after_sales_cases", []) or [])
+    completed = list(state.get("completed_tasks", []) or [])
+    events = list(state.get("trajectory_events", []) or [])
+    action_type = draft.get("action_type") or pending.get("type") or ""
+    order_id = str(draft.get("order_id") or "")
+    summary = "当前没有待审核售后 case。"
+    if has_pending and action_type:
+        summary = f"待审核动作：{action_type}；订单：{order_id[:8] if order_id else 'unknown'}。"
+    return ReviewSessionResponse(
+        session_id=session_id,
+        has_pending=has_pending,
+        pending_side_effect=pending,
+        escalation_draft=draft,
+        after_sales_cases=cases,
+        completed_tasks=completed,
+        trajectory_events=events[-20:],
+        customer_safe_summary=summary,
+    )
+
+
+def _is_customer_request(request: ChatRequest) -> bool:
+    return request.role == "customer" or request.channel == "customer_self_service"
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
@@ -351,7 +605,14 @@ def observability_case_metrics() -> CaseMetricsResponse:
 
 
 @app.get("/observability/traces/{session_id}", response_model=TraceReplayResponse)
-def replay_session_traces(session_id: str, limit: int = 20) -> TraceReplayResponse:
+def replay_session_traces(
+    session_id: str,
+    limit: int = 20,
+    role: str = Query(default="after_sales_operator"),
+    auth_scopes: list[str] | None = Query(default=None),
+    x_review_token: str | None = Header(default=None, alias="X-Review-Token"),
+) -> TraceReplayResponse:
+    _authorize_review(role, auth_scopes, x_review_token)
     return TraceReplayResponse(session_id=session_id, traces=list_session_traces(session_id, limit=limit))
 
 

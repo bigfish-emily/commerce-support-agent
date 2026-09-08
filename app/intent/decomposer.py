@@ -51,9 +51,10 @@ OPS_DECISION_PATTERNS = (
     "prioritize",
     "action plan",
     "运营决策",
-    "运营日报",
     "风险日报",
-    "售后日报",
+    "审核台",
+    "处理队列",
+    "售后队列",
     "优先级",
     "优先跟进",
     "重点跟进",
@@ -135,7 +136,10 @@ ESCALATION_PATTERNS = (
 )
 
 SPLIT_RE = re.compile(
-    r"(?:，另外|另外|并且|而且|顺便|然后|再帮我|再|同时|接着|;|；|, and |\balso\b|\band also\b|\bthen\b)",
+    (
+        r"(?:，另外|另外|并且|并说明|并查询|并查看|而且|顺便|然后|再帮我|再|同时|"
+        r"接着|;|；|, and |\balso\b|\band also\b|\bthen\b)"
+    ),
     re.IGNORECASE,
 )
 
@@ -166,14 +170,17 @@ def _classify_segment(segment: str) -> str:
     text = segment.lower()
     if _has_any(text, OPS_DECISION_PATTERNS):
         return "ops_decision"
-    if _has_any(text, QA_PATTERNS):
-        return "qa"
+    has_order_id = bool(re.search(r"\b[a-f0-9]{32}\b", text))
+    if has_order_id and _has_any(text, ORDER_PATTERNS) and not _looks_like_side_effect_action(text):
+        return "order_status"
     if _looks_like_order_cancel_action(text):
         return "escalation"
     if _has_any(text, POLICY_PATTERNS) or _looks_like_policy_question(text):
         return "policy"
-    if _has_any(text, ESCALATION_PATTERNS):
+    if _looks_like_side_effect_action(text) or _has_any(text, ESCALATION_PATTERNS):
         return "escalation"
+    if _has_any(text, QA_PATTERNS):
+        return "qa"
     if _has_any(text, ORDER_PATTERNS) or "{{order number}}" in text:
         return "order_status"
     return "policy"
@@ -207,6 +214,61 @@ def _looks_like_order_cancel_action(text: str) -> bool:
     has_order_object = _has_any(text, ("{{order number}}", "order", "purchase", "oorder", "puchase"))
     policy_only = _has_any(text, ("fee", "charge", "penalty", "termination", "withdrawal"))
     return has_cancel_verb and has_order_object and not policy_only
+
+
+def _looks_like_side_effect_action(text: str) -> bool:
+    action_topic = _has_any(
+        text,
+        (
+            "refund",
+            "compensat",
+            "coupon",
+            "cancel order",
+            "cancel purchase",
+            "change address",
+            "change shipping address",
+            "invoice",
+            "complaint",
+            "open a case",
+            "escalat",
+            "退款",
+            "补偿",
+            "赔付",
+            "发券",
+            "取消订单",
+            "改地址",
+            "修改地址",
+            "发票",
+            "开票",
+            "投诉",
+            "升级",
+            "创建 case",
+            "建单",
+            "工单",
+        ),
+    )
+    action_verb = _has_any(
+        text,
+        (
+            "apply",
+            "request",
+            "submit",
+            "create",
+            "open",
+            "file",
+            "get refund",
+            "帮我",
+            "为订单",
+            "给订单",
+            "我要",
+            "申请",
+            "提交",
+            "创建",
+            "帮",
+            "办理",
+        ),
+    )
+    return action_topic and action_verb
 
 
 def _task_signature(segment: str) -> str:

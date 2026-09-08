@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from app.agent.actions import AgentActions
 from app.agent.graph import AgentGraph
 from app.agent.state import AgentState
+from app.config.llm_settings import resolve_llm_settings
 from app.llm.client import LlmClient
 from app.llm.guardrail import Guardrail
 from app.llm.intent_planner import IntentPlanner
@@ -22,16 +23,22 @@ MESSAGES = [
     ("policy", "退款补偿能不能直接承诺？"),
     (
         "escalation",
-        "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后生成售后升级话术",
+        "查订单 203096f03d82e0dffbc41ebc2e2bcfb7 状态，并且说明退款政策，然后提交退款申请",
     ),
 ]
 
 
 async def main() -> None:
+    settings = resolve_llm_settings(default_model="deepseek-v4-flash")
+    if settings.provider == "offline":
+        raise SystemExit(
+            "OPENAI_API_KEY or AIHUBMIX_API_KEY is not set. Set one in the current "
+            "shell before running live smoke evaluation."
+        )
     llm_client = LlmClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model=os.environ.get("OPENAI_MODEL", "deepseek-v4-flash"),
-        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+        api_key=settings.api_key,
+        model=settings.model,
+        base_url=settings.base_url or "https://api.deepseek.com",
     )
     actions = AgentActions(
         intent_planner=IntentPlanner(llm_client.chat_openai),
@@ -48,7 +55,7 @@ async def main() -> None:
     offset = int(os.environ.get("LIVE_SMOKE_OFFSET", "0"))
     limit = int(os.environ.get("LIVE_SMOKE_LIMIT", str(len(MESSAGES))))
     cases = MESSAGES[offset : offset + limit]
-    print(f"provider=deepseek model={llm_client.model} mode={llm_client.mode} cases={len(cases)}")
+    print(f"model={llm_client.model} mode={llm_client.mode} cases={len(cases)}")
     for expected_intent, message in cases:
         input_check = await guardrail.check_input(message)
         if not input_check.on_topic:
