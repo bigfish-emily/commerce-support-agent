@@ -1,4 +1,4 @@
-# E-Commerce After-Sales Case Resolution Agent
+# commerce-support-agent
 
 面向电商客服与售后履约场景的业务 Agent 项目，使用 **FastAPI + LangGraph + OpenAI-compatible LLM + MCP + deterministic tools + public datasets** 实现。项目目标不是做一个通用聊天机器人，也不是把订单查询、RAG、退款按钮简单拼在一起，而是围绕一次售后 case 的完整解决过程：理解用户诉求、查询订单/物流/支付事实、检索售后政策、形成结构化决策、校验风险、低风险自动处理、高风险 HITL 转人工、拒绝或澄清，并留下可审计、可回放、可评测的执行轨迹。
 

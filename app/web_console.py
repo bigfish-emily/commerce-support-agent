@@ -6,7 +6,7 @@ WEB_CONSOLE_HTML = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>E-Commerce After-Sales Agent</title>
+  <title>commerce-support-agent</title>
   <style>
     :root {
       color-scheme: light;
@@ -192,7 +192,7 @@ WEB_CONSOLE_HTML = """
   <header>
     <div class="topbar">
       <div class="title-block">
-        <h1>E-Commerce After-Sales Case Agent</h1>
+        <h1>commerce-support-agent</h1>
         <div class="subtitle">面向客服与售后的 Agent 控制台：case 决策、工具调用、RAG、HITL、轨迹回放</div>
       </div>
       <div class="runtime" aria-live="polite">
