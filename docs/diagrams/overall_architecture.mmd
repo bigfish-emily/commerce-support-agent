@@ -1,8 +1,10 @@
 flowchart LR
-    User[Support agent or ops manager] --> UI[Web console / HTTP API]
-    UI --> Guard[Input guard]
+    Customer[Customer] --> CustomerUI[Self-service chat /customer]
+    Reviewer[After-sales reviewer] --> ReviewUI[Review console /review]
+    CustomerUI --> Guard[Input guard]
     Guard --> Planner[LLM task planner]
     Planner --> Graph[LangGraph plan-and-execute graph]
+    ReviewUI --> HITL
 
     Graph --> ReadTools[Read-only deterministic tools]
     Graph --> RAG[Workflow-constrained RAG]
@@ -15,12 +17,12 @@ flowchart LR
     Case --> Decision[AfterSalesDecisionEngine]
     Decision --> Verifier[Verifier]
     Verifier --> SafeExit[Reject or clarify]
-    Verifier --> HITL[HITL confirmation]
+    Verifier --> HITL[Async HITL review queue]
     HITL --> ToolManager[ToolCallManager]
     ToolManager --> SideEffect[Refund / cancel / address / invoice / complaint tools]
 
     ToolManager --> Redis[Redis runtime store: cache, lock, TTL, rate limit]
     ToolManager --> MCP[MCP server/client boundary]
     Graph --> Trace[SQLite trace and case metrics]
-    Trace --> Eval[Offline evals and bad-case regression]
+    Trace --> Eval[Product-flow, red-team, and benchmark evals]
     Eval --> CI[GitHub Actions CI]
