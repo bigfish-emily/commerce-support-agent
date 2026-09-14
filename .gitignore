@@ -16,6 +16,7 @@ fastapi-langgraph-agent.iml
 .pytest-tmp/
 data/*.db*
 data/*.db-*
+data/*.log
 data/olist_raw/*.csv
 data/bitext_raw/*.csv
 data/rescommons_raw/*.jsonl

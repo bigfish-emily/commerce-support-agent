@@ -38,25 +38,28 @@ async def client() -> AsyncClient:
 async def test_frontend_entrypoints_available(client: AsyncClient) -> None:
     response = await client.get("/")
     assert response.status_code == 200
-    assert "commerce-support-agent" in response.text
-    assert "/customer" in response.text
-    assert "/review" in response.text
+    assert "自助售后" in response.text
+    assert "/static/product-customer.js" in response.text
 
     customer = await client.get("/customer")
     assert customer.status_code == 200
-    assert "/static/customer.js" in customer.text
+    assert "/static/product-customer.js" in customer.text
 
     review = await client.get("/review")
     assert review.status_code == 200
-    assert "/static/review.js" in review.text
+    assert "/static/product-review.js" in review.text
 
-    customer_js = await client.get("/static/customer.js")
+    customer_js = await client.get("/static/product-customer.js")
     assert customer_js.status_code == 200
     assert "/customer/chat" in customer_js.text
 
-    review_js = await client.get("/static/review.js")
+    review_js = await client.get("/static/product-review.js")
     assert review_js.status_code == 200
     assert "/review/sessions" in review_js.text
+
+    technical = await client.get("/technical")
+    assert technical.status_code == 200
+    assert "/static/demo.js" in technical.text
 
 
 def _mock_guard(input_on_topic: bool, output_valid: bool = True):

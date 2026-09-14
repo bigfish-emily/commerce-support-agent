@@ -1,3 +1,5 @@
+import os
+
 from langchain_openai import ChatOpenAI
 
 from app.llm.offline import OfflineChatModel
@@ -22,4 +24,9 @@ class LlmClient:
                 api_key=api_key,
                 base_url=base_url,
                 temperature=0.3,
+                timeout=25,
+                max_retries=0,
+                max_tokens=900,
+                extra_body={"thinking": {"type": "disabled"}}
+                if os.environ.get("LLM_DISABLE_THINKING") == "1" else None,
             )

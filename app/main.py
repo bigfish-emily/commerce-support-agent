@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import time
@@ -11,9 +12,20 @@ from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import StateGraph
 from langgraph.types import Command
+from pydantic import BaseModel, Field
 
+from app import support_conversations as conversations
 from app.agent.state import AgentState
-from app.config.di import agent_graph_builder, case_service, guardrail, runtime_status, runtime_store
+from app.config.di import (
+    agent_graph_builder,
+    case_service,
+    guardrail,
+    llm_client,
+    olist_service,
+    runtime_status,
+    runtime_store,
+)
+from app.llm.customer_presenter import present
 from app.logger import format_state, setup_logger
 from app.models import (
     CaseMetricsResponse,
@@ -81,6 +93,7 @@ DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
 async def lifespan(app: FastAPI):
     """Startup/shutdown: manage AsyncSqliteSaver lifecycle."""
     global agent
+    await asyncio.to_thread(conversations.initialize)
     async with AsyncSqliteSaver.from_conn_string("data/checkpoints.db") as checkpointer:
         agent = agent_graph_builder.build(checkpointer=checkpointer)
         logger.info("Checkpointer ready (AsyncSqliteSaver: data/checkpoints.db)")
@@ -94,12 +107,54 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="
 
 @app.get("/", response_class=FileResponse)
 def app_index() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return FileResponse(FRONTEND_DIR / "customer" / "index.html")
 
 
 @app.get("/customer", response_class=FileResponse)
 def customer_app() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "customer" / "index.html")
+
+
+@app.get("/demo", response_class=FileResponse)
+def demo_app() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "customer" / "index.html")
+
+
+@app.get("/technical", response_class=FileResponse)
+def technical_app() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "demo.html")
+
+
+@app.get("/customer/orders")
+def customer_orders() -> dict:
+    """Safe fields for the fixed local demonstration account."""
+    orders = []
+    for order_id in sorted(_allowed_customer_order_ids("demo-customer")):
+        order = olist_service.get_order_status(order_id)
+        if order:
+            orders.append({"order_id": order.order_id, "status": order.status,
+                           "category": order.category_summary, "amount": order.payment_value,
+                           "currency": "BRL", "purchased_at": order.purchase_timestamp,
+                           "delivered_at": order.delivered_customer_date})
+    return {"orders": orders}
+
+
+@app.get("/customer/sessions/{session_id}/progress")
+async def customer_progress(session_id: str) -> dict:
+    record = case_service.get_by_session(session_id)
+    if not record:
+        snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
+        values = snapshot.values or {}
+        if values.get("user_id") == "demo-customer":
+            case_id = (values.get("escalation_draft") or {}).get("review_case_id")
+            record = case_service.get(case_id) if case_id else None
+    if not record:
+        return {"case": None}
+    if record.get("user_id") != "demo-customer":
+        raise HTTPException(status_code=403, detail="case_owner_required")
+    safe = _customer_case_response(record).model_dump()
+    safe.pop("message_text", None)
+    return {"case": safe}
 
 
 @app.get("/review", response_class=FileResponse)
@@ -140,6 +195,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
     snapshot = await agent.aget_state(config)
     has_interrupt = bool(snapshot.next)
     history_messages = snapshot.values.get("messages") if snapshot.values else None
+    if _is_customer_request(request):
+        visible_history = await asyncio.to_thread(conversations.messages, session_id)
+        if visible_history:
+            history_messages = [
+                {"role": "user" if item["sender"] == "customer" else "assistant", "content": item["content"]}
+                for item in visible_history[-8:]
+            ]
 
     # Input guardrail with conversation history for context
     t0 = time.perf_counter()
@@ -229,7 +291,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "role": request.role,
             "auth_scopes": auth_scopes,
             "channel": request.channel,
-            "messages": [{"role": "user", "content": request.message}],
+            "messages": history_messages if _is_customer_request(request) and history_messages
+            else [{"role": "user", "content": request.message}],
             "route_intent": "",
             "task_plan": [],
             "completed_tasks": [],
@@ -299,15 +362,120 @@ async def customer_chat(request: ChatRequest) -> ChatResponse:
     ownership_denial = _customer_order_access_denied(request, customer_user_id=customer_user_id)
     if ownership_denial is not None:
         return ownership_denial
+    session_id = request.session_id or str(uuid.uuid4())
+    previous = await agent.aget_state({"configurable": {"thread_id": session_id}})
+    if previous.values and previous.values.get("user_id") != customer_user_id:
+        raise HTTPException(status_code=403, detail="session_owner_required")
+    await asyncio.to_thread(conversations.append_message, session_id, "customer", request.message)
+    if await asyncio.to_thread(conversations.human_mode, session_id):
+        return ChatResponse(answer="您的消息已发送给客服，请稍候。", session_id=session_id)
     customer_request = request.model_copy(
         update={
+            "session_id": session_id,
             "role": "customer",
             "channel": "customer_self_service",
             "auth_scopes": _resolve_auth_scopes("customer", request.auth_scopes),
             "user_id": customer_user_id,
         }
     )
-    return await chat(customer_request)
+    response = await chat(customer_request)
+    snapshot = await agent.aget_state({"configurable": {"thread_id": response.session_id}})
+    record = case_service.get_by_session(response.session_id)
+    if not record:
+        case_id = (snapshot.values.get("escalation_draft") or {}).get("review_case_id")
+        record = case_service.get(case_id) if case_id else None
+    state = {**dict(snapshot.values or {}), "final_answer": response.answer}
+    response.answer = await present(llm_client.chat_openai, request.message, state, record)
+    response.sources = []
+    await asyncio.to_thread(conversations.append_message, session_id, "assistant", response.answer)
+    return response
+
+
+class StaffMessage(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+
+
+@app.get("/review/conversations")
+async def review_conversations(x_review_token: str | None = Header(default=None)) -> dict:
+    _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
+    rows = await asyncio.to_thread(conversations.recent_sessions)
+    for row in rows:
+        record = await asyncio.to_thread(case_service.get_by_session, row["session_id"])
+        row.update({"order_id": record.get("order_id", "") if record else "",
+                    "action_type": record.get("action_type", "咨询会话") if record else "咨询会话",
+                    "created_at": row["updated_at"]})
+    return {"cases": rows}
+
+
+class HandoffMode(BaseModel):
+    human: bool
+
+
+async def _conversation_owner(session_id: str) -> None:
+    snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
+    if not snapshot.values or snapshot.values.get("user_id") != "demo-customer":
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+
+
+@app.get("/customer/sessions/{session_id}/messages")
+async def customer_messages(session_id: str) -> dict:
+    await _conversation_owner(session_id)
+    return {"messages": await asyncio.to_thread(conversations.messages, session_id),
+            "human": await asyncio.to_thread(conversations.human_mode, session_id)}
+
+
+@app.get("/review/sessions/{session_id}/messages")
+async def staff_messages(session_id: str, x_review_token: str | None = Header(default=None)) -> dict:
+    _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
+    return await customer_messages(session_id)
+
+
+@app.post("/review/sessions/{session_id}/messages")
+async def staff_reply(session_id: str, body: StaffMessage,
+                      x_review_token: str | None = Header(default=None)) -> dict:
+    _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
+    await _conversation_owner(session_id)
+    await asyncio.to_thread(conversations.set_human_mode, session_id, True)
+    await asyncio.to_thread(conversations.append_message, session_id, "staff", body.content)
+    record_trace(
+        session_id=session_id,
+        user_message="[staff_reply]",
+        result={"route_intent": "staff_handoff", "final_answer": "staff_reply_sent"},
+        latency_ms=0,
+        status="staff_reply_sent",
+    )
+    return {"sent": True}
+
+
+@app.post("/review/sessions/{session_id}/handoff")
+async def staff_handoff(session_id: str, body: HandoffMode,
+                        x_review_token: str | None = Header(default=None)) -> dict:
+    _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
+    await _conversation_owner(session_id)
+    await asyncio.to_thread(conversations.set_human_mode, session_id, body.human)
+    record_trace(
+        session_id=session_id,
+        user_message="[staff_handoff]",
+        result={"route_intent": "staff_handoff", "final_answer": "human" if body.human else "assistant"},
+        latency_ms=0,
+        status="staff_handoff_enabled" if body.human else "staff_handoff_released",
+    )
+    return {"human": body.human}
+
+
+@app.post("/review/sessions/{session_id}/suggestion")
+async def staff_suggestion(session_id: str, x_review_token: str | None = Header(default=None)) -> dict:
+    _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
+    await _conversation_owner(session_id)
+    history = await asyncio.to_thread(conversations.messages, session_id)
+    snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
+    latest = next((m["content"] for m in reversed(history) if m["sender"] == "customer"), "")
+    draft = await present(llm_client.chat_openai, latest, dict(snapshot.values),
+                          case_service.get_by_session(session_id))
+    signals = [word for word in ("投诉", "生气", "失望", "太慢", "着急", "等了", "不满意") if word in latest]
+    return {"draft": draft, "signals": signals,
+            "attention": "建议先回应客户不满或催促，再说明下一步" if signals else "未发现明显不满或催促用词",
+            "signal_method": "本轮文本关键词提示，不代表心理状态判断"}
 
 
 @app.get("/customer/cases/{case_id}", response_model=CustomerCaseResponse)
@@ -649,7 +817,19 @@ def _review_session_response(session_id: str, has_pending: bool, state: dict) ->
     completed = list(state.get("completed_tasks", []) or [])
     events = list(state.get("trajectory_events", []) or [])
     action_type = draft.get("action_type") or pending.get("type") or ""
-    order_id = str(draft.get("order_id") or "")
+    order_id = str(draft.get("order_id") or state.get("active_order_id") or "")
+    if not order_id:
+        for message in reversed(state.get("messages", [])):
+            match = ORDER_ID_RE.search(str(message.get("content", "")))
+            if match:
+                order_id = match.group(0)
+                break
+    order = olist_service.get_order_status(order_id) if order_id else None
+    order_facts = {
+        "order_id": order.order_id, "order_status": order.status,
+        "payment_value": order.payment_value, "delay_days": order.delay_days,
+        "review_score": order.review_score,
+    } if order else {}
     summary = "当前没有待审核售后 case。"
     if has_pending and action_type:
         summary = f"待审核动作：{action_type}；订单：{order_id[:8] if order_id else 'unknown'}。"
@@ -662,6 +842,7 @@ def _review_session_response(session_id: str, has_pending: bool, state: dict) ->
         completed_tasks=completed,
         trajectory_events=events[-20:],
         customer_safe_summary=summary,
+        order_facts=order_facts,
     )
 
 

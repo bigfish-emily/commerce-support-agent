@@ -60,6 +60,7 @@ class ReviewSessionResponse(BaseModel):
     completed_tasks: list[dict] = Field(default_factory=list)
     trajectory_events: list[dict] = Field(default_factory=list)
     customer_safe_summary: str = ""
+    order_facts: dict = Field(default_factory=dict)
 
 
 class ReviewActionRequest(BaseModel):

@@ -2,6 +2,7 @@ import pytest
 
 from app.llm.guardrail import Guardrail
 from app.llm.intent_planner import IntentPlanner
+from app.llm.json_fallback import native_structured_output_enabled
 from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerator, QaResponseGenerator
 
 
@@ -16,6 +17,14 @@ class _FakeChatLlm:
 
     async def ainvoke(self, messages):
         raise RuntimeError("llm down")
+
+
+def test_compatible_gateway_uses_validated_json_text_fallback() -> None:
+    class GatewayModel:
+        model_name = "coding-glm-5-free"
+        base_url = "https://aihubmix.com/v1"
+
+    assert native_structured_output_enabled(GatewayModel()) is False
 
 
 @pytest.mark.anyio

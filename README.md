@@ -57,7 +57,7 @@ The repository keeps derived lightweight artifacts and download/build scripts. L
 
 | Area | Result |
 |---|---:|
-| Unit/integration tests | 106 passed |
+| CI baseline | Ruff, pytest, deterministic offline evals, and benchmark adapter dry-runs |
 | Ruff | all checks passed |
 | Customer product flow eval | 9/9 pass; auto-resolution 44.44%, handoff 55.56%, handoff precision 100%, policy grounding 100% |
 | ResCommons retrieval | BM25 intent@1/intent@5 64%/81% -> hybrid 78%/91% |
@@ -85,7 +85,7 @@ uv run python -m pytest -q
 uv run uvicorn app.main:app --reload
 ```
 
-Open:
+The customer product is available at `/customer` (also `/` and `/demo`). Select the sample order, start a conversation, and track any submitted application. Staff use `/review` to read the customer-visible conversation, take over a session, request an editable reply draft, and review a pending application. Customer messages and internal traces are stored separately; the customer page polls for case or staff updates. Keyword hints remain transparent UI cues rather than emotion classification. `/technical` is a separate engineering inspection page. The local review credential is `local-review-demo`. This public-data demo uses a fixed account and historical orders; write actions do not move money.
 
 ```text
 http://127.0.0.1:8000/

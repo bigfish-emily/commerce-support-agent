@@ -24,7 +24,11 @@ def native_structured_output_enabled(llm: object) -> bool:
         if value is not None:
             values.append(str(value))
     fingerprint = " ".join(values).lower()
-    return "deepseek" not in fingerprint
+    # Several OpenAI-compatible gateways accept the request but do not honour
+    # LangChain's provider-specific structured-output wrapper.  JSON text with
+    # validation below is more portable for those gateways.
+    incompatible_markers = ("deepseek", "aihubmix", "coding-glm", "glm-")
+    return not any(marker in fingerprint for marker in incompatible_markers)
 
 
 def json_instruction(schema: type[BaseModel]) -> str:
