@@ -24,7 +24,9 @@ class LlmClient:
                 api_key=api_key,
                 base_url=base_url,
                 temperature=0.3,
-                timeout=25,
+                # The workflow has deterministic fallbacks. A long gateway wait
+                # hurts interactive support more than it helps a single turn.
+                timeout=float(os.environ.get("LLM_TIMEOUT_SECONDS", "12")),
                 max_retries=0,
                 max_tokens=900,
                 extra_body={"thinking": {"type": "disabled"}}

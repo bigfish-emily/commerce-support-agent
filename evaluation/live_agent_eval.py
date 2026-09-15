@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agent.actions import AgentActions
@@ -290,6 +291,7 @@ CASES = [
 
 
 async def main() -> None:
+    load_dotenv(ROOT / ".env")
     limit = int(os.environ.get("LIVE_AGENT_EVAL_LIMIT", "30"))
     offset = int(os.environ.get("LIVE_AGENT_EVAL_OFFSET", "0"))
     cases = CASES[offset : offset + limit]

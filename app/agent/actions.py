@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 
@@ -6,6 +7,7 @@ from langgraph.types import interrupt
 from app.agent.state import AgentState
 from app.llm.intent_planner import IntentPlanner
 from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerator, QaResponseGenerator
+from app.llm.types import OlistTaskResult
 from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import (
     InMemoryCaseService,
@@ -51,6 +53,7 @@ class AgentActions:
         )
 
     async def plan_tasks(self, state: AgentState) -> dict:
+        started_at = time.perf_counter()
         last_message: str = state["messages"][-1]["content"]
         plan = await self._intent_planner.plan(last_message)
         tasks = [task.model_dump() for task in plan.tasks]
@@ -72,7 +75,13 @@ class AgentActions:
                     "plan_tasks",
                     "planner",
                     "completed",
-                    {"task_count": len(tasks), "tasks": tasks, "dialog_state": dialog_state},
+                    {
+                        "task_count": len(tasks),
+                        "tasks": tasks,
+                        "planning_mode": plan.planning_mode,
+                        "dialog_state": dialog_state,
+                        "duration_ms": _elapsed_ms(started_at),
+                    },
                 ),
             ],
         }
@@ -143,11 +152,22 @@ class AgentActions:
     async def extract_slots(self, state: AgentState) -> dict:
         if state.get("workflow_complete"):
             return {}
+        started_at = time.perf_counter()
         task = dict(state.get("current_task", {}))
         intent = str(task.get("intent", "policy"))
         text = str(state.get("current_task_text") or _latest_user_task_message(state))
         slot_text = _with_order_context(text, _latest_user_task_message(state))
-        extracted = await self._task_extractor.extract(slot_text)
+        if intent in {"policy", "qa", "ops_decision"}:
+            # Retrieval consumes the full task text. These read-only intents do
+            # not need an order/category slot before retrieval can begin.
+            extracted = OlistTaskResult(order_id="", category="", user_goal="not_required")
+            extraction_mode = "deterministic_not_required"
+        else:
+            extracted = self._task_extractor.fast_extract(slot_text)
+            extraction_mode = "deterministic_exact_order_id"
+            if extracted is None:
+                extracted = await self._task_extractor.extract(slot_text)
+                extraction_mode = "llm"
         order_repair = repair_order_id(extracted.order_id or slot_text)
         slots = {
             "order_id": order_repair.value if order_repair.ok else "",
@@ -181,6 +201,8 @@ class AgentActions:
                         "has_order_id": bool(slots["order_id"]),
                         "category": slots["category"],
                         "missing_slots": dialog_state.get("missing_slots", []),
+                        "extraction_mode": extraction_mode,
+                        "duration_ms": _elapsed_ms(started_at),
                     },
                 ),
             ],
@@ -189,6 +211,7 @@ class AgentActions:
     async def retrieve_context(self, state: AgentState) -> dict:
         if state.get("workflow_complete"):
             return {}
+        started_at = time.perf_counter()
         task = dict(state.get("current_task", {}))
         intent = str(task.get("intent", "policy"))
         text = str(state.get("current_task_text") or _latest_user_task_message(state))
@@ -210,8 +233,10 @@ class AgentActions:
                 context["order_id_error"] = str(slots.get("order_id_error", "没有检测到有效订单号。"))
         elif intent == "qa":
             context["primary_tool"] = "search_category_risk"
-            insights = await self._category_insights(text, state)
-            support_docs = await self._search_support_docs(text, state)
+            insights, support_docs = await asyncio.gather(
+                self._category_insights(text, state),
+                self._search_support_docs(text, state),
+            )
             context["insights"] = insights
             context["support_docs"] = support_docs
             update["retrieved_insights"] = [*state.get("retrieved_insights", []), *insights]
@@ -232,8 +257,10 @@ class AgentActions:
             if intent == "escalation":
                 action_type = str(slots.get("action_type") or task.get("action_type") or "open_support_case")
                 policy_query = f"{text}\n售后动作：{_ACTION_LABELS.get(action_type, action_type)}"
-            sections = await self._search_policy_knowledge(policy_query, state)
-            support_docs = await self._search_support_docs(text, state)
+            sections, support_docs = await asyncio.gather(
+                self._search_policy_knowledge(policy_query, state),
+                self._search_support_docs(text, state),
+            )
             context["policy_sections"] = sections
             context["support_docs"] = support_docs
             update["retrieved_policy"] = [*state.get("retrieved_policy", []), *sections]
@@ -271,6 +298,7 @@ class AgentActions:
                     "insight_hits": len(context.get("insights", []))
                     if isinstance(context.get("insights"), list)
                     else 0,
+                    "duration_ms": _elapsed_ms(started_at),
                 },
             ),
         ]
@@ -292,6 +320,7 @@ class AgentActions:
         return update
 
     async def execute_read_task(self, state: AgentState) -> dict:
+        started_at = time.perf_counter()
         task = dict(state.get("current_task", {}))
         intent = str(task.get("intent", "policy"))
         text = str(state.get("current_task_text") or _latest_user_task_message(state))
@@ -314,12 +343,19 @@ class AgentActions:
         elif intent == "ops_decision":
             answer = format_after_sales_report(dict(context.get("ops_report", {})))
         elif intent == "policy":
-            answer = await self._policy_generator.generate(
-                text,
-                list(context.get("policy_sections", [])),
-                list(context.get("support_docs", [])),
-                completed_context="\n\n".join(state.get("answer_parts", [])),
+            policy_sections = list(context.get("policy_sections", []))
+            answer = (
+                self._policy_generator.customer_safe_template(text, policy_sections)
+                if str(state.get("channel", "")).startswith("customer")
+                else None
             )
+            if answer is None:
+                answer = await self._policy_generator.generate(
+                    text,
+                    policy_sections,
+                    list(context.get("support_docs", [])),
+                    completed_context="\n\n".join(state.get("answer_parts", [])),
+                )
 
         idx = int(state.get("current_task_index", 0))
         completed = _upsert_task_status(list(state.get("completed_tasks", [])), idx, intent, "completed")
@@ -339,6 +375,7 @@ class AgentActions:
                         "task_index": idx,
                         "tool": context.get("primary_tool"),
                         "answer_chars": len(answer),
+                        "duration_ms": _elapsed_ms(started_at),
                     },
                 ),
             ],
@@ -545,7 +582,9 @@ class AgentActions:
         }
 
     async def _answer_order_status(self, user_message: str, state: AgentState) -> str:
-        task = await self._task_extractor.extract(user_message)
+        task = self._task_extractor.fast_extract(user_message)
+        if task is None:
+            task = await self._task_extractor.extract(user_message)
         repair = repair_order_id(task.order_id or user_message)
         if not repair.ok:
             return repair.message
@@ -564,7 +603,9 @@ class AgentActions:
         action_type: str,
         state: AgentState,
     ) -> tuple[str, dict[str, object] | None]:
-        task = await self._task_extractor.extract(user_message)
+        task = self._task_extractor.fast_extract(user_message)
+        if task is None:
+            task = await self._task_extractor.extract(user_message)
         repair = repair_order_id(task.order_id or user_message)
         if not repair.ok:
             return repair.message, None
@@ -1170,3 +1211,7 @@ def _event(
         "status": status,
         "details": details or {},
     }
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return round((time.perf_counter() - started_at) * 1000, 2)

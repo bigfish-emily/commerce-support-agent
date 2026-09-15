@@ -9,13 +9,13 @@ results: `D:\研三\项目\agent-business-project\benchmark-tmp\data\simulations
 | total_tasks | 114 |
 | avg_reward | 91.23% |
 | pass^1 | 91.23% |
-| avg_duration_seconds | 22.71 |
-| p95_duration_seconds | 32.77 |
-| avg_agent_cost | 0.005000 |
+| avg_simulation_duration_seconds | 22.71 |
+| p95_simulation_duration_seconds | 32.77 |
+| avg_observed_agent_cost (partial) | 0.005000 |
 | agent_cost_coverage | 61/114 |
-| avg_user_cost | 0.001183 |
+| avg_observed_user_cost (partial) | 0.001183 |
 | user_cost_coverage | 114/114 |
-| avg_total_cost | 0.006036 |
+| avg_observed_total_cost (partial) | 0.006036 |
 | total_cost_coverage | 61/114 |
 | db_match | 105/114 (92.11%) |
 | generic_action_match | 4/17 (23.53%) |

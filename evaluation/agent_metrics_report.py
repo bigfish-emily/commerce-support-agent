@@ -1001,20 +1001,26 @@ def benchmark_metrics() -> list[Metric]:
         ),
         Metric(
             "外部Benchmark",
-            "tau2-bench retail p95 latency",
+            "tau2-bench retail p95 simulation duration",
             f"{float(summary.get('p95_duration_seconds') or 0.0):.2f}s",
             str(summary.get("evaluated_simulations", 0)),
-            "官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。",
+            "官方用户模拟器、Agent、多轮会话和评审组成的端到端 p95 模拟时长，不代表消费者接口延迟。",
             "按 tau2 simulation duration 取 p95。",
             api_key="是",
         ),
         Metric(
             "外部Benchmark",
-            "tau2-bench retail avg total cost",
+            "tau2-bench retail observed avg total cost (partial)",
             f"${float(summary.get('avg_total_cost') or 0.0):.6f}",
-            str(summary.get("evaluated_simulations", 0)),
-            "官方用户模拟器 + Agent + judge 的平均单会话模型成本。",
-            "summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。",
+            (
+                f"{int(summary.get('total_cost_coverage', {}).get('count') or 0)}/"
+                f"{int(summary.get('total_cost_coverage', {}).get('total') or 0)}"
+            ),
+            (
+                "仅统计同时记录 Agent 和用户模型成本的 simulation，覆盖不完整，"
+                "不能外推为完整 split 的单会话成本。"
+            ),
+            "summary 中 agent_cost 与 user_cost 同时存在的 simulation 求平均。",
             api_key="是",
         ),
     ]

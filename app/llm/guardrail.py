@@ -1,4 +1,4 @@
-"""LLM-based guardrails - both input (is this on-topic?) and output (is this response valid?)."""
+"""Fast, layered guardrails for the customer-facing request path."""
 
 import logging
 
@@ -13,12 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class Guardrail:
-    """Input and output guardrails using LLM classification.
-
-    Uses OpenAI's native structured output for guaranteed JSON schema compliance.
-    In production, guardrails use a cheaper/faster model than the main agent.
-    Here we reuse the same model for both to keep things simple.
-    """
+    """Use deterministic checks for clear cases and reserve the LLM for ambiguity."""
 
     def __init__(self, llm: ChatOpenAI) -> None:
         self._base_llm = llm
@@ -27,6 +22,12 @@ class Guardrail:
         self._output_llm = llm.with_structured_output(OutputGuardResult) if native_structured else None
 
     async def check_input(self, message: str, history: list[dict] | None = None) -> InputGuardResult:
+        text = message.lower()
+        if _contains_blocked_signal(text):
+            return InputGuardResult(on_topic=False, reason="deterministic blocked pattern")
+        if _looks_like_marketplace_support(text) or _looks_like_safe_followup(text):
+            return InputGuardResult(on_topic=True, reason="deterministic marketplace allowlist")
+
         context_text = ""
         if history:
             last_exchanges = history[-4:]  # last 2 turns (user + assistant)
@@ -47,6 +48,8 @@ class Guardrail:
             return _apply_business_allow_override(message, await self._input_llm.ainvoke(messages))
         except Exception as exc:
             logger.warning("Structured input guard failed, trying JSON-text fallback: %s", exc)
+            if _is_transport_error(exc):
+                return _heuristic_input_guard(message)
             try:
                 raw = await self._base_llm.ainvoke(add_json_instruction(messages, InputGuardResult))
                 return _apply_business_allow_override(message, parse_json_model(raw, InputGuardResult))
@@ -55,6 +58,12 @@ class Guardrail:
                 return _heuristic_input_guard(message)
 
     async def check_output(self, answer: str) -> OutputGuardResult:
+        # Output health is intentionally local: workflow grounding, verifier
+        # decisions, and the customer presenter enforce business truthfulness.
+        return _deterministic_output_guard(answer)
+
+    async def check_output_with_llm(self, answer: str) -> OutputGuardResult:
+        """Optional diagnostic classifier; keep it out of the serving critical path."""
         messages = [
             SystemMessage(content=OUTPUT_GUARD_PROMPT),
             HumanMessage(content=answer),
@@ -71,11 +80,7 @@ class Guardrail:
                 return parse_json_model(raw, OutputGuardResult)
             except Exception as fallback_exc:
                 logger.warning("Output guard LLM failed, using deterministic fallback: %s", fallback_exc)
-            if not answer.strip():
-                return OutputGuardResult(valid=False, reason="empty answer")
-            if "[TODO]" in answer or "Traceback" in answer:
-                return OutputGuardResult(valid=False, reason="placeholder or traceback")
-            return OutputGuardResult(valid=True, reason="llm unavailable; deterministic checks passed")
+            return _deterministic_output_guard(answer)
 
 
 def _heuristic_input_guard(message: str) -> InputGuardResult:
@@ -83,6 +88,15 @@ def _heuristic_input_guard(message: str) -> InputGuardResult:
     if _contains_blocked_signal(text):
         return InputGuardResult(on_topic=False, reason="heuristic off-topic or unsafe")
     return InputGuardResult(on_topic=True, reason="llm unavailable; fail-open for support availability")
+
+
+def _deterministic_output_guard(answer: str) -> OutputGuardResult:
+    if not answer.strip():
+        return OutputGuardResult(valid=False, reason="empty answer")
+    lowered = answer.lower()
+    if "[todo]" in lowered or "traceback" in lowered or "exception:" in lowered:
+        return OutputGuardResult(valid=False, reason="placeholder or runtime error")
+    return OutputGuardResult(valid=True, reason="deterministic output health checks passed")
 
 
 def _apply_business_allow_override(message: str, result: InputGuardResult) -> InputGuardResult:
@@ -177,3 +191,12 @@ def _looks_like_marketplace_support(text: str) -> bool:
         "低分率",
     )
     return any(term in text for term in business_terms)
+
+
+def _looks_like_safe_followup(text: str) -> bool:
+    return text.strip() in {"yes", "no", "确认", "取消", "好的", "好", "继续", "人工客服"}
+
+
+def _is_transport_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    return any(marker in name for marker in ("timeout", "connection", "network"))

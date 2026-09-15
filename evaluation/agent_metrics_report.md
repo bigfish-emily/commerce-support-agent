@@ -90,8 +90,8 @@ Live LLM 与 LLM-as-Judge 行读取已落盘结果；修改 LangGraph 节点、p
 | 外部Benchmark | tau2-bench retail read action match | 346/357 (96.92%) | 357 | 只读工具调用序列和参数是否匹配官方期望。 | reward_info.action_checks 中 tool_type=read 且 action_reward=1 的数量 / read action 数。 | 是 |
 | 外部Benchmark | tau2-bench retail write action match | 162/176 (92.05%) | 176 | 退款、退货、换货、改订单等写工具是否按官方期望执行。 | reward_info.action_checks 中 tool_type=write 且 action_reward=1 的数量 / write action 数。 | 是 |
 | 外部Benchmark | tau2-bench retail NL assertions | 58/61 (95.08%) | 61 | 自然语言回答是否满足官方任务断言。 | reward_info.nl_assertions 中 met=true 的数量 / NL assertion 数。 | 是 |
-| 外部Benchmark | tau2-bench retail p95 latency | 32.77s | 114 | 官方用户模拟器 + Agent 多轮会话的端到端 p95 时长。 | 按 tau2 simulation duration 取 p95。 | 是 |
-| 外部Benchmark | tau2-bench retail avg total cost | $0.006036 | 114 | 官方用户模拟器 + Agent + judge 的平均单会话模型成本。 | summary 中 agent_cost 与 user_cost 汇总后按 evaluated_simulations 求平均。 | 是 |
+| 外部Benchmark | tau2-bench retail p95 simulation duration | 32.77s | 114 | 官方用户模拟器、Agent、多轮会话和评审组成的端到端 p95 模拟时长，不代表消费者接口延迟。 | 按 tau2 simulation duration 取 p95。 | 是 |
+| 外部Benchmark | tau2-bench retail observed avg total cost (partial) | $0.006036 | 61/114 | 仅统计同时记录 Agent 和用户模型成本的 simulation，覆盖不完整，不能外推为完整 split 的单会话成本。 | agent_cost 与 user_cost 同时存在的 simulation 求平均。 | 是 |
 | 答案质量 | deterministic groundedness proxy | 100.00% | 2 | 无 API key 情况下，验证回答是否只引用检索到的类目/政策来源。 | 生成的 fallback/template answer 是否包含 retrieved context 中的实体或章节。 | 否 |
 | 答案质量 | answer relevance proxy | 100.00% | 2 | 无模型裁判时，用关键词覆盖近似评估回答是否贴合问题。 | answer 是否包含 query 期望的业务关键词。 | 否 |
 | 答案质量 | LLM judge status | not_run | 0 | 真实模型裁判评估状态；需要 API key 才能运行。 | `OPENAI_API_KEY=...` 或 `AIHUBMIX_API_KEY=...` 后运行 `python -m evaluation.llm_judge_eval` 会生成 llm_judge_eval_results.jsonl。 | 是 |

@@ -385,6 +385,14 @@ async def customer_chat(request: ChatRequest) -> ChatResponse:
         case_id = (snapshot.values.get("escalation_draft") or {}).get("review_case_id")
         record = case_service.get(case_id) if case_id else None
     state = {**dict(snapshot.values or {}), "final_answer": response.answer}
+    # A customer may send a new message while a staff review is pending. The
+    # LangGraph interrupt is intentionally not resumed by that message, but the
+    # product reply must still be a clear async status update.
+    if record is None and state.get("pending_side_effect", {}).get("requires_confirmation"):
+        record = {
+            "status": "pending_review",
+            "action_type": state["pending_side_effect"].get("type", "open_support_case"),
+        }
     response.answer = await present(llm_client.chat_openai, request.message, state, record)
     response.sources = []
     await asyncio.to_thread(conversations.append_message, session_id, "assistant", response.answer)

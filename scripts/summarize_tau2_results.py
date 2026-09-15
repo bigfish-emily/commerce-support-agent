@@ -183,19 +183,29 @@ def render_markdown(path: Path, summary: dict) -> str:
     for name, value in summary["pass_hat_ks"].items():
         lines.append(f"| {name} | {value:.2%} |")
     if summary["avg_duration_seconds"] is not None:
-        lines.append(f"| avg_duration_seconds | {summary['avg_duration_seconds']:.2f} |")
+        lines.append(
+            f"| avg_simulation_duration_seconds | {summary['avg_duration_seconds']:.2f} |"
+        )
     if summary["p95_duration_seconds"] is not None:
-        lines.append(f"| p95_duration_seconds | {summary['p95_duration_seconds']:.2f} |")
+        lines.append(
+            f"| p95_simulation_duration_seconds | {summary['p95_duration_seconds']:.2f} |"
+        )
     if summary["avg_agent_cost"] is not None:
-        lines.append(f"| avg_agent_cost | {summary['avg_agent_cost']:.6f} |")
+        lines.append(
+            f"| avg_observed_agent_cost (partial) | {summary['avg_agent_cost']:.6f} |"
+        )
         coverage = summary.get("agent_cost_coverage", {})
         lines.append(f"| agent_cost_coverage | {coverage.get('count', 0)}/{coverage.get('total', 0)} |")
     if summary["avg_user_cost"] is not None:
-        lines.append(f"| avg_user_cost | {summary['avg_user_cost']:.6f} |")
+        lines.append(
+            f"| avg_observed_user_cost (partial) | {summary['avg_user_cost']:.6f} |"
+        )
         coverage = summary.get("user_cost_coverage", {})
         lines.append(f"| user_cost_coverage | {coverage.get('count', 0)}/{coverage.get('total', 0)} |")
     if summary["avg_total_cost"] is not None:
-        lines.append(f"| avg_total_cost | {summary['avg_total_cost']:.6f} |")
+        lines.append(
+            f"| avg_observed_total_cost (partial) | {summary['avg_total_cost']:.6f} |"
+        )
         coverage = summary.get("total_cost_coverage", {})
         lines.append(f"| total_cost_coverage | {coverage.get('count', 0)}/{coverage.get('total', 0)} |")
     db_match = summary.get("db_match", {})

@@ -155,30 +155,6 @@ Regression evidence:
 
 - isolated task `0`: reward `1.0`, DB match `1/1`, write action match `1/1`.
 
-## Current Regression Result
-
-After the targeted fixes, the 30-task tau2 retail subset was rerun from scratch:
-
-- `pass^1 = 100.00%`, `30/30`;
-- `avg_reward = 100.00%`;
-- DB match `30/30`;
-- read action match `165/170`;
-- write action match `38/38`;
-- NL assertions `10/10`;
-- p95 duration `31.17s`;
-- average total cost `$0.004248` per conversation;
-- failed task ids: `None`.
-
-Evidence:
-
-- `benchmark_runs/tau2_retail/last_summary.md`
-- `benchmark_runs/tau2_retail/last_summary.json`
-
-Local validation:
-
-- `ruff check .`
-- `python -m pytest`: initial bad-case regression run `76 passed`; latest full regression `100 passed`
-
 ## Full Base Split Result
 
 The project now has one full local run of tau2 retail `base` split:
@@ -189,8 +165,8 @@ The project now has one full local run of tau2 retail `base` split:
 - read action match `346/357`;
 - write action match `162/176`;
 - NL assertions `58/61`;
-- p95 duration `32.77s`;
-- average total cost `$0.006036` on 61/114 cost-complete samples;
+- p95 simulation duration `32.77s`（包含用户模拟器、Agent 多轮会话与评审，不代表消费者接口延迟）；
+- observed average total cost `$0.006036` on 61/114 cost-complete samples（覆盖不完整，不能外推为完整 split 成本）；
 - failed task ids: `25/34/37/41/44/72/76/86/105/109`.
 
 Failure clusters:

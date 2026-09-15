@@ -109,6 +109,32 @@ class PolicyResponseGenerator:
                 "涉及补偿或创建 case 时转人工确认。"
             )
 
+    def customer_safe_template(
+        self,
+        user_message: str,
+        policy_sections: list[dict[str, object]],
+    ) -> str | None:
+        """Serve frequent, policy-grounded FAQs without an unnecessary LLM turn."""
+
+        if not policy_sections:
+            return None
+        text = user_message.lower()
+        if "发票" in text:
+            return "开具发票前需要核对订单和发票信息。您可以先提交申请，工作人员会确认信息后继续处理。"
+        if "取消" in text:
+            return (
+                "能否取消订单取决于当前订单和物流状态。"
+                "订单尚未进入配送时可以提交申请，工作人员会为您核查。"
+            )
+        if "地址" in text:
+            return "修改收货地址需要先确认订单尚未进入配送。请提交申请，工作人员会核对后告知您结果。"
+        if any(term in text for term in ("退款", "补偿", "赔付")):
+            return (
+                "退款或补偿需要先核查订单状态和具体原因。"
+                "确认符合处理条件后才能继续办理，当前不能直接承诺金额或到账时间。"
+            )
+        return None
+
 
 class OlistTaskExtractor:
     """Extracts order/category slots from an Olist support request."""
@@ -133,23 +159,25 @@ class OlistTaskExtractor:
             return await self._llm.ainvoke(messages)
         except Exception as exc:
             logger.warning("Structured task extractor failed, trying JSON-text fallback: %s", exc)
+            if _is_transport_error(exc):
+                return _regex_task_result(user_message)
             try:
                 raw = await self._base_llm.ainvoke(add_json_instruction(messages, OlistTaskResult))
                 return parse_json_model(raw, OlistTaskResult)
             except Exception as fallback_exc:
                 logger.warning("Task extractor LLM failed, using regex fallback: %s", fallback_exc)
-            order_match = re.search(r"[0-9a-fA-F][0-9a-fA-F\s:-]{30,80}[0-9a-fA-F]", user_message)
-            category_match = re.search(r"[a-z]+(?:[_ -][a-z]+)+", user_message.lower())
-            order_id = re.sub(r"[^0-9a-fA-F]", "", order_match.group(0)).lower() if order_match else ""
-            return OlistTaskResult(
-                order_id=order_id if len(order_id) == 32 else "",
-                category=(
-                    category_match.group(0).replace(" ", "_").replace("-", "_")
-                    if category_match
-                    else ""
-                ),
-                user_goal="fallback extraction",
-            )
+            return _regex_task_result(user_message)
+
+    def fast_extract(self, user_message: str) -> OlistTaskResult | None:
+        """Extract an exact order id locally when semantic inference is unnecessary."""
+
+        order_match = re.search(r"[0-9a-fA-F][0-9a-fA-F\s:-]{30,80}[0-9a-fA-F]", user_message)
+        if not order_match:
+            return None
+        order_id = re.sub(r"[^0-9a-fA-F]", "", order_match.group(0)).lower()
+        if len(order_id) != 32:
+            return None
+        return OlistTaskResult(order_id=order_id, category="", user_goal="exact order id")
 
 
 def _format_insight_fallback(products: list[dict], support_docs: list[dict[str, object]]) -> str:
@@ -161,6 +189,26 @@ def _format_insight_fallback(products: list[dict], support_docs: list[dict[str, 
         lines.append(examples.strip())
     lines.append("建议优先排查延迟率、低分率和取消率最高的类目，并用样例订单继续下钻。")
     return "\n".join(lines)
+
+
+def _regex_task_result(user_message: str) -> OlistTaskResult:
+    order_match = re.search(r"[0-9a-fA-F][0-9a-fA-F\s:-]{30,80}[0-9a-fA-F]", user_message)
+    category_match = re.search(r"[a-z]+(?:[_ -][a-z]+)+", user_message.lower())
+    order_id = re.sub(r"[^0-9a-fA-F]", "", order_match.group(0)).lower() if order_match else ""
+    return OlistTaskResult(
+        order_id=order_id if len(order_id) == 32 else "",
+        category=(
+            category_match.group(0).replace(" ", "_").replace("-", "_")
+            if category_match
+            else ""
+        ),
+        user_goal="fallback extraction",
+    )
+
+
+def _is_transport_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    return any(marker in name for marker in ("timeout", "connection", "network"))
 
 
 def _with_canonical_category_prefix(answer: str, products: list[dict]) -> str:

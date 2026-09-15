@@ -17,6 +17,8 @@ fastapi-langgraph-agent.iml
 data/*.db*
 data/*.db-*
 data/*.log
+evaluation/live_customer_flow_eval*_results.jsonl
+evaluation/live_customer_flow_eval*_report.md
 data/olist_raw/*.csv
 data/bitext_raw/*.csv
 data/rescommons_raw/*.jsonl

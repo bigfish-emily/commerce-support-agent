@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -26,6 +27,9 @@ class IntentPlanner:
         )
 
     async def plan(self, message: str) -> TaskPlanResult:
+        fast_plan = _fast_plan(message)
+        if fast_plan is not None:
+            return fast_plan
         messages = [
             SystemMessage(content=INTENT_PLANNER_PROMPT),
             HumanMessage(content=message),
@@ -38,6 +42,9 @@ class IntentPlanner:
                 result = await self._llm.ainvoke(messages)
         except Exception as exc:
             logger.warning("Structured planner failed, trying JSON-text fallback: %s", exc)
+            if _is_transport_error(exc):
+                logger.warning("Planner transport error; using deterministic task plan without retry")
+                return fallback_plan(message)
             try:
                 raw = await self._base_llm.ainvoke(add_json_instruction(messages, TaskPlanResult))
                 result = parse_json_model(raw, TaskPlanResult)
@@ -47,7 +54,7 @@ class IntentPlanner:
         tasks = _dedupe_redundant_tasks([task for task in result.tasks if task.intent in VALID_INTENTS])
         if not tasks:
             return fallback_plan(message)
-        return TaskPlanResult(tasks=_normalize_dependencies(tasks))
+        return TaskPlanResult(tasks=_normalize_dependencies(tasks), planning_mode="llm")
 
     async def classify(self, message: str) -> IntentRouteResult:
         """Compatibility helper for evals that still measure single-label routing."""
@@ -67,7 +74,67 @@ def fallback_plan(message: str) -> TaskPlanResult:
         )
         for task in decompose_business_message(message)
     ]
-    return TaskPlanResult(tasks=_normalize_dependencies(tasks))
+    return TaskPlanResult(
+        tasks=_normalize_dependencies(tasks),
+        planning_mode="deterministic_fallback",
+    )
+
+
+def _fast_plan(message: str) -> TaskPlanResult | None:
+    """Use a deterministic fast lane only for unambiguous one-step requests."""
+
+    text = message.lower()
+    has_order_id = bool(re.search(r"[0-9a-f]{32}", text))
+    action_type = _direct_action_type(text)
+    compound_markers = ("并且", "然后", "同时", "先", "政策", "状态", "物流", "配送", "以及")
+    if has_order_id and action_type and not any(marker in text for marker in compound_markers):
+        return TaskPlanResult(
+            tasks=[
+                PlannedTask(
+                    intent="escalation",
+                    text=message,
+                    side_effect=True,
+                    action_type=action_type,
+                )
+            ],
+            planning_mode="deterministic_fast_path",
+        )
+    if has_order_id and not action_type:
+        return TaskPlanResult(
+            tasks=[PlannedTask(intent="order_status", text=message)],
+            planning_mode="deterministic_fast_path",
+        )
+
+    policy_terms = ("退款政策", "退款规则", "发票需要", "取消订单规则", "改地址规则", "补偿能不能")
+    if (
+        not has_order_id
+        and not any(marker in text for marker in compound_markers)
+        and any(term in text for term in policy_terms)
+    ):
+        return TaskPlanResult(
+            tasks=[PlannedTask(intent="policy", text=message)],
+            planning_mode="deterministic_fast_path",
+        )
+    return None
+
+
+def _direct_action_type(text: str) -> str:
+    if "退款" in text or "补偿申请" in text:
+        return "refund_request"
+    if "取消订单" in text or "申请取消" in text:
+        return "cancel_order"
+    if "改地址" in text or "修改地址" in text:
+        return "change_address"
+    if "申请发票" in text or "开票申请" in text:
+        return "invoice_request"
+    if "投诉" in text:
+        return "complaint_escalation"
+    return ""
+
+
+def _is_transport_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    return any(marker in name for marker in ("timeout", "connection", "network"))
 
 
 def _normalize_dependencies(tasks: list[PlannedTask]) -> list[PlannedTask]:

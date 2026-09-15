@@ -32,6 +32,10 @@ class PlannedTask(BaseModel):
 
 class TaskPlanResult(BaseModel):
     tasks: list[PlannedTask] = Field(default_factory=list)
+    planning_mode: str = Field(
+        "llm",
+        description="llm, deterministic_fast_path, or deterministic_fallback",
+    )
 
 
 class OlistTaskResult(BaseModel):

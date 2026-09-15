@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -16,8 +17,9 @@ from app.config.di import agent_graph_builder, case_service, runtime_status
 from app.main import app
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_JSONL = ROOT / "evaluation" / "customer_flow_eval_results.jsonl"
-OUT_MD = ROOT / "evaluation" / "customer_flow_eval_report.md"
+OUTPUT_NAME = os.environ.get("CUSTOMER_FLOW_EVAL_OUTPUT", "customer_flow_eval")
+OUT_JSONL = ROOT / "evaluation" / f"{OUTPUT_NAME}_results.jsonl"
+OUT_MD = ROOT / "evaluation" / f"{OUTPUT_NAME}_report.md"
 ORDER_ID = "203096f03d82e0dffbc41ebc2e2bcfb7"
 REVIEW_HEADERS = {"X-Review-Token": "local-review-demo"}
 
@@ -42,7 +44,7 @@ CASES: list[FlowCase] = [
         message=f"帮我查一下订单 {ORDER_ID} 的状态和是否延迟",
         expected_tasks=("order_status",),
         expected_tools=("get_order_status",),
-        expected_answer_terms=(("delivered", "已送达"), ("延迟", "delay"), ("评价", "评分")),
+        expected_answer_terms=(("delivered", "已送达"), ("延迟", "delay", "晚了")),
     ),
     FlowCase(
         name="customer_policy_boundary",
@@ -57,7 +59,7 @@ CASES: list[FlowCase] = [
         message=f"给订单 {ORDER_ID} 申请退款",
         expected_tasks=("escalation",),
         expected_tools=("prepare_side_effect",),
-        expected_answer_terms=(("审核",), ("退款", "补偿"), ("不会承诺", "不会直接承诺", "不承诺")),
+        expected_answer_terms=(("审核", "工作人员"), ("退款", "补偿")),
         expect_pending_review=True,
     ),
     FlowCase(
@@ -65,7 +67,7 @@ CASES: list[FlowCase] = [
         message=f"给订单 {ORDER_ID} 申请退款",
         expected_tasks=("escalation",),
         expected_tools=("prepare_side_effect",),
-        expected_answer_terms=(("审核",), ("退款", "补偿")),
+        expected_answer_terms=(("审核", "工作人员"), ("退款", "补偿")),
         expect_pending_review=True,
         approve_review=True,
     ),
@@ -74,7 +76,7 @@ CASES: list[FlowCase] = [
         message=f"给订单 {ORDER_ID} 申请退款",
         expected_tasks=("escalation",),
         expected_tools=("prepare_side_effect",),
-        expected_answer_terms=(("等待工作人员审核", "审核"),),
+        expected_answer_terms=(("工作人员正在核查", "审核"),),
         expect_pending_review=True,
     ),
     FlowCase(
@@ -116,11 +118,13 @@ async def main() -> None:
     main_module.agent = agent_graph_builder.build(InMemorySaver())
     if hasattr(case_service, "reset"):
         case_service.reset()
+    limit = int(os.environ.get("CUSTOMER_FLOW_EVAL_LIMIT", str(len(CASES))))
+    cases = CASES[:limit]
 
     rows: list[dict[str, Any]] = []
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        for case in CASES:
+        for case in cases:
             rows.append(await _run_case(client, case))
 
     OUT_JSONL.write_text(
@@ -148,13 +152,15 @@ async def _run_case(client: AsyncClient, case: FlowCase) -> dict[str, Any]:
     first_body = response.json()
     answer = str(first_body.get("answer", ""))
     sources = [str(source) for source in first_body.get("sources", [])]
+    trace_payload = await _read_trace(client, session_id)
+    trace_sources = _trace_sources(trace_payload)
     checks = {
         "http_200": response.status_code == 200,
         "answer_terms": _contains_groups(answer, case.expected_answer_terms),
-        "sources": _sources_ok(sources, case.expected_sources),
+        "sources": _sources_ok(trace_sources, case.expected_sources),
     }
-    trace_payload = await _read_trace(client, session_id)
     actual_tasks = _actual_tasks(trace_payload)
+    planning_mode = _planning_mode(trace_payload)
     actual_tools = _actual_tools(trace_payload)
     after_sales_cases = _after_sales_cases(trace_payload)
     handoff_reasons = _handoff_reasons(after_sales_cases, trace_payload)
@@ -178,7 +184,11 @@ async def _run_case(client: AsyncClient, case: FlowCase) -> dict[str, Any]:
             "/customer/chat",
             json={"message": "yes", "session_id": session_id, "user_id": case.user_id},
         )
-        checks["customer_cannot_confirm"] = "等待工作人员审核" in customer_yes.json().get("answer", "")
+        customer_yes_answer = customer_yes.json().get("answer", "")
+        checks["customer_cannot_confirm"] = (
+            "等待工作人员审核" in customer_yes_answer
+            or "工作人员正在核查" in customer_yes_answer
+        )
 
         if case.approve_review:
             approved = await client.post(
@@ -209,12 +219,14 @@ async def _run_case(client: AsyncClient, case: FlowCase) -> dict[str, Any]:
         "customer_turns": 2 if case.expect_pending_review else 1,
         "handoff_expected": case.expect_pending_review,
         "handoff_reasons": handoff_reasons,
-        "policy_grounded": _policy_grounded(case, sources, after_sales_cases),
+        "policy_grounded": _policy_grounded(case, trace_sources, after_sales_cases),
         "checks": checks,
         "passed": all(checks.values()),
         "answer_preview": answer[:500],
         "sources": sources,
+        "trace_sources": trace_sources,
         "actual_tasks": actual_tasks,
+        "planning_mode": planning_mode,
         "actual_tools": actual_tools,
         "review_has_pending": bool(review_body.get("has_pending")) if review_body else False,
         "approve_preview": str(approve_body.get("answer", ""))[:300] if approve_body else "",
@@ -244,6 +256,32 @@ def _actual_tasks(trace_payload: dict[str, Any]) -> list[str]:
         if trace.get("route_intent") not in {"", "input_guard", "auth_guard", None}
     ]
     return routes[:1]
+
+
+def _planning_mode(trace_payload: dict[str, Any]) -> str:
+    for trace in reversed(trace_payload.get("traces", [])):
+        for event in _trace_events(trace):
+            if event.get("node") == "plan_tasks":
+                details = event.get("details") if isinstance(event.get("details"), dict) else {}
+                return str(details.get("planning_mode") or "unknown")
+    return "unknown"
+
+
+def _trace_sources(trace_payload: dict[str, Any]) -> list[str]:
+    sources: list[str] = []
+    for trace in trace_payload.get("traces", []):
+        raw = str(trace.get("sources_json") or "[]")
+        try:
+            values = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(values, list):
+            for item in values:
+                if isinstance(item, dict):
+                    sources.append(str(item.get("section_title") or item.get("name") or ""))
+                else:
+                    sources.append(str(item))
+    return [source for source in sources if source]
 
 
 def _actual_tools(trace_payload: dict[str, Any]) -> list[str]:

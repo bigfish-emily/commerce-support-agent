@@ -38,7 +38,7 @@ async def client() -> AsyncClient:
 async def test_frontend_entrypoints_available(client: AsyncClient) -> None:
     response = await client.get("/")
     assert response.status_code == 200
-    assert "自助售后" in response.text
+    assert "售后服务" in response.text
     assert "/static/product-customer.js" in response.text
 
     customer = await client.get("/customer")
@@ -256,7 +256,7 @@ async def test_policy_question_uses_policy_knowledge(client: AsyncClient) -> Non
     with g1, g2, _mock_plan("policy"), _mock_policy_answer("LLM: compensation needs human approval"):
         response = await client.post("/chat", json={"message": "退款补偿能不能直接承诺？"})
     assert response.status_code == 200
-    assert "human approval" in response.json()["answer"]
+    assert "不能直接承诺金额或到账时间" in response.json()["answer"]
     assert "Compensation Boundary Policy" in response.json()["sources"]
 
 
@@ -359,7 +359,7 @@ async def test_customer_yes_cannot_approve_pending_write_action(client: AsyncCli
         )
 
     assert response.status_code == 200
-    assert "等待工作人员审核" in response.json()["answer"]
+    assert "工作人员正在核查" in response.json()["answer"]
     assert "已执行" not in response.json()["answer"]
 
 
@@ -488,7 +488,7 @@ async def test_escalation_second_turn_cancel(client: AsyncClient) -> None:
     with g1, g2:
         response = await client.post("/chat", json=_support_payload("no", "s3"))
     assert response.status_code == 200
-    assert "已取消创建售后升级 case" in response.json()["answer"]
+    assert "售后申请已被审核拒绝" in response.json()["answer"]
 
 
 @pytest.mark.anyio
