@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 
 from langgraph.types import interrupt
@@ -34,6 +35,7 @@ class AgentActions:
         case_service: InMemoryCaseService,
         tool_manager: ToolCallManager | None = None,
         runtime_store: RuntimeStore | None = None,
+        after_sales_control_mode: str = "full",
     ) -> None:
         self._intent_planner = intent_planner
         self._qa_generator = qa_generator
@@ -44,6 +46,9 @@ class AgentActions:
         self._support_retriever = support_retriever
         self._case_service = case_service
         self._runtime_store = runtime_store
+        if after_sales_control_mode not in {"full", "handoff_all", "execute_on_intent"}:
+            raise ValueError(f"Unsupported after-sales control mode: {after_sales_control_mode}")
+        self._after_sales_control_mode = after_sales_control_mode
         self._tool_manager = tool_manager or build_business_tool_manager(
             olist_service=olist_service,
             knowledge_base=knowledge_base,
@@ -157,7 +162,7 @@ class AgentActions:
         intent = str(task.get("intent", "policy"))
         text = str(state.get("current_task_text") or _latest_user_task_message(state))
         slot_text = _with_order_context(text, _latest_user_task_message(state))
-        if intent in {"policy", "qa", "ops_decision"}:
+        if intent in {"small_talk", "clarify", "policy", "qa", "ops_decision"}:
             # Retrieval consumes the full task text. These read-only intents do
             # not need an order/category slot before retrieval can begin.
             extracted = OlistTaskResult(order_id="", category="", user_goal="not_required")
@@ -219,7 +224,9 @@ class AgentActions:
         context: dict[str, object] = {}
         update: dict[str, object] = {}
 
-        if intent == "order_status":
+        if intent in {"small_talk", "clarify"}:
+            context["primary_tool"] = "none"
+        elif intent == "order_status":
             context["primary_tool"] = "get_order_status"
             if slots.get("order_id_ok"):
                 order_id = str(slots["order_id"])
@@ -257,10 +264,11 @@ class AgentActions:
             if intent == "escalation":
                 action_type = str(slots.get("action_type") or task.get("action_type") or "open_support_case")
                 policy_query = f"{text}\n售后动作：{_ACTION_LABELS.get(action_type, action_type)}"
-            sections, support_docs = await asyncio.gather(
-                self._search_policy_knowledge(policy_query, state),
-                self._search_support_docs(text, state),
-            )
+            # The policy pack is the decision source of truth. Public support
+            # conversations are retained for a separate retrieval experiment,
+            # not injected into this customer-facing policy/write path.
+            sections = await self._search_policy_knowledge(policy_query, state)
+            support_docs: list[dict[str, object]] = []
             context["policy_sections"] = sections
             context["support_docs"] = support_docs
             update["retrieved_policy"] = [*state.get("retrieved_policy", []), *sections]
@@ -327,7 +335,14 @@ class AgentActions:
         context = dict(state.get("current_context", {}))
         answer = ""
 
-        if intent == "order_status":
+        if intent == "small_talk":
+            answer = "你好，我可以帮你查询订单、了解售后政策或提交售后申请。请告诉我想处理什么问题。"
+        elif intent == "clarify":
+            answer = (
+                "可以的。请告诉我想查询订单、了解退款/取消政策，还是申请退款、取消订单或修改地址；"
+                "如涉及具体订单，请提供订单号。"
+            )
+        elif intent == "order_status":
             if context.get("order_id_error"):
                 answer = str(context["order_id_error"])
             else:
@@ -420,6 +435,22 @@ class AgentActions:
             after_sales_cases.append(dict(draft["after_sales_case"]))
         decision = dict(draft.get("decision", {}))
         verification = dict(draft.get("verification", {}))
+        if self._after_sales_control_mode != "full":
+            decision, verification = _control_ablation_decision(
+                self._after_sales_control_mode,
+                action_type,
+                decision,
+            )
+            draft["decision"] = decision
+            draft["verification"] = verification
+            draft["requires_confirmation"] = verification.get("required_next_step") == "hitl"
+            answer = _format_after_sales_decision_answer(
+                str(draft.get("order_id", "")),
+                action_type,
+                draft,
+                requires_confirmation=bool(draft["requires_confirmation"]),
+                customer_view=_is_customer_channel(state),
+            )
         handoff_reasons = list(decision.get("handoff_reasons", []))
         dialog_state = _merge_dialog_state(
             state,
@@ -443,6 +474,7 @@ class AgentActions:
                         "risk_level": decision.get("risk_level"),
                         "requires_human": decision.get("requires_human"),
                         "handoff_reasons": handoff_reasons,
+                        "control_mode": self._after_sales_control_mode,
                     },
                 ),
                 _event(
@@ -466,7 +498,15 @@ class AgentActions:
             }
 
         if draft.get("requires_confirmation") is False:
-            execution_answer = await self._execute_escalation_draft(draft, state)
+            # The customer never receives a write scope. A low-risk action is
+            # executed by the constrained system actor only after the
+            # deterministic decision and verifier both chose `execute`.
+            execution_answer = await self._execute_escalation_draft(
+                draft,
+                state,
+                role_override="after_sales_operator",
+                auth_scopes_override=["after_sales:write"],
+            )
             completed = _upsert_task_status(completed, idx, "escalation", "completed")
             answer_parts = [
                 *state.get("answer_parts", []),
@@ -504,6 +544,16 @@ class AgentActions:
             session_id=str(state.get("session_id", "unknown")),
             user_id=str(state.get("user_id", "demo-user")),
             expires_at=created_at + timeout_seconds,
+            case_payload={
+                "after_sales_case": dict(draft.get("after_sales_case", {})),
+                "decision": dict(draft.get("decision", {})),
+                "verification": dict(draft.get("verification", {})),
+                "policy_sources": [
+                    str(item.get("section_title", ""))
+                    for item in state.get("retrieved_policy", [])
+                    if isinstance(item, dict) and item.get("section_title")
+                ],
+            },
         )
         review_case_id = str(review_case.get("result_id", ""))
         draft["review_case_id"] = review_case_id
@@ -661,6 +711,19 @@ class AgentActions:
                 customer_view=_is_customer_channel(state),
             )
             return answer, draft
+
+        # Order-state prohibitions are decided before asking for optional write
+        # fields. A delivered order must receive the truthful rejection first;
+        # collecting a new address for an impossible direct change is misleading.
+        if action_type == "change_address":
+            missing_address_fields = _missing_address_fields(user_message)
+            if missing_address_fields:
+                missing_text = "、".join(missing_address_fields)
+                return (
+                    f"订单 {order_id[:8]} 的改地址申请还需要补充：{missing_text}。"
+                    "请提供完整的新收货信息后，我再为您提交处理。",
+                    None,
+                )
 
         action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
         decision_block = _format_after_sales_decision_answer(
@@ -878,10 +941,80 @@ class AgentActions:
         )
 
 
+def _missing_address_fields(text: str) -> list[str]:
+    """Return the minimum recipient fields needed for an address-change request.
+
+    The action is a request to a downstream fulfilment system. A user can ask
+    whether address change is possible without these fields, but creating the
+    request requires enough data for an operator or OMS to act on it.
+    """
+    normalized = text.lower()
+    has_recipient = any(marker in normalized for marker in ("收件人", "联系人", "recipient"))
+    has_phone = bool(re.search(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)", normalized))
+    has_new_address = "新地址" in normalized or bool(
+        re.search(r"(?:address|地址)\s*[:：].{6,}", normalized, flags=re.IGNORECASE)
+    )
+    missing: list[str] = []
+    if not has_recipient:
+        missing.append("收件人")
+    if not has_phone:
+        missing.append("联系电话")
+    if not has_new_address:
+        missing.append("详细新地址")
+    return missing
+
+
 def _decision_stops_execution(decision: dict[str, object], verification: dict[str, object]) -> bool:
     outcome = str(decision.get("outcome", ""))
     next_step = str(verification.get("required_next_step", ""))
     return outcome in {"reject", "ask_clarification"} or next_step in {"clarify", "stop"}
+
+
+def _control_ablation_decision(
+    mode: str,
+    action_type: str,
+    original: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Construct intentionally weaker controls for a matched ablation.
+
+    These modes exist only in the evaluation runner. They retain the same
+    planner, tools, facts, and policy retrieval as `full`, then remove the
+    decision/verifier behavior to quantify its business effect.
+    """
+    policy_refs = list(original.get("policy_refs", []))
+    evidence = list(original.get("evidence", []))
+    if mode == "handoff_all":
+        decision = {
+            "outcome": "needs_human_review",
+            "action_type": action_type,
+            "reason_code": "ablation_handoff_all",
+            "confidence": 1.0,
+            "risk_level": "medium",
+            "requires_human": True,
+            "handoff_reasons": ["ablation_all_writes_handoff"],
+            "allowed_actions": [action_type],
+            "blocked_actions": [],
+            "evidence": evidence,
+            "policy_refs": policy_refs,
+            "customer_message_points": ["所有动作统一交由人工审核。"],
+        }
+        return decision, {"passed": True, "flags": [], "required_next_step": "hitl"}
+
+    decision = {
+        "outcome": "approve",
+        "action_type": action_type,
+        "reason_code": "ablation_execute_on_intent",
+        "confidence": 1.0,
+        "risk_level": "low",
+        "requires_human": False,
+        "handoff_reasons": [],
+        "allowed_actions": [action_type],
+        "blocked_actions": [],
+        "evidence": evidence,
+        "policy_refs": policy_refs,
+        "customer_message_points": ["检测到动作意图后直接执行。"],
+    }
+    return decision, {"passed": True, "flags": [], "required_next_step": "execute"}
 
 
 def _format_after_sales_decision_answer(
@@ -999,6 +1132,8 @@ _ACTION_LABELS = {
 }
 
 _INTENT_LABELS = {
+    "small_talk": "咨询",
+    "clarify": "信息确认",
     "order_status": "订单查询",
     "qa": "运营分析",
     "ops_decision": "审核台优先处理",

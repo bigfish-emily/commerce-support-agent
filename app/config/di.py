@@ -18,10 +18,10 @@ from app.tool_call import build_business_tool_manager, build_runtime_store_from_
 
 load_dotenv()
 
-olist_service = OlistService()
 knowledge_base = MarkdownKnowledgeBase()
 support_retriever = HybridSupportRetriever()
 case_service = SQLiteCaseService()
+olist_service = OlistService(projection_store=case_service)
 runtime_store = build_runtime_store_from_env()
 tool_manager = build_business_tool_manager(
     olist_service=olist_service,

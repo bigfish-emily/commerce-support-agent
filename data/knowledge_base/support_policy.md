@@ -85,20 +85,25 @@ the invoice tool.
 Shipping address changes are allowed only before the downstream order or logistics
 system marks the shipment as locked, shipped, or delivered. The Agent should first
 check the order status, explain that address changes may be unavailable after
-shipment, and collect the new recipient name, phone number, street address, city,
-state, and postal code.
+shipment, and collect the new recipient name, phone number, and complete delivery
+address before it creates a change request.
 
-Changing an address modifies fulfillment data, so the Agent may draft the request
-but must require human confirmation before calling an address-change tool. If the
-order has already been delivered, the Agent should not attempt to change the address
-and should offer a support follow-up case instead.
+Changing an address modifies fulfillment data. The Agent may submit a low-risk
+address-change request only when the order is still pre-shipment, the payment is
+below the low-risk threshold, the new recipient details are complete, and no risk
+signal is present. Other address-change requests require human confirmation before
+calling an address-change tool. If the order has already been delivered, the Agent
+should not attempt to change the address and should offer a support follow-up case
+instead.
 
 ## Human Approval Policy
 
-Any action that creates a support case, changes customer entitlement, sends a message
-to the customer, triggers compensation, modifies an order, or notifies a seller must
-pass through human-in-the-loop confirmation. The Agent should present the reason,
-draft message, and intended action, then pause for explicit confirmation.
+Refunds, compensation, invoices, complaints, high-value order changes, and any
+request with incomplete facts or risk signals must pass through human-in-the-loop
+confirmation. The Agent presents the reason, draft message, and intended action,
+then pauses for an operator decision. A narrow low-risk gate may auto-submit a
+pre-shipment cancellation or address-change request after deterministic fact,
+policy, and verifier checks; the durable audit record must still be written.
 
 Accepted confirmations include clear affirmative user responses such as "yes",
 "confirm", "create", "确认", or "创建". Ambiguous replies should be treated as not

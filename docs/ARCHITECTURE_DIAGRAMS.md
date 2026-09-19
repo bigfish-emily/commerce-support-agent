@@ -18,7 +18,7 @@ flowchart TD
     G -- 通过 --> I[5 LLM Planner<br/>拆多意图 task_plan]
     I --> J[6 select_next_task<br/>只读优先, 副作用后置]
     J --> K[7 extract_slots<br/>抽订单号/类目/action_type]
-    K --> L[8 retrieve_context<br/>订单事实/政策/FAQ/语料证据]
+    K --> L[8 retrieve_context<br/>订单事实/政策/FAQ 证据]
     L --> M{9 是否写动作?}
     M -- 否 --> N[10 execute_read_task<br/>直接回答消费者]
     N --> J
@@ -38,7 +38,8 @@ flowchart TD
     E --> Z
     F --> Z
     H --> Z
-    Y --> J
+    Y --> Projection[写入售后事件<br/>更新订单状态投影]
+    Projection --> J
     J -- 无剩余任务 --> Z
     Z --> AA[18 trace + case metrics]
     AA --> AB[返回 answer/sources/session_id]
@@ -102,7 +103,7 @@ flowchart TD
     Verify --> Next{execute / hitl / clarify / stop}
 ```
 
-当前 Olist 数据能直接支撑订单状态、金额、延迟、低分和政策命中，因此这些字段进入真实判断；`risk_signals` 预留了已退款、部分退款、优惠券/积分、疑似滥用等企业常见字段，当前公开数据没有这些事实来源时按安全默认值处理。低风险自动执行门禁已经落地，完整售后风控需要接入企业真实退款、支付、会员和风控事实。
+当前 Olist 数据能直接支撑订单状态、金额、延迟、低分和政策命中，因此这些字段进入真实判断；`risk_signals` 预留了已退款、部分退款、优惠券/积分、疑似滥用等企业常见字段，当前公开数据没有这些事实来源时按安全默认值处理。审核通过后，动作会以 append-only event 写入 SQLite 并更新订单投影；它模拟“申请已创建/处理中”的业务状态，不模拟真实支付清算。
 
 ## 4. HITL 中断与恢复
 
@@ -171,18 +172,19 @@ MCP 在项目里承担企业工具接入边界。它暴露工具 schema、权限
 
 ```mermaid
 flowchart TD
-    Code[代码/Prompt/规则改动] --> CI[CI: ruff + pytest]
-    CI --> Offline[离线 eval: intent/multi-intent/tool/RAG/trajectory/performance]
-    Offline --> Live[真实 LLM 回归: planner/tool/HITL/answer]
-    Live --> Judge[LLM-as-Judge: relevance/faithfulness/tool/HITL]
-    Judge --> Tau[tau2-bench retail local run]
-    Tau --> BadCase[失败样本归因]
-    BadCase --> Regression[bad-case regression]
-    Regression --> CI
-    Trace[SQLite trace/case metrics] -.抽样回放.-> Offline
+    Change[代码、Prompt 或政策规则改动] --> Unit[CI: ruff + pytest]
+    Unit --> Core[AfterSalesBench core]
+    Unit --> Planner[LLMPlannerBench]
+    Core --> Oracle[检查 case 终态、订单投影、写入次数、审核分流]
+    Planner --> Plan[检查真实 LLM 的任务序列与最终业务状态]
+    Oracle --> Ablation[full / handoff-all / execute-on-intent 对照]
+    Plan --> Ablation
+    Ablation --> BadCase[失败样本归因并加入命名回归 case]
+    BadCase --> Unit
+    Trace[SQLite trace 与 case event] -.辅助排障.-> BadCase
 ```
 
-评测飞轮分层证明项目能力：单测和离线 eval 证明确定性模块稳定；真实 LLM 回归证明模型进入主链路后可用；LLM-as-Judge 看回答质量；tau2-bench retail 给出第三方客服环境的横向指标。
+核心集通过真实 API 检查业务状态，模型规划集专门覆盖口语化多意图输入。控制组将所有其他条件保持一致，只移除风险分流或直接写入门禁，因此能定位 workflow 对错误写入和人工负担的影响。LLM-as-Judge 可以作为回答风格的补充信号，不能替代 case 终态和订单投影 oracle。
 
 ## 总结
 

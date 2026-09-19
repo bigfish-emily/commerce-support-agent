@@ -1,6 +1,7 @@
 """Fast, layered guardrails for the customer-facing request path."""
 
 import logging
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -25,7 +26,11 @@ class Guardrail:
         text = message.lower()
         if _contains_blocked_signal(text):
             return InputGuardResult(on_topic=False, reason="deterministic blocked pattern")
-        if _looks_like_marketplace_support(text) or _looks_like_safe_followup(text):
+        if (
+            _looks_like_marketplace_support(text)
+            or _looks_like_safe_followup(text)
+            or _looks_like_small_talk(text)
+        ):
             return InputGuardResult(on_topic=True, reason="deterministic marketplace allowlist")
 
         context_text = ""
@@ -195,6 +200,14 @@ def _looks_like_marketplace_support(text: str) -> bool:
 
 def _looks_like_safe_followup(text: str) -> bool:
     return text.strip() in {"yes", "no", "确认", "取消", "好的", "好", "继续", "人工客服"}
+
+
+def _looks_like_small_talk(text: str) -> bool:
+    normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
+    return normalized in {
+        "你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "早上好", "晚上好",
+        "谢谢", "感谢", "多谢", "再见", "拜拜", "你能做什么", "你可以做什么", "帮助",
+    }
 
 
 def _is_transport_error(exc: Exception) -> bool:

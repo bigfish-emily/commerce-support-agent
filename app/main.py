@@ -25,6 +25,7 @@ from app.config.di import (
     runtime_status,
     runtime_store,
 )
+from app.evaluation_snapshot import load_evaluation_snapshot
 from app.llm.customer_presenter import present
 from app.logger import format_state, setup_logger
 from app.models import (
@@ -48,8 +49,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 ORDER_ID_RE = re.compile(r"\b[0-9a-fA-F]{32}\b")
 DEFAULT_CUSTOMER_ORDER_IDS: dict[str, set[str]] = {
-    "demo-customer": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
-    "customer-demo": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
+    "demo-customer": {
+        "203096f03d82e0dffbc41ebc2e2bcfb7",  # delivered, delayed
+        "8aec3a066f732dd927ec8fef1752415b",  # low-value, pre-shipment
+        "360787554f41824600bdcba9687cd4f0",  # high-value, pre-shipment
+        "1b9ecfe83cdc259250e1a8aca174f0ad",  # canceled
+        "f98ae4bbfd1a32ea2104c8cf1f64dabf",  # delivered, no delay
+    },
+    "customer-demo": {
+        "203096f03d82e0dffbc41ebc2e2bcfb7",
+        "8aec3a066f732dd927ec8fef1752415b",
+        "360787554f41824600bdcba9687cd4f0",
+        "1b9ecfe83cdc259250e1a8aca174f0ad",
+        "f98ae4bbfd1a32ea2104c8cf1f64dabf",
+    },
     "customer-smoke": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
 }
 
@@ -413,6 +426,13 @@ async def review_conversations(x_review_token: str | None = Header(default=None)
                     "action_type": record.get("action_type", "咨询会话") if record else "咨询会话",
                     "created_at": row["updated_at"]})
     return {"cases": rows}
+
+
+@app.get("/review/metrics")
+def review_metrics(x_review_token: str | None = Header(default=None)) -> dict:
+    """Authenticated evaluation baselines and clearly scoped runtime traces."""
+    _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
+    return load_evaluation_snapshot(runtime_summary=trace_summary(), runtime_cases=case_metrics())
 
 
 class HandoffMode(BaseModel):

@@ -76,10 +76,23 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
         "invoice_request": "开具发票",
         "complaint_escalation": "投诉升级",
     }.get(action_type, "售后")
+    pending = state.get("pending_side_effect") or {}
+    if isinstance(pending, dict) and pending.get("requires_confirmation"):
+        pending_label = {
+            "refund_request": "退款",
+            "cancel_order": "取消订单",
+            "change_address": "修改收货地址",
+            "invoice_request": "开具发票",
+            "complaint_escalation": "投诉升级",
+        }.get(str(pending.get("type", "")), action_label)
+        return (
+            f"您的{pending_label}申请已受理，工作人员正在核查订单和处理条件。"
+            "审核完成后会在这里通知您，处理结果确认前暂不能承诺退款、补偿或订单变更。"
+        )
     if status in {"pending_review", "appealed_pending_review"}:
         return (
             f"您的{action_label}申请已受理，工作人员正在核查订单和处理条件。"
-            "审核完成后会在这里通知您，当前还未执行退款或订单变更。"
+            "审核完成后会在这里通知您，处理结果确认前暂不能承诺退款、补偿或订单变更。"
         )
     if status in {"rejected", "timeout_canceled"}:
         return "这项申请暂未通过或已关闭。如需补充说明，您可以提交二次申诉，工作人员会继续核查。"
@@ -87,6 +100,18 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
     tasks = state.get("task_plan") or []
     context = state.get("current_context") or {}
     raw_result = str(state.get("final_answer", ""))
+    completed_action = _completed_write_action(state)
+    if completed_action:
+        return _customer_write_receipt(completed_action, question)
+    if len(tasks) == 1 and isinstance(tasks[0], dict):
+        intent = str(tasks[0].get("intent", ""))
+        if intent == "small_talk":
+            return "你好，我可以帮你查询订单、了解售后政策或提交售后申请。请告诉我想处理什么问题。"
+        if intent == "clarify":
+            return (
+                "可以的。请告诉我想查询订单、了解退款或取消政策，还是申请退款、取消订单或修改地址；"
+                "如涉及具体订单，请提供订单号。"
+            )
     if (
         len(tasks) == 1
         and isinstance(tasks[0], dict)
@@ -105,6 +130,50 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
         if raw_answer:
             return _customer_order_status(raw_answer)
     return ""
+
+
+def _completed_write_action(state: dict) -> str:
+    """Read the graph event, not prose, before acknowledging a write to a customer."""
+
+    for event in reversed(state.get("trajectory_events", []) or []):
+        if not isinstance(event, dict):
+            continue
+        details = event.get("details", {})
+        if (
+            event.get("node") == "execute_write_action"
+            and event.get("status") == "completed"
+            and isinstance(details, dict)
+        ):
+            action_type = str(details.get("action_type", ""))
+            if action_type:
+                return action_type
+    return ""
+
+
+def _customer_write_receipt(action_type: str, question: str) -> str:
+    """Give a concise receipt after the durable write event has completed."""
+
+    if action_type == "cancel_order":
+        return "已为您提交取消订单申请，系统已受理。最终是否取消成功请以订单状态更新为准。"
+    if action_type == "change_address":
+        address = _extract_address(question)
+        suffix = f"新地址为{address}，" if address else ""
+        return f"已为您提交修改收货地址申请，{suffix}最终结果请以订单或物流信息更新为准。"
+    if action_type == "refund_request":
+        return (
+            "已为您提交退款核查申请。工作人员会核对订单和处理条件，"
+            "结果确认前暂不能承诺退款金额或到账时间。"
+        )
+    if action_type == "invoice_request":
+        return "已为您提交开票申请。工作人员会核对订单和发票信息，并在处理完成后通知您。"
+    if action_type == "complaint_escalation":
+        return "已为您提交投诉处理申请。工作人员会尽快核查订单情况，并在处理完成后通知您。"
+    return "您的售后申请已提交，工作人员会核对处理条件后通知您结果。"
+
+
+def _extract_address(question: str) -> str:
+    match = re.search(r"新地址[：:]?\s*([^；;。\n]+)", question)
+    return match.group(1).strip() if match else ""
 
 
 def _customer_order_status(raw_answer: str) -> str:

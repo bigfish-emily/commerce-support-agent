@@ -16,7 +16,7 @@ from app.retrieval.vector_store import (
 )
 
 DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "data" / "rescommons_derived" / "support_corpus.jsonl"
-VECTOR_CANDIDATES = 300
+VECTOR_CANDIDATES = 100
 FUSION_CANDIDATES = 40
 _VECTOR_STORE_CACHE: dict[tuple[str, int, str], VectorStore] = {}
 
@@ -39,13 +39,27 @@ class HybridSupportRetriever:
         corpus_path: Path = DEFAULT_CORPUS,
         vector_store: VectorStore | None = None,
     ) -> None:
-        self.docs = _load_jsonl(corpus_path)
+        self._corpus_path = corpus_path
+        self._provided_vector_store = vector_store
+        self.docs: list[dict] = []
+        self._doc_idx_by_id: dict[str, int] = {}
+        self.doc_tokens: list[list[str]] = []
+        self.doc_counters: list[Counter[str]] = []
+        self.doc_lengths: list[int] = []
+        self.avgdl = 0.0
+        self.inverted: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        self.vector_store: VectorStore | None = None
+        self._initialized = False
+
+    def _ensure_loaded(self) -> None:
+        if self._initialized:
+            return
+        self.docs = _load_jsonl(self._corpus_path)
         self._doc_idx_by_id = {doc["doc_id"]: idx for idx, doc in enumerate(self.docs)}
         self.doc_tokens = [_tokens(doc["text"]) for doc in self.docs]
         self.doc_counters = [Counter(tokens) for tokens in self.doc_tokens]
         self.doc_lengths = [len(tokens) for tokens in self.doc_tokens]
         self.avgdl = sum(self.doc_lengths) / max(len(self.doc_lengths), 1)
-        self.inverted: dict[str, list[tuple[int, int]]] = defaultdict(list)
         for idx, counts in enumerate(self.doc_counters):
             for token, tf in counts.items():
                 self.inverted[token].append((idx, tf))
@@ -57,12 +71,18 @@ class HybridSupportRetriever:
             )
             for doc in self.docs
         ]
-        self.vector_store = vector_store or _cached_vector_store(corpus_path, vector_documents)
+        self.vector_store = self._provided_vector_store or _cached_vector_store(
+            self._corpus_path,
+            vector_documents,
+        )
+        self._initialized = True
 
     def bm25_search(self, query: str, k: int = 5) -> list[RetrievalHit]:
+        self._ensure_loaded()
         return self._rank(self._bm25_scores(query), k)
 
     def vector_search(self, query: str, k: int = 5) -> list[RetrievalHit]:
+        self._ensure_loaded()
         bm25_scores = self._bm25_scores(query)
         candidate_ids = {
             str(self.docs[idx]["doc_id"])
@@ -75,6 +95,7 @@ class HybridSupportRetriever:
         )
 
     def hybrid_search(self, query: str, k: int = 5) -> list[RetrievalHit]:
+        self._ensure_loaded()
         bm25_scores = self._bm25_scores(query)
         candidates = [
             idx
@@ -113,6 +134,7 @@ class HybridSupportRetriever:
         return scores
 
     def _vector_scores(self, query: str, candidate_ids: set[str] | None = None) -> dict[int, float]:
+        assert self.vector_store is not None
         scores = {}
         for hit in self.vector_store.search(query, k=FUSION_CANDIDATES, candidate_ids=candidate_ids):
             idx = self._doc_idx_by_id.get(hit.doc_id)

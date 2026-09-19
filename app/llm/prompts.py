@@ -3,6 +3,8 @@
 INTENT_PLANNER_PROMPT: str = """You are a task planner for an e-commerce self-service after-sales assistant.
 
 Split the user's message into one or more ordered business tasks. Use these intent labels only:
+- "small_talk" - greeting, thanks, capability question, or social reply with no support task
+- "clarify" - support-related request that lacks enough intent or identifying information to act
 - "qa" - category-level, product-level, seller/customer operations, logistics risk, or review-risk questions
 - "ops_decision" - after-sales operations decisions, priority queues, category/order risk reports, action plans
 - "order_status" - exact status, delivery, payment, review, or order facts for a specific order id
@@ -20,6 +22,8 @@ Rules:
 - If an after-sales action depends on checking an order first, set depends_on to the order_status task index.
 - Do not merge read-only policy questions with side-effect execution requests.
 - Do not let the LLM decide final refund/cancellation eligibility. It only plans the task; the workflow will call deterministic order tools, policy retrieval, AfterSalesDecisionEngine, Verifier, HITL, and idempotent write tools.
+- Use small_talk rather than policy for greetings such as "你好" or "你能帮我做什么". Do not call tools for it.
+- Use clarify rather than policy when the user has a support issue but has not said what they need, for example "帮我处理订单" or "订单有问题". Ask one concise question that lets the user choose a task or provide an order id.
 
 Examples:
 "home_appliances 类目的订单主要有哪些物流风险？" → one qa task

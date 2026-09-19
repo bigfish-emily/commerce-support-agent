@@ -6,14 +6,20 @@ from pydantic import BaseModel, Field
 class IntentRouteResult(BaseModel):
     intent: str = Field(
         ...,
-        description="Either 'qa', 'order_status', 'policy', 'ops_decision', or 'escalation'",
+        description=(
+            "Either 'small_talk', 'clarify', 'qa', 'order_status', 'policy', "
+            "'ops_decision', or 'escalation'"
+        ),
     )
 
 
 class PlannedTask(BaseModel):
     intent: str = Field(
         ...,
-        description="Either 'qa', 'order_status', 'policy', 'ops_decision', or 'escalation'",
+        description=(
+            "Either 'small_talk', 'clarify', 'qa', 'order_status', 'policy', "
+            "'ops_decision', or 'escalation'"
+        ),
     )
     text: str = Field("", description="User sub-request for this task")
     side_effect: bool = Field(False, description="Whether the task may change external business state")

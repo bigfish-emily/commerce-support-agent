@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
 from app.olist.catalog import category_risks_by_name, full_orders_by_id, load_dataset, load_order_facts_index
 from app.olist.retrieval import adaptive_category_retrieval
@@ -22,12 +25,27 @@ class OrderStatusView:
     payment_value: float
     review_score: int | None
     category_summary: str
+    refund_status: str | None = None
+    address_change_status: str | None = None
+    invoice_status: str | None = None
+
+
+class OrderProjectionStore(Protocol):
+    """Read the sandbox state produced by approved after-sales actions."""
+
+    def get_order_projection(self, order_id: str) -> dict[str, Any]:
+        """Return the latest derived state for an order."""
 
 
 class OlistService:
-    def __init__(self) -> None:
+    def __init__(self, projection_store: OrderProjectionStore | None = None) -> None:
         self._by_id = full_orders_by_id()
         self._category_risks = category_risks_by_name()
+        self._projection_store = projection_store
+
+    def set_projection_store(self, projection_store: OrderProjectionStore) -> None:
+        """Attach the durable after-sales projection after DI has been wired."""
+        self._projection_store = projection_store
 
     def metadata(self) -> dict:
         metadata = dict(load_dataset()["metadata"])
@@ -43,10 +61,11 @@ class OlistService:
         order = self._by_id.get(order_id)
         if order is None:
             return None
+        projection = self._projection_store.get_order_projection(order_id) if self._projection_store else {}
         categories = [p["category"] for p in order["products"]]
         return OrderStatusView(
             order_id=order["order_id"],
-            status=order["status"],
+            status=str(projection.get("order_status") or order["status"]),
             customer_state=order["customer_state"],
             purchase_timestamp=order["purchase_timestamp"],
             estimated_delivery_date=order["estimated_delivery_date"],
@@ -55,6 +74,9 @@ class OlistService:
             payment_value=order["payment_value"],
             review_score=order["review_score"],
             category_summary="、".join(sorted(set(categories))),
+            refund_status=_as_optional_text(projection.get("refund_status")),
+            address_change_status=_as_optional_text(projection.get("address_change_status")),
+            invoice_status=_as_optional_text(projection.get("invoice_status")),
         )
 
     def category_insights(self, query: str) -> list[dict[str, object]]:
@@ -191,6 +213,8 @@ class InMemoryCaseService:
     def __init__(self) -> None:
         self._cases: dict[str, dict] = {}
         self._idempotency_index: dict[str, str] = {}
+        self._order_projections: dict[str, dict[str, Any]] = {}
+        self._order_events: list[dict[str, Any]] = []
 
     def open_case(self, order_id: str, message_text: str) -> str:
         result = self.execute_action(
@@ -206,13 +230,17 @@ class InMemoryCaseService:
             case_id = self._idempotency_index[idempotency_key]
             record = self._cases[case_id]
             was_executed = record.get("status") == "executed"
+            event: dict[str, Any] | None = None
             if not was_executed:
                 record["status"] = "executed"
+                event = self._apply_order_event(action_type, order_id, case_id)
+                record["order_event"] = event
             return {
                 "result_id": case_id,
                 "duplicate": was_executed,
                 "idempotency_key": idempotency_key,
                 "record": record,
+                "order_event": event,
             }
 
         digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
@@ -226,16 +254,21 @@ class InMemoryCaseService:
             "status": "executed",
             "idempotency_key": idempotency_key,
         }
+        event = self._apply_order_event(action_type, order_id, case_id)
+        self._cases[case_id]["order_event"] = event
         return {
             "result_id": case_id,
             "duplicate": False,
             "idempotency_key": idempotency_key,
             "record": self._cases[case_id],
+            "order_event": event,
         }
 
     def reset(self) -> None:
         self._cases.clear()
         self._idempotency_index.clear()
+        self._order_projections.clear()
+        self._order_events.clear()
 
 
     def get(self, case_id: str) -> dict | None:
@@ -256,6 +289,7 @@ class InMemoryCaseService:
         session_id: str,
         user_id: str,
         expires_at: float | None,
+        case_payload: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         idempotency_key = _idempotency_key(action_type, order_id, message_text)
         if idempotency_key in self._idempotency_index:
@@ -280,6 +314,7 @@ class InMemoryCaseService:
             "user_id": user_id,
             "expires_at": expires_at,
             "appeal_count": 0,
+            "case_payload": dict(case_payload or {}),
         }
         return {
             "result_id": case_id,
@@ -314,6 +349,27 @@ class InMemoryCaseService:
             if record.get("status") in {"pending_review", "appealed_pending_review"}
         ][:limit]
 
+    def get_order_projection(self, order_id: str) -> dict[str, Any]:
+        return dict(self._order_projections.get(order_id, {}))
+
+    def count_order_events(self, order_id: str) -> int:
+        return sum(1 for event in self._order_events if event.get("order_id") == order_id)
+
+    def _apply_order_event(self, action_type: str, order_id: str, case_id: str) -> dict[str, Any]:
+        projection = self._order_projections.setdefault(order_id, {"order_id": order_id})
+        patch = _order_state_patch(action_type)
+        projection.update(patch)
+        event = {
+            "event_id": f"evt-{len(self._order_events) + 1}",
+            "case_id": case_id,
+            "order_id": order_id,
+            "action_type": action_type,
+            "event_type": "after_sales_action_executed",
+            "state_patch": patch,
+        }
+        self._order_events.append(event)
+        return event
+
 
 class SQLiteCaseService:
     """Persistent side-effect case store with business-granularity idempotency."""
@@ -341,6 +397,7 @@ class SQLiteCaseService:
             ).fetchone()
             if existing:
                 record = dict(existing)
+                order_event: dict[str, Any] | None = None
                 if record["status"] != "executed":
                     conn.execute(
                         """
@@ -356,11 +413,18 @@ class SQLiteCaseService:
                             (record["case_id"],),
                         ).fetchone()
                     )
+                    order_event = self._append_order_event(
+                        conn,
+                        action_type=action_type,
+                        order_id=order_id,
+                        case_id=str(record["case_id"]),
+                    )
                 return {
                     "result_id": record["case_id"],
                     "duplicate": existing["status"] == "executed",
                     "idempotency_key": idempotency_key,
                     "record": record,
+                    "order_event": order_event,
                 }
 
             digest = hashlib.sha1(idempotency_key.encode()).hexdigest()[:10]
@@ -381,16 +445,25 @@ class SQLiteCaseService:
                     (case_id,),
                 ).fetchone()
             )
+            order_event = self._append_order_event(
+                conn,
+                action_type=action_type,
+                order_id=order_id,
+                case_id=case_id,
+            )
         return {
             "result_id": case_id,
             "duplicate": False,
             "idempotency_key": idempotency_key,
             "record": record,
+            "order_event": order_event,
         }
 
     def reset(self) -> None:
         with sqlite3.connect(self.path) as conn:
             conn.execute("DELETE FROM cases")
+            conn.execute("DELETE FROM order_events")
+            conn.execute("DELETE FROM order_projections")
 
     def get(self, case_id: str) -> dict | None:
         with sqlite3.connect(self.path) as conn:
@@ -416,6 +489,7 @@ class SQLiteCaseService:
         session_id: str,
         user_id: str,
         expires_at: float | None,
+        case_payload: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         idempotency_key = _idempotency_key(action_type, order_id, message_text)
         with sqlite3.connect(self.path) as conn:
@@ -439,13 +513,14 @@ class SQLiteCaseService:
                 """
                 INSERT INTO cases (
                     case_id, idempotency_key, action_type, order_id, message_text,
-                    status, created_at, updated_at, session_id, user_id, expires_at, appeal_count
+                    status, created_at, updated_at, session_id, user_id, expires_at,
+                    appeal_count, case_payload
                 )
                 VALUES (
                     ?, ?, ?, ?, ?, ?,
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                    ?, ?, ?, 0
+                    ?, ?, ?, 0, ?
                 )
                 """,
                 (
@@ -458,6 +533,7 @@ class SQLiteCaseService:
                     session_id,
                     user_id,
                     expires_at,
+                    json.dumps(case_payload or {}, ensure_ascii=True, sort_keys=True),
                 ),
             )
             record = dict(conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone())
@@ -530,6 +606,29 @@ class SQLiteCaseService:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def get_order_projection(self, order_id: str) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT projection_json FROM order_projections WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()
+        if row is None:
+            return {}
+        try:
+            payload = json.loads(str(row["projection_json"]))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def count_order_events(self, order_id: str) -> int:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM order_events WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
     def _ensure_schema(self) -> None:
         with sqlite3.connect(self.path) as conn:
             conn.execute(
@@ -554,15 +653,118 @@ class SQLiteCaseService:
                 "expires_at": "REAL",
                 "appeal_count": "INTEGER DEFAULT 0",
                 "appeal_reason": "TEXT",
+                "case_payload": "TEXT",
             }
             for column, ddl in additions.items():
                 if column not in columns:
                     conn.execute(f"ALTER TABLE cases ADD COLUMN {column} {ddl}")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS order_events (
+                    event_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    order_id TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    state_patch_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS order_projections (
+                    order_id TEXT PRIMARY KEY,
+                    projection_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+    def _append_order_event(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        action_type: str,
+        order_id: str,
+        case_id: str,
+    ) -> dict[str, Any]:
+        """Append an approved action and update its materialized sandbox view."""
+        event_id = f"evt-{uuid.uuid4().hex[:16]}"
+        patch = _order_state_patch(action_type)
+        row = conn.execute(
+            "SELECT projection_json FROM order_projections WHERE order_id = ?",
+            (order_id,),
+        ).fetchone()
+        projection: dict[str, Any] = {"order_id": order_id}
+        if row is not None:
+            try:
+                loaded = json.loads(str(row[0]))
+                if isinstance(loaded, dict):
+                    projection.update(loaded)
+            except json.JSONDecodeError:
+                pass
+        projection.update(patch)
+        conn.execute(
+            """
+            INSERT INTO order_events (
+                event_id, case_id, order_id, action_type, event_type, state_patch_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            """,
+            (
+                event_id,
+                case_id,
+                order_id,
+                action_type,
+                "after_sales_action_executed",
+                json.dumps(patch, ensure_ascii=True, sort_keys=True),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO order_projections (order_id, projection_json, updated_at)
+            VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            ON CONFLICT(order_id) DO UPDATE SET
+                projection_json = excluded.projection_json,
+                updated_at = excluded.updated_at
+            """,
+            (order_id, json.dumps(projection, ensure_ascii=True, sort_keys=True)),
+        )
+        return {
+            "event_id": event_id,
+            "case_id": case_id,
+            "order_id": order_id,
+            "action_type": action_type,
+            "event_type": "after_sales_action_executed",
+            "state_patch": patch,
+        }
 
 
 def _idempotency_key(action_type: str, order_id: str, message_text: str) -> str:
     reason = _reason_code(action_type, message_text)
     return f"olist-demo:{action_type}:{order_id}:{reason}"
+
+
+def _as_optional_text(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _order_state_patch(action_type: str) -> dict[str, str]:
+    """Map an approved sandbox action to the customer-visible order projection.
+
+    Olist is historical data, so this intentionally models a request lifecycle
+    rather than claiming to move real money or alter a real logistics provider.
+    """
+    patches: dict[str, dict[str, str]] = {
+        "cancel_order": {"order_status": "canceled", "cancellation_status": "confirmed"},
+        "refund_request": {"refund_status": "requested"},
+        "change_address": {"address_change_status": "requested"},
+        "invoice_request": {"invoice_status": "requested"},
+        "complaint_escalation": {"complaint_status": "opened"},
+        "open_support_case": {"support_status": "opened"},
+    }
+    return dict(patches.get(action_type, {"support_status": "opened"}))
 
 
 def _reason_code(action_type: str, message_text: str) -> str:
@@ -595,6 +797,14 @@ def format_order_status(status: OrderStatusView | None) -> str:
     if status is None:
         return "没有找到该订单。请确认 order_id 是否完整。"
     delay = "暂无延迟信息" if status.delay_days is None else f"延迟 {status.delay_days} 天"
+    lifecycle = []
+    if status.refund_status:
+        lifecycle.append(f"退款申请：{status.refund_status}")
+    if status.address_change_status:
+        lifecycle.append(f"改址申请：{status.address_change_status}")
+    if status.invoice_status:
+        lifecycle.append(f"发票申请：{status.invoice_status}")
+    lifecycle_text = f"\n售后处理状态：{'；'.join(lifecycle)}。" if lifecycle else ""
     return (
         f"订单 {status.order_id} 当前状态：{status.status}。\n"
         f"客户州：{status.customer_state}；类目：{status.category_summary}。\n"
@@ -602,6 +812,7 @@ def format_order_status(status: OrderStatusView | None) -> str:
         f"实际送达：{status.delivered_customer_date or '未送达'}；{delay}。\n"
         f"支付金额：{status.payment_value:.2f}；"
         f"评价分：{status.review_score if status.review_score is not None else '暂无'}。"
+        f"{lifecycle_text}"
     )
 
 

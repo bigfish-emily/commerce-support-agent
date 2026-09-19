@@ -2,7 +2,7 @@ import pytest
 
 from app.after_sales import AfterSalesDecisionEngine
 from app.olist.knowledge import MarkdownKnowledgeBase
-from app.olist.service import InMemoryCaseService, OlistService
+from app.olist.service import InMemoryCaseService, OlistService, SQLiteCaseService, format_order_status
 from app.retrieval.hybrid import HybridSupportRetriever
 from app.tool_call import ToolCallContext, build_business_tool_manager
 
@@ -154,3 +154,21 @@ def test_after_sales_engine_keeps_low_score_followup_in_hitl() -> None:
     assert "low_customer_rating" in case.decision.handoff_reasons
     assert case.risk_signals["has_delivery_delay"] is True
     assert case.risk_signals["has_low_review"] is True
+
+
+def test_approved_action_updates_order_projection_once(tmp_path) -> None:
+    """A write case changes the sandbox read model and stays idempotent."""
+    case_service = SQLiteCaseService(tmp_path / "cases.db")
+    service = OlistService(projection_store=case_service)
+
+    first = case_service.execute_action("refund_request", ORDER_ID, "订单延迟，申请退款")
+    second = case_service.execute_action("refund_request", ORDER_ID, "订单延迟，申请退款")
+    order = service.get_order_status(ORDER_ID)
+
+    assert first["duplicate"] is False
+    assert first["order_event"] is not None
+    assert second["duplicate"] is True
+    assert second["order_event"] is None
+    assert order is not None
+    assert order.refund_status == "requested"
+    assert "退款申请：requested" in format_order_status(order)

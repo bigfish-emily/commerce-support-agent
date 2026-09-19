@@ -4,7 +4,7 @@ import hashlib
 import math
 import os
 import re
-from collections import defaultdict
+from array import array
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -63,20 +63,28 @@ class HashingTextEmbedder:
 
 
 class LocalVectorStore:
-    """In-process vector index with an inverted sparse vector posting list."""
+    """Compact in-process hashed-vector index.
+
+    The original demo representation retained every character 4-gram as a
+    Python dict entry and then retained a second posting list for it.  With a
+    35k-document support corpus that turns a small local demo into a multi-GB
+    process. This representation stores high-dimensional sparse features in
+    packed integer/float arrays. BM25 supplies the lexical candidate set and
+    this index supplies product-name and typo-sensitive reranking without a
+    second Python-object-heavy inverted index.
+    """
 
     def __init__(
         self,
         documents: list[VectorDocument],
         embedder: HashingTextEmbedder | None = None,
     ) -> None:
-        self._embedder = embedder or HashingTextEmbedder()
+        self._embedder = embedder or HashingTextEmbedder(dimensions=65536)
         self._documents = {doc.doc_id: doc for doc in documents}
-        self._vectors = {doc.doc_id: self._embedder.embed_sparse(doc.text) for doc in documents}
-        self._postings: dict[int, list[tuple[str, float]]] = defaultdict(list)
-        for doc_id, vector in self._vectors.items():
-            for bucket, value in vector.items():
-                self._postings[bucket].append((doc_id, value))
+        self._vectors = {
+            doc.doc_id: _compact_sparse(self._embedder, doc.text)
+            for doc in documents
+        }
 
     def search(
         self,
@@ -88,12 +96,12 @@ class LocalVectorStore:
         query_vector = self._embedder.embed_sparse(query)
         if not query_vector:
             return []
-        scores: dict[str, float] = defaultdict(float)
-        for bucket, query_value in query_vector.items():
-            for doc_id, doc_value in self._postings.get(bucket, []):
-                if candidate_ids is not None and doc_id not in candidate_ids:
-                    continue
-                scores[doc_id] += query_value * doc_value
+        document_ids = candidate_ids if candidate_ids is not None else self._vectors.keys()
+        scores = {
+            doc_id: _sparse_dot(query_vector, self._vectors[doc_id])
+            for doc_id in document_ids
+            if doc_id in self._vectors
+        }
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:k]
         return [
             VectorSearchHit(
@@ -103,6 +111,22 @@ class LocalVectorStore:
             )
             for doc_id, score in ranked
         ]
+
+
+def _compact_sparse(embedder: HashingTextEmbedder, text: str) -> tuple[array, array]:
+    """Pack sparse hash buckets into arrays rather than persistent dicts."""
+    sparse = embedder.embed_sparse(text)
+    buckets = array("H")
+    values = array("f")
+    for bucket, value in sorted(sparse.items()):
+        buckets.append(bucket)
+        values.append(value)
+    return buckets, values
+
+
+def _sparse_dot(query: dict[int, float], packed: tuple[array, array]) -> float:
+    buckets, values = packed
+    return sum(query.get(bucket, 0.0) * values[index] for index, bucket in enumerate(buckets))
 
 
 class QdrantVectorStore:
@@ -198,14 +222,26 @@ def build_vector_store_from_env(documents: list[VectorDocument]) -> VectorStore:
 
 def _features(text: str) -> list[tuple[str, float]]:
     normalized = re.sub(r"\s+", " ", text.lower()).strip()
-    features: list[tuple[str, float]] = []
-    compact = re.sub(r"\s+", " ", normalized)
-    if len(compact) <= 4:
-        if compact:
-            features.append((f"c:{compact}", 1.0))
+    words = re.findall(r"[a-z0-9]+", normalized)
+    if words:
+        # ResCommons is English e-commerce dialogue.  Word features avoid
+        # materialising every character window while retaining lexical and
+        # short-phrase affinity for the vector-fusion signal.
+        words = words[:96]
+        features = [(f"w:{word}", 1.0) for word in words]
+        features.extend((f"b:{left}:{right}", 1.25) for left, right in zip(words, words[1:]))
+        # The corpus stores the user utterance at the beginning of each
+        # example.  Bounded character features recover typo/product-name
+        # affinity without indexing every character of long generated replies.
+        prefix = normalized[:640]
+        features.extend((f"c:{prefix[index : index + 4]}", 0.45) for index in range(max(0, len(prefix) - 3)))
         return features
-    features.extend((f"c:{compact[index : index + 4]}", 1.0) for index in range(len(compact) - 3))
-    return features
+
+    # Policy titles may be Chinese and have no whitespace token boundaries.
+    compact = re.sub(r"\s+", "", normalized)[:192]
+    if len(compact) < 2:
+        return [(f"c:{compact}", 1.0)] if compact else []
+    return [(f"c:{compact[index : index + 2]}", 1.0) for index in range(len(compact) - 1)]
 
 
 def _stable_bucket(token: str, dimensions: int) -> int:

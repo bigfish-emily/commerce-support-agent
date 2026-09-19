@@ -12,7 +12,6 @@ flowchart LR
 
     ReadTools --> Olist[Olist order facts and category profiles]
     RAG --> Policy[Policy / FAQ / merchant rules KB]
-    RAG --> SupportCorpus[ResCommons support corpus]
 
     Case --> Decision[AfterSalesDecisionEngine]
     Decision --> Verifier[Verifier]
@@ -24,5 +23,5 @@ flowchart LR
     ToolManager --> Redis[Redis runtime store: cache, lock, TTL, rate limit]
     ToolManager --> MCP[MCP server/client boundary]
     Graph --> Trace[SQLite trace and case metrics]
-    Trace --> Eval[Product-flow, red-team, and benchmark evals]
+    Trace --> Eval[Product-flow, policy, and red-team evals]
     Eval --> CI[GitHub Actions CI]

@@ -33,6 +33,49 @@ function fillList(id, values) {
   }
 }
 function formatTimestamp(value) {return value ? value.slice(0, 16).replace('T', ' ') : '刚刚';}
+function pct(value) {return `${Math.round((value || 0) * 10000) / 100}%`;}
+
+function metricCard(title, value, note) {
+  const card = document.createElement('div');
+  card.className = 'metric-card';
+  const heading = document.createElement('strong');
+  const number = document.createElement('b');
+  const caption = document.createElement('small');
+  heading.textContent = title;
+  number.textContent = value;
+  caption.textContent = note;
+  card.append(heading, number, caption);
+  return card;
+}
+
+async function renderMetrics() {
+  const panel = $('quality');
+  try {
+    const data = await api('/review/metrics');
+    const product = data.product_evaluation || {};
+    const core = product.core || {};
+    const planner = product.llm_planner || {};
+    const ablation = product.ablation || {};
+    panel.replaceChildren();
+    const title = document.createElement('h2');
+    title.textContent = '质量概览';
+    const grid = document.createElement('div');
+    grid.className = 'metric-grid';
+    grid.append(
+      metricCard('售后主链路', core.case_oracle_pass || '-', `转审核 P/R ${core.handoff_precision || '-'}/${core.handoff_recall || '-'}`),
+      metricCard('真实 LLM 规划', planner.exact_task_plan || '-', `${planner.live_planner_turns || '-'} 真实规划 · P95 ${planner.p95_latency_ms || '-'}ms`),
+      metricCard('风险门禁', core.forbidden_cancellation || '-', `禁取消写入 · 安全自动 ${core.safe_auto_resolution || '-'}`),
+      metricCard('消融对照', (ablation.execute_on_intent || {}).forbidden_cancellation || '-', '识别即写会错误取消；完整门禁为 0/1'),
+    );
+    const scope = document.createElement('p');
+    scope.className = 'metric-scope';
+    scope.textContent = product.scope || '本地 trace 仅用于排障，不与业务 KPI 混算。';
+    panel.append(title, grid, scope);
+    panel.hidden = false;
+  } catch (_error) {
+    panel.hidden = true;
+  }
+}
 
 async function renderConversation() {
   if (!selected || loadingConversation || document.hidden) return;
@@ -160,6 +203,7 @@ async function decide(action) {
     $('caseStatus').textContent = '已处理';
     $('result').textContent = action === 'approve' ? '已批准申请，系统将继续处理。' : '已驳回申请，客户会看到处理结果。';
     await refreshQueue();
+    await renderMetrics();
   } catch (error) {$('result').textContent = error.message;}
 }
 
@@ -168,6 +212,7 @@ $('login').onsubmit = async event => {
   token = $('token').value.trim();
   try {
     await refreshQueue();
+    await renderMetrics();
     $('login').hidden = true;
     $('refresh').hidden = false;
   } catch (error) {setStatus(error.message);}

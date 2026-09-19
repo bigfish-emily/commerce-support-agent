@@ -18,6 +18,7 @@ from app.olist.knowledge import MarkdownKnowledgeBase
 from app.olist.service import (
     InMemoryCaseService,
     OlistService,
+    SQLiteCaseService,
     format_order_status,
 )
 from app.retrieval.hybrid import HybridSupportRetriever
@@ -583,10 +584,11 @@ def build_business_tool_manager(
     olist_service: OlistService,
     knowledge_base: MarkdownKnowledgeBase,
     support_retriever: HybridSupportRetriever,
-    case_service: InMemoryCaseService,
+    case_service: InMemoryCaseService | SQLiteCaseService,
     cache_backend: ToolCacheBackend | None = None,
     runtime_store: RuntimeStore | None = None,
 ) -> ToolCallManager:
+    olist_service.set_projection_store(case_service)
     support_roles = frozenset({"customer", "support_agent", "after_sales_operator", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
     after_sales_engine = AfterSalesDecisionEngine()

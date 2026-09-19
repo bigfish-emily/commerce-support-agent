@@ -48,8 +48,21 @@ def test_decompose_chinese_status_as_order_status() -> None:
     assert [task.intent for task in tasks] == ["order_status"]
 
 
+def test_decompose_infix_address_change_as_write_action() -> None:
+    tasks = decompose_business_message(
+        "请帮我修改订单 8aec3a066f732dd927ec8fef1752415b 的地址"
+    )
+    assert [task.intent for task in tasks] == ["escalation"]
+    assert tasks[0].action_type == "change_address"
+
+
 def test_decompose_followup_script_as_escalation() -> None:
     tasks = decompose_business_message(
         "客户给订单 203096f03d82e0dffbc41ebc2e2bcfb7 打了低分，生成一段客服跟进话术"
     )
     assert [task.intent for task in tasks] == ["escalation"]
+
+
+def test_decompose_distinguishes_small_talk_and_ambiguous_support() -> None:
+    assert [task.intent for task in decompose_business_message("你好")] == ["small_talk"]
+    assert [task.intent for task in decompose_business_message("订单有问题")] == ["clarify"]

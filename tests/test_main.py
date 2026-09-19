@@ -62,6 +62,22 @@ async def test_frontend_entrypoints_available(client: AsyncClient) -> None:
     assert "/static/demo.js" in technical.text
 
 
+@pytest.mark.anyio
+async def test_customer_small_talk_and_ambiguous_support_use_no_tool_terminal(client: AsyncClient) -> None:
+    greeting = await client.post(
+        "/customer/chat",
+        json={"message": "你好", "user_id": "demo-customer", "session_id": "small-talk"},
+    )
+    ambiguous = await client.post(
+        "/customer/chat",
+        json={"message": "订单有问题", "user_id": "demo-customer", "session_id": "clarify"},
+    )
+    assert greeting.status_code == 200
+    assert "查询订单" in greeting.json()["answer"]
+    assert ambiguous.status_code == 200
+    assert "订单号" in ambiguous.json()["answer"]
+
+
 def _mock_guard(input_on_topic: bool, output_valid: bool = True):
     from app.llm.types import InputGuardResult, OutputGuardResult
 
@@ -793,6 +809,18 @@ async def test_observability_case_metrics_endpoint(client: AsyncClient, tmp_path
     assert body["total_cases"] == 1
     assert body["hitl_rate"] == 1.0
     assert body["policy_hit_rate"] == 1.0
+
+
+@pytest.mark.anyio
+async def test_review_metrics_requires_staff_token(client: AsyncClient) -> None:
+    denied = await client.get("/review/metrics")
+    assert denied.status_code == 403
+
+    response = await client.get("/review/metrics", headers=REVIEW_HEADERS)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["baselines"]["customer_flow"]["total"] == 9
+    assert body["baselines"]["tau2_retail"]["total"] == 114
 
 
 @pytest.mark.anyio
