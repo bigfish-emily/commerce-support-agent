@@ -1,4 +1,4 @@
-.PHONY: build up down logs build-data test lint format eval eval-llm mcp clean
+.PHONY: build up down logs build-data test lint format eval eval-live mcp clean
 
 build:
 	docker compose build
@@ -28,22 +28,11 @@ format:
 	ruff format app/ evaluation/ scripts/ tests/
 
 eval:
-	python -m evaluation.intent_eval
-	python -m evaluation.multi_intent_eval
-	python -m evaluation.task_eval
-	python -m evaluation.rag_retrieval_eval
-	python -m evaluation.hybrid_retrieval_eval
-	python -m evaluation.v1rtucious_eval_profile
-	python -m evaluation.knowledge_eval
-	python -m evaluation.tool_repair_eval
-	python -m evaluation.trajectory_eval
-	python -m evaluation.performance_eval
-	python -m evaluation.agent_metrics_report
-	python -m evaluation.deepeval_export
+	python -m evaluation.after_sales_bench --mode offline --suite core --control-mode full
 
-eval-llm:
-	python -m evaluation.intent_planner_eval
-	RUN_LLM_ROUTER_EVAL=1 python -m evaluation.intent_eval
+eval-live:
+	python -m evaluation.after_sales_bench --mode live --suite core --control-mode full
+	python -m evaluation.after_sales_bench --mode live --suite llm_planner --control-mode full
 
 mcp:
 	python -m app.mcp_server

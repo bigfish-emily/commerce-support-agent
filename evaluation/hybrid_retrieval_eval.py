@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -15,15 +16,25 @@ def load_jsonl(path: Path) -> list[dict]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate BM25, vector, and hybrid retrieval.")
+    parser.add_argument(
+        "--strategies",
+        nargs="+",
+        choices=("bm25", "local_vector_store", "hybrid_rerank"),
+        default=("bm25", "local_vector_store", "hybrid_rerank"),
+    )
+    args = parser.parse_args()
     retriever = HybridSupportRetriever()
     cases = load_jsonl(CASES)[:100]
     print(f"Hybrid retrieval eval cases: {len(cases)}")
     print("strategy,cases,intent@1,intent@5,intent_mrr@5,capability@1,capability@5,capability_mrr@5")
-    for name, method in (
-        ("bm25", retriever.bm25_search),
-        ("local_vector_store", retriever.vector_search),
-        ("hybrid_rerank", retriever.hybrid_search),
-    ):
+    all_strategies = {
+        "bm25": retriever.bm25_search,
+        "local_vector_store": retriever.vector_search,
+        "hybrid_rerank": retriever.hybrid_search,
+    }
+    for name in args.strategies:
+        method = all_strategies[name]
         intent_at_1 = 0
         intent_at_5 = 0
         intent_mrr = 0.0

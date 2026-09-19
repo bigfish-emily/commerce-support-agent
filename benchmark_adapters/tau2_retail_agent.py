@@ -115,7 +115,7 @@ class RetailBenchmarkState(BaseModel):
 
 
 class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
-    """A tau2 HalfDuplexAgent with strict policy/tool/HITL instructions."""
+    """A tau2 HalfDuplexAgent with policy instructions and optional guards."""
 
     def __init__(
         self,
@@ -123,10 +123,14 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
         domain_policy: str,
         llm: str,
         llm_args: dict | None = None,
+        enable_confirmation_guard: bool = True,
+        enable_variant_repair: bool = True,
     ) -> None:
         super().__init__(tools=tools, domain_policy=domain_policy)
         self.llm = llm
         self.llm_args = llm_args or {}
+        self.enable_confirmation_guard = enable_confirmation_guard
+        self.enable_variant_repair = enable_variant_repair
 
     def get_init_state(
         self,
@@ -155,9 +159,13 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
         else:
             state.messages.append(message)
 
-        if not isinstance(message, MultiToolMessage) and needs_item_scope_clarification(
-            str(getattr(message, "content", "") or ""),
-            self._last_assistant_text(state),
+        if (
+            self.enable_confirmation_guard
+            and not isinstance(message, MultiToolMessage)
+            and needs_item_scope_clarification(
+                str(getattr(message, "content", "") or ""),
+                self._last_assistant_text(state),
+            )
         ):
             response = AssistantMessage.text(CONFIRMATION_SCOPE_CLARIFICATION)
             state.messages.append(response)
@@ -170,7 +178,8 @@ class PolicyAwareRetailAgent(HalfDuplexAgent[RetailBenchmarkState]):
             call_name="olist_policy_aware_retail_agent",
             **self.llm_args,
         )
-        repair_variant_selection(response, state.messages)
+        if self.enable_variant_repair:
+            repair_variant_selection(response, state.messages)
         state.messages.append(response)
         return response, state
 
@@ -184,8 +193,29 @@ def create_policy_aware_retail_agent(tools, domain_policy, **kwargs):
     )
 
 
+def create_prompt_only_retail_agent(tools, domain_policy, **kwargs):
+    """Ablation: retain the policy prompt but remove deterministic guards."""
+    return PolicyAwareRetailAgent(
+        tools=tools,
+        domain_policy=domain_policy,
+        llm=kwargs.get("llm", "openai/gpt-4.1-mini"),
+        llm_args=kwargs.get("llm_args") or {"temperature": 0},
+        enable_confirmation_guard=False,
+        enable_variant_repair=False,
+    )
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run tau2 retail subset with this adapter.")
+    parser = argparse.ArgumentParser(description="Run tau2 retail variants with this adapter.")
+    parser.add_argument(
+        "--variant",
+        choices=("baseline", "prompt_only", "full"),
+        default="full",
+        help=(
+            "baseline uses tau2's stock llm_agent; prompt_only uses this "
+            "project's prompt without guards; full enables prompt and guards."
+        ),
+    )
     parser.add_argument("--agent-llm", default="openai/gpt-4.1-mini")
     parser.add_argument("--user-llm", default="openai/gpt-4.1-mini")
     parser.add_argument(
@@ -209,11 +239,17 @@ def main() -> None:
 
     nl_eval.DEFAULT_LLM_NL_ASSERTIONS = judge_llm
 
-    registry.register_agent_factory(create_policy_aware_retail_agent, "olist_policy_aware_retail")
+    agent_name = "llm_agent"
+    if args.variant == "prompt_only":
+        agent_name = "olist_prompt_only_retail"
+        registry.register_agent_factory(create_prompt_only_retail_agent, agent_name)
+    elif args.variant == "full":
+        agent_name = "olist_policy_aware_retail"
+        registry.register_agent_factory(create_policy_aware_retail_agent, agent_name)
     results = run_domain(
         TextRunConfig(
             domain="retail",
-            agent="olist_policy_aware_retail",
+            agent=agent_name,
             llm_agent=args.agent_llm,
             llm_user=args.user_llm,
             num_tasks=args.num_tasks,
@@ -231,7 +267,10 @@ def main() -> None:
     )
     rewards = [run.reward_info.reward for run in results.simulations if run.reward_info]
     if rewards:
-        print(f"tau2 retail pass@1 subset: {sum(rewards) / len(rewards):.2%} ({sum(rewards)}/{len(rewards)})")
+        print(
+            f"tau2 retail {args.variant} pass@1: "
+            f"{sum(rewards) / len(rewards):.2%} ({sum(rewards)}/{len(rewards)})"
+        )
 
 
 if __name__ == "__main__":

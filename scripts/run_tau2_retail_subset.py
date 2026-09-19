@@ -48,6 +48,12 @@ def main() -> int:
         help="LLM for tau2 natural-language assertion checks; defaults to --user-llm.",
     )
     parser.add_argument("--num-tasks", type=int, default=5)
+    parser.add_argument(
+        "--variant",
+        choices=("baseline", "prompt_only", "full"),
+        default="full",
+        help="Matched ablation variant for the retail adapter.",
+    )
     parser.add_argument("--num-trials", type=int, default=1)
     parser.add_argument("--seed", type=int, default=300)
     parser.add_argument("--save-to", default="olist_agent_tau2_retail_subset")
@@ -72,6 +78,8 @@ def main() -> int:
         str(ADAPTER),
         "--agent-llm",
         args.agent_llm,
+        "--variant",
+        args.variant,
         "--user-llm",
         args.user_llm,
         "--judge-llm",
@@ -97,6 +105,7 @@ def main() -> int:
         "benchmark": "τ-bench retail",
         "tau2_root": str(tau2_root),
         "adapter": str(ADAPTER),
+        "variant": args.variant,
         "command": command,
         "notes": [
             "Runs in the tau2 Python 3.12+ environment.",
@@ -105,14 +114,20 @@ def main() -> int:
             "Run scripts/summarize_tau2_results.py after a real run to get pass^k and failure stats.",
         ],
     }
-    (RUN_DIR / "last_manifest.json").write_text(
+    manifest_path = RUN_DIR / f"{args.variant}_manifest.json"
+    manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if args.variant == "full":
+        (RUN_DIR / "last_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     print("Command:")
     print(" ".join(command))
-    print(f"Manifest: {RUN_DIR / 'last_manifest.json'}")
+    print(f"Manifest: {manifest_path}")
     if not pyproject.exists():
         print(f"Note: tau2 checkout not found at {tau2_root}; dry-run only.")
     if args.dry_run:
@@ -127,7 +142,15 @@ def main() -> int:
 
     result_path = tau2_root / "data" / "simulations" / args.save_to
     if result_path.exists() and SUMMARY.exists():
-        summary_command = [sys.executable, str(SUMMARY), "--results", str(result_path)]
+        summary_name = "last_summary.md" if args.variant == "full" else f"{args.variant}_summary.md"
+        summary_command = [
+            sys.executable,
+            str(SUMMARY),
+            "--results",
+            str(result_path),
+            "--out",
+            str(RUN_DIR / summary_name),
+        ]
         return int(subprocess.run(summary_command, cwd=ROOT, check=False).returncode)
     print(f"tau2 finished, but no result path was found at: {result_path}")
     return 0
