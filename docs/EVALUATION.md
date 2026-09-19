@@ -84,7 +84,7 @@ score remains reported above; it is not overwritten by the regression result.
 ## Retrieval and Reliability Components
 
 - The ResCommons retrieval experiment is a component metric, not CRS: the local
-  hybrid retriever improved intent@1/intent@5 from 64%/81% for BM25 to 77%/91%
+  hybrid retriever improved intent@1/intent@5 from 64%/81% for BM25 to 77%/92%
   on the derived labeled support corpus.
 - Policy/FAQ/merchant-rule markdown changes use a separate deterministic release
   gate. It checks frozen gold-question Top1, Recall@3, MRR@3, source-type@1,
