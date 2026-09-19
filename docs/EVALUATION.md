@@ -86,6 +86,11 @@ score remains reported above; it is not overwritten by the regression result.
 - The ResCommons retrieval experiment is a component metric, not CRS: the local
   hybrid retriever improved intent@1/intent@5 from 64%/81% for BM25 to 77%/91%
   on the derived labeled support corpus.
+- Policy/FAQ/merchant-rule markdown changes use a separate deterministic release
+  gate. It checks frozen gold-question Top1, Recall@3, MRR@3, source-type@1,
+  returned-evidence integrity, document structure, and instruction-like text
+  before the pack is released. The gate is deliberately independent of an LLM
+  so a document edit has a fast, reproducible pre-release signal.
 - Idempotency, persistent replay, and concurrent side-effect locking are
   deterministic reliability contracts covered by unit tests over the SQLite
   case store and Redis-compatible runtime store. They are reported separately
@@ -108,3 +113,28 @@ $env:PYTHONPATH='.'
 Artifacts contain row-level messages and are intentionally ignored by Git.
 They should be reviewed before reporting a new run because provider-side seed
 control and token accounting are not available in this setup.
+
+## Policy-RAG Release Gate
+
+Run this whenever `data/knowledge_base/*.md` changes:
+
+```powershell
+$env:PYTHONPATH='.'
+& .\.venv\Scripts\python.exe -m evaluation.rag_release_gate --gate `
+  --output artifacts\rag_release.json `
+  --markdown-output artifacts\rag_release.md
+```
+
+The frozen policy set contains 19 hand-reviewed questions spanning policy,
+FAQ, and merchant-rule evidence. `Top1` requires the exact expected policy
+section to rank first; `Recall@3` requires it to occur in the first three;
+`MRR@3` remains sensitive to ranking position. `source_type@1` protects the
+policy/FAQ/merchant-rule boundary, while evidence integrity requires each
+returned item to retain a source, source type, section title, and text.
+
+For retrieval implementation or support-corpus changes, include the optional
+ResCommons component regression as well:
+
+```powershell
+& .\.venv\Scripts\python.exe -m evaluation.rag_release_gate --gate --include-support-corpus
+```
