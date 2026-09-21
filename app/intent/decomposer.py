@@ -10,6 +10,7 @@ class BusinessTask:
     text: str
     side_effect: bool
     action_type: str = "none"
+    order_filter: str = "all"
 
 
 ORDER_PATTERNS = (
@@ -161,6 +162,7 @@ def decompose_business_message(message: str) -> list[BusinessTask]:
                 text=segment,
                 side_effect=(intent == "escalation"),
                 action_type=_action_type(segment, intent),
+                order_filter=_customer_orders_filter(segment) or "all",
             )
         )
     return tasks
@@ -170,6 +172,8 @@ def _classify_segment(segment: str) -> str:
     text = segment.lower()
     if _looks_like_customer_profile_request(text):
         return "customer_profile"
+    if _customer_orders_filter(text) is not None:
+        return "customer_orders"
     if _is_small_talk(text):
         return "small_talk"
     if _needs_business_clarification(text):
@@ -208,9 +212,23 @@ def _looks_like_customer_profile_request(text: str) -> bool:
         phrase in normalized
         for phrase in (
             "我喜欢什么样的产品", "我喜欢什么产品", "我买过什么", "我买了什么",
-            "我的购买记录", "我的订单小结", "我的购物偏好", "我的消费习惯",
+            "我的购买记录", "我的订单小结", "我的购物偏好", "我的购物习惯", "我的消费习惯",
+            "我平时买什么", "我经常买什么",
         )
     )
+
+
+def _customer_orders_filter(text: str) -> str | None:
+    normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
+    if "订单" not in normalized:
+        return None
+    if any(cue in normalized for cue in ("在运输中", "运输中的", "在途", "配送中", "待发货", "还没发货")):
+        return "in_transit"
+    if any(cue in normalized for cue in ("待处理", "需要处理", "需要关注", "要留意")):
+        return "attention"
+    if any(cue in normalized for cue in ("有哪些订单", "我的订单", "全部订单", "所有订单")):
+        return "all"
+    return None
 
 
 def _needs_business_clarification(text: str) -> bool:

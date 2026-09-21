@@ -83,8 +83,19 @@ async def test_intent_planner_fast_paths_small_talk_and_ambiguous_support() -> N
 @pytest.mark.anyio
 async def test_intent_planner_fast_paths_owned_order_summary() -> None:
     planner = IntentPlanner(_NoCallLlm())
-    result = await planner.plan("我喜欢什么样的产品？")
-    assert [task.intent for task in result.tasks] == ["customer_profile"]
+    for message in ("我喜欢什么样的产品？", "我的购物习惯是什么？"):
+        result = await planner.plan(message)
+        assert [task.intent for task in result.tasks] == ["customer_profile"]
+        assert result.planning_mode == "deterministic_fast_path"
+
+
+@pytest.mark.anyio
+async def test_intent_planner_fast_path_for_account_level_active_orders() -> None:
+    planner = IntentPlanner(_NoCallLlm())
+    result = await planner.plan("我有哪些订单还在运输中？")
+    assert [(task.intent, task.order_filter) for task in result.tasks] == [
+        ("customer_orders", "in_transit")
+    ]
     assert result.planning_mode == "deterministic_fast_path"
 
 

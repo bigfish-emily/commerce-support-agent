@@ -292,7 +292,7 @@ async def test_customer_structured_overview_lists_owned_active_orders(client: As
         )
 
     assert response.status_code == 200
-    assert "待发货或配送中的订单" in response.json()["answer"]
+    assert "还在处理中" in response.json()["answer"]
 
 
 @pytest.mark.anyio
@@ -306,10 +306,39 @@ async def test_customer_order_summary_uses_owned_orders_without_planner(client: 
 
     assert response.status_code == 200
     answer = response.json()["answer"]
-    assert "订单记录" in answer
+    assert "从您最近的" in answer
     assert "健康与美容用品" in answer
-    assert "长期个人偏好" in answer
+    assert "查看在途订单" in answer
     assert "[订单小结]" not in answer
+
+
+@pytest.mark.anyio
+async def test_customer_new_turn_clears_prior_answer_buffers(client: AsyncClient) -> None:
+    """A follow-up must keep conversational context without reusing old output."""
+
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2:
+        profile = await client.post(
+            "/customer/chat",
+            json={"message": "我的购物习惯是什么？", "session_id": "customer-clean-turn"},
+        )
+        shipments = await client.post(
+            "/customer/chat",
+            json={
+                "message": "我有哪些订单还在运输中？",
+                "session_id": "customer-clean-turn",
+                "requested_action": "list_active_shipments",
+            },
+        )
+
+    assert profile.status_code == 200
+    assert "买过" in profile.json()["answer"]
+    assert shipments.status_code == 200
+    answer = shipments.json()["answer"]
+    assert "还在处理中" in answer
+    assert "从您最近的" not in answer
+    assert "[政策问答]" not in answer
+    assert "[我的订单]" not in answer
 
 
 @pytest.mark.anyio

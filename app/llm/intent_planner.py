@@ -12,7 +12,8 @@ from app.llm.prompts import INTENT_PLANNER_PROMPT
 from app.llm.types import IntentRouteResult, PlannedTask, TaskPlanResult
 
 VALID_INTENTS = {
-    "small_talk", "clarify", "customer_profile", "qa", "order_status", "policy", "ops_decision", "escalation",
+    "small_talk", "clarify", "customer_profile", "customer_orders", "qa", "order_status", "policy",
+    "ops_decision", "escalation",
 }
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ def fallback_plan(message: str) -> TaskPlanResult:
             text=task.text,
             side_effect=task.side_effect,
             action_type=task.action_type,
+            order_filter=task.order_filter,
             depends_on=[],
         )
         for task in decompose_business_message(message)
@@ -107,6 +109,12 @@ def _fast_plan(message: str) -> TaskPlanResult | None:
     if _is_customer_profile_request(text):
         return TaskPlanResult(
             tasks=[PlannedTask(intent="customer_profile", text=message)],
+            planning_mode="deterministic_fast_path",
+        )
+    order_filter = _customer_orders_filter(text)
+    if order_filter is not None:
+        return TaskPlanResult(
+            tasks=[PlannedTask(intent="customer_orders", text=message, order_filter=order_filter)],
             planning_mode="deterministic_fast_path",
         )
     if _is_small_talk(text):
@@ -190,9 +198,25 @@ def _is_customer_profile_request(text: str) -> bool:
         phrase in normalized
         for phrase in (
             "我喜欢什么样的产品", "我喜欢什么产品", "我买过什么", "我买了什么",
-            "我的购买记录", "我的订单小结", "我的购物偏好", "我的消费习惯",
+            "我的购买记录", "我的订单小结", "我的购物偏好", "我的购物习惯", "我的消费习惯",
+            "我平时买什么", "我经常买什么",
         )
     )
+
+
+def _customer_orders_filter(text: str) -> str | None:
+    """Recognise account-level order overviews before single-order routing."""
+
+    normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
+    if "订单" not in normalized:
+        return None
+    if any(cue in normalized for cue in ("在运输中", "运输中的", "在途", "配送中", "待发货", "还没发货")):
+        return "in_transit"
+    if any(cue in normalized for cue in ("待处理", "需要处理", "需要关注", "要留意")):
+        return "attention"
+    if any(cue in normalized for cue in ("有哪些订单", "我的订单", "全部订单", "所有订单")):
+        return "all"
+    return None
 
 
 def _needs_business_clarification(text: str) -> bool:

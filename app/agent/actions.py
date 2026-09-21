@@ -416,7 +416,7 @@ class AgentActions:
             "completed_tasks": completed,
             "answer_parts": [
                 *state.get("answer_parts", []),
-                f"[{_INTENT_LABELS.get(intent, intent)}]\n{answer}",
+                _answer_part(intent, answer, state),
             ],
             "trajectory_events": [
                 *state.get("trajectory_events", []),
@@ -648,6 +648,8 @@ class AgentActions:
             if answers
             else "没有识别到可执行的电商客服任务，请补充订单号或问题。"
         )
+        if _is_customer_channel(state):
+            final_answer = _strip_internal_answer_labels(final_answer)
         retrieved_policy = list(state.get("retrieved_policy", []))
         retrieved_insights = list(state.get("retrieved_insights", []))
         retrieved_support_docs = list(state.get("retrieved_support_docs", []))
@@ -1170,6 +1172,22 @@ _ACTION_LABELS = {
     "complaint_escalation": "提交投诉升级工单",
 }
 
+
+def _answer_part(intent: str, answer: str, state: AgentState) -> str:
+    """Keep operational labels in staff/debug flows, not customer replies."""
+
+    if _is_customer_channel(state):
+        return answer.strip()
+    return f"[{_INTENT_LABELS.get(intent, intent)}]\n{answer}"
+
+
+def _strip_internal_answer_labels(answer: str) -> str:
+    """Defence in depth for legacy branches that still emit a labelled part."""
+
+    labels = "咨询|信息确认|订单查询|我的订单|订单小结|运营分析|审核台优先处理|政策问答|售后处理|售后升级"
+    return re.sub(rf"(?m)^\[(?:{labels})\]\s*", "", answer).strip()
+
+
 _INTENT_LABELS = {
     "small_talk": "咨询",
     "clarify": "信息确认",
@@ -1236,14 +1254,20 @@ def _format_owned_orders(orders: list[dict[str, object]], filter_name: str) -> s
         if filter_name == "attention":
             return "当前没有需要特别留意的订单。"
         return "当前账号下没有可展示的订单。"
-    title = "待发货或配送中的订单" if filter_name == "in_transit" else "需要留意的订单"
-    lines = [title + "："]
+    if filter_name == "in_transit":
+        lines = [f"我查到 {len(orders)} 笔订单还在处理中："]
+    elif filter_name == "attention":
+        lines = [f"我查到 {len(orders)} 笔订单建议优先留意："]
+    else:
+        lines = [f"我查到您有 {len(orders)} 笔订单："]
     for order in orders[:5]:
         status = _customer_order_status_label(str(order.get("status", "")))
         category = _customer_category_label(str(order.get("category", "商品")))
         delay = order.get("delay_days")
         suffix = f"，预计延迟 {delay} 天" if isinstance(delay, int) and delay > 0 else ""
         lines.append(f"- {category}：{status}{suffix}")
+    if filter_name == "in_transit":
+        lines.append("需要的话，您可以选择其中一笔，我继续帮您查看进度或处理售后。")
     return "\n".join(lines)
 
 
@@ -1251,7 +1275,7 @@ def _format_customer_order_summary(orders: list[dict[str, object]]) -> str:
     """Summarise account-visible purchase categories without inferring user traits."""
 
     if not orders:
-        return "[订单小结]\n当前没有可用于生成订单小结的记录。"
+        return "我暂时没有查到可供参考的订单记录。"
     categories: list[str] = []
     for order in orders:
         category = _customer_category_label(str(order.get("category", "商品")))
@@ -1265,9 +1289,8 @@ def _format_customer_order_summary(orders: list[dict[str, object]]) -> str:
     more = "等" if len(categories) > 4 else ""
     progress = f"目前有 {active_count} 笔订单仍在处理中。" if active_count else "目前没有正在处理的订单。"
     return (
-        "[订单小结]\n"
-        f"从当前 {len(orders)} 笔订单记录看，您购买过 {category_text}{more}。{progress}\n"
-        "这是一份订单记录小结，未将购买记录推断为您的长期个人偏好。"
+        f"从您最近的 {len(orders)} 笔订单看，您买过 {category_text}{more}。{progress}"
+        "需要的话，我可以继续帮您查看在途订单，或处理某一笔订单的售后。"
     )
 
 

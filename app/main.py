@@ -311,6 +311,22 @@ async def chat(request: ChatRequest) -> ChatResponse:
         logger.info("GRAPH RESUME | resuming from interrupt")
         result = await agent.ainvoke(Command(resume=request.message), config)
     else:
+        # A checkpoint contains both durable conversation context and transient
+        # per-turn execution buffers. Only carry the small amount of context
+        # that can help a follow-up; old task results must not enter a new turn.
+        previous_dialog = dict((snapshot.values or {}).get("dialog_state") or {})
+        selected_order_id = request.page_context.selected_order_id or str(
+            previous_dialog.get("active_order_id") or ""
+        )
+        if _is_customer_request(request) and selected_order_id not in _allowed_customer_order_ids(
+            request.user_id
+        ):
+            selected_order_id = ""
+        dialog_state = {
+            "active_order_id": selected_order_id,
+            "filled_slots": {"order_id": selected_order_id} if selected_order_id else {},
+            "turn_count": _history_user_turn_count(history_messages),
+        }
         initial_state: AgentState = {
             "session_id": session_id,
             "tenant_id": request.tenant_id,
@@ -320,7 +336,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "channel": request.channel,
             "page_context": request.page_context.model_dump(),
             "requested_action": request.requested_action or "",
-            "active_order_id": request.page_context.selected_order_id or "",
+            "active_order_id": selected_order_id,
             "allowed_order_ids": sorted(_allowed_customer_order_ids(request.user_id))
             if _is_customer_request(request)
             else [],
@@ -329,12 +345,28 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "route_intent": "",
             "task_plan": [],
             "completed_tasks": [],
+            "current_task_index": 0,
+            "current_task": {},
+            "current_task_text": "",
+            "current_slots": {},
+            "current_context": {},
+            "dialog_state": dialog_state,
+            "filled_slots": dict(dialog_state["filled_slots"]),
+            "missing_slots": [],
+            "handoff_reasons": [],
+            "turn_count": int(dialog_state["turn_count"]),
+            "failure_count": 0,
+            "answer_parts": [],
+            "workflow_complete": False,
             "trajectory_events": [],
             "artifacts": {},
             "retrieved_insights": [],
             "retrieved_policy": [],
             "retrieved_support_docs": [],
             "after_sales_cases": [],
+            "escalation_draft": {},
+            "pending_side_effect": {},
+            "user_response": "",
             "final_answer": "",
         }
         logger.info("GRAPH INPUT%s", format_state(initial_state))
@@ -916,6 +948,12 @@ def _customer_order_access_denied(
 
 def _extract_order_ids(text: str) -> list[str]:
     return [match.group(0).lower() for match in ORDER_ID_RE.finditer(text)]
+
+
+def _history_user_turn_count(messages: list[dict[str, str]] | None) -> int:
+    """Count visible customer turns without carrying graph work buffers forward."""
+
+    return sum(1 for message in messages or [] if message.get("role") == "user")
 
 
 def _allowed_customer_order_ids(user_id: str) -> set[str]:

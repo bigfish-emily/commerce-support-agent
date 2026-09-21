@@ -7,8 +7,8 @@ class IntentRouteResult(BaseModel):
     intent: str = Field(
         ...,
         description=(
-            "Either 'small_talk', 'clarify', 'customer_profile', 'qa', 'order_status', 'policy', "
-            "'ops_decision', or 'escalation'"
+            "Either 'small_talk', 'clarify', 'customer_profile', 'customer_orders', 'qa', "
+            "'order_status', 'policy', 'ops_decision', or 'escalation'"
         ),
     )
 
@@ -17,8 +17,8 @@ class PlannedTask(BaseModel):
     intent: str = Field(
         ...,
         description=(
-            "Either 'small_talk', 'clarify', 'customer_profile', 'qa', 'order_status', 'policy', "
-            "'ops_decision', or 'escalation'"
+            "Either 'small_talk', 'clarify', 'customer_profile', 'customer_orders', 'qa', "
+            "'order_status', 'policy', 'ops_decision', or 'escalation'"
         ),
     )
     text: str = Field("", description="User sub-request for this task")
@@ -29,6 +29,10 @@ class PlannedTask(BaseModel):
             "For side effects: open_support_case, refund_request, cancel_order, "
             "change_address, invoice_request, complaint_escalation, or none"
         ),
+    )
+    order_filter: str = Field(
+        "all",
+        description="For customer_orders: all, in_transit, or attention. Use all for every other intent.",
     )
     depends_on: list[int] = Field(
         default_factory=list,
