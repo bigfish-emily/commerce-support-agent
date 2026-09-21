@@ -7,7 +7,7 @@ class IntentRouteResult(BaseModel):
     intent: str = Field(
         ...,
         description=(
-            "Either 'small_talk', 'clarify', 'qa', 'order_status', 'policy', "
+            "Either 'small_talk', 'clarify', 'customer_profile', 'qa', 'order_status', 'policy', "
             "'ops_decision', or 'escalation'"
         ),
     )
@@ -17,7 +17,7 @@ class PlannedTask(BaseModel):
     intent: str = Field(
         ...,
         description=(
-            "Either 'small_talk', 'clarify', 'qa', 'order_status', 'policy', "
+            "Either 'small_talk', 'clarify', 'customer_profile', 'qa', 'order_status', 'policy', "
             "'ops_decision', or 'escalation'"
         ),
     )

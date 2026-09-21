@@ -81,6 +81,14 @@ async def test_intent_planner_fast_paths_small_talk_and_ambiguous_support() -> N
 
 
 @pytest.mark.anyio
+async def test_intent_planner_fast_paths_owned_order_summary() -> None:
+    planner = IntentPlanner(_NoCallLlm())
+    result = await planner.plan("我喜欢什么样的产品？")
+    assert [task.intent for task in result.tasks] == ["customer_profile"]
+    assert result.planning_mode == "deterministic_fast_path"
+
+
+@pytest.mark.anyio
 async def test_intent_planner_uses_fast_lane_for_simple_write_request() -> None:
     planner = IntentPlanner(_NoCallLlm())
     result = await planner.plan("给订单 203096f03d82e0dffbc41ebc2e2bcfb7 申请退款")
@@ -206,7 +214,7 @@ async def test_customer_presenter_fast_paths_small_talk_and_clarify() -> None:
         None,
     )
     assert "查询订单" in greeting
-    assert "订单号" in clarification
+    assert "订单卡片" in clarification
 
 
 @pytest.mark.anyio

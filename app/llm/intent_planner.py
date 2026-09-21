@@ -11,7 +11,9 @@ from app.llm.json_fallback import add_json_instruction, native_structured_output
 from app.llm.prompts import INTENT_PLANNER_PROMPT
 from app.llm.types import IntentRouteResult, PlannedTask, TaskPlanResult
 
-VALID_INTENTS = {"small_talk", "clarify", "qa", "order_status", "policy", "ops_decision", "escalation"}
+VALID_INTENTS = {
+    "small_talk", "clarify", "customer_profile", "qa", "order_status", "policy", "ops_decision", "escalation",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +104,11 @@ def _fast_plan(message: str) -> TaskPlanResult | None:
     """Use a deterministic fast lane only for unambiguous one-step requests."""
 
     text = message.lower()
+    if _is_customer_profile_request(text):
+        return TaskPlanResult(
+            tasks=[PlannedTask(intent="customer_profile", text=message)],
+            planning_mode="deterministic_fast_path",
+        )
     if _is_small_talk(text):
         return TaskPlanResult(
             tasks=[PlannedTask(intent="small_talk", text=message)],
@@ -171,6 +178,21 @@ def _is_small_talk(text: str) -> bool:
         "你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "早上好", "晚上好",
         "谢谢", "感谢", "多谢", "再见", "拜拜", "你能做什么", "你可以做什么", "帮助",
     }
+
+
+def _is_customer_profile_request(text: str) -> bool:
+    """Recognise account-history summaries without mistaking an after-sales policy question for one."""
+
+    normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
+    if any(term in normalized for term in ("退款", "取消", "地址", "发票", "投诉", "物流")):
+        return False
+    return any(
+        phrase in normalized
+        for phrase in (
+            "我喜欢什么样的产品", "我喜欢什么产品", "我买过什么", "我买了什么",
+            "我的购买记录", "我的订单小结", "我的购物偏好", "我的消费习惯",
+        )
+    )
 
 
 def _needs_business_clarification(text: str) -> bool:

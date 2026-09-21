@@ -168,6 +168,8 @@ def decompose_business_message(message: str) -> list[BusinessTask]:
 
 def _classify_segment(segment: str) -> str:
     text = segment.lower()
+    if _looks_like_customer_profile_request(text):
+        return "customer_profile"
     if _is_small_talk(text):
         return "small_talk"
     if _needs_business_clarification(text):
@@ -196,6 +198,19 @@ def _is_small_talk(text: str) -> bool:
         "你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "早上好", "晚上好",
         "谢谢", "感谢", "多谢", "再见", "拜拜", "你能做什么", "你可以做什么", "帮助",
     }
+
+
+def _looks_like_customer_profile_request(text: str) -> bool:
+    normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
+    if any(term in normalized for term in ("退款", "取消", "地址", "发票", "投诉", "物流")):
+        return False
+    return any(
+        phrase in normalized
+        for phrase in (
+            "我喜欢什么样的产品", "我喜欢什么产品", "我买过什么", "我买了什么",
+            "我的购买记录", "我的订单小结", "我的购物偏好", "我的消费习惯",
+        )
+    )
 
 
 def _needs_business_clarification(text: str) -> bool:

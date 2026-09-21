@@ -7,6 +7,7 @@ let busy = false;
 let lastStatus = '';
 let polling = false;
 let lastMessageId = 0;
+let latestActions = [];
 window.customerOrders = [];
 
 const states = {
@@ -36,13 +37,18 @@ function formatStatus(status) {
 }
 
 function formatCategory(value) {
-  return value === 'health_beauty' ? '健康与美容用品' : (value || '商品订单');
+  return ({
+    health_beauty: '健康与美容用品',
+    bed_bath_table: '家居用品',
+    computers_accessories: '电脑配件',
+    baby: '母婴用品',
+  })[value] || (value ? value.replaceAll('_', ' ') : '商品订单');
 }
 
 function chooseOrder(order) {
   selectedOrder = order;
   document.querySelectorAll('.order').forEach(node => node.classList.toggle('selected', node.dataset.orderId === order.order_id));
-  $('selectionHint').textContent = `正在查看订单 ${order.order_id.slice(0, 8)}…，可以直接使用下方服务。`;
+  $('selectionHint').textContent = '已关联这笔订单。您可以继续查看进度，或直接发起售后申请。';
 }
 
 function actionButton(action) {
@@ -80,7 +86,7 @@ function renderOrders(payload) {
     amount.className = 'price';
     amount.textContent = new Intl.NumberFormat('zh-CN', {style: 'currency', currency: order.currency || 'BRL'}).format(order.amount);
     const meta = document.createElement('small');
-    meta.textContent = `订单 ${order.order_id.slice(0, 8)}… · ${String(order.purchased_at || '').slice(0, 10)}`;
+    meta.textContent = `下单时间：${String(order.purchased_at || '').slice(0, 10) || '暂未提供'}`;
     card.append(top, amount, meta);
     if (order.needs_attention) {
       const note = document.createElement('small');
@@ -98,10 +104,11 @@ function renderOrders(payload) {
 }
 
 function renderFollowUps(actions) {
-  if (!actions?.length) return;
+  latestActions = actions || [];
+  if (!latestActions.length) return;
   const tray = document.createElement('div');
   tray.className = 'message-actions';
-  actions.slice(0, 4).forEach(action => tray.append(actionButton(action)));
+  latestActions.slice(0, 4).forEach(action => tray.append(actionButton(action)));
   $('chat').append(tray);
   $('chat').scrollTop = $('chat').scrollHeight;
 }
@@ -167,6 +174,10 @@ async function send(event) {
 }
 
 $('compose').onsubmit = send;
+$('resetSession').onclick = () => {
+  sessionStorage.removeItem('support-session');
+  window.location.reload();
+};
 document.querySelectorAll('[data-query]').forEach(button => button.onclick = () => {
   if (button.dataset.action) sendMessage(button.dataset.query, button.dataset.action);
   else {
@@ -175,7 +186,7 @@ document.querySelectorAll('[data-query]').forEach(button => button.onclick = () 
   }
 });
 
-add('你好，我已经读取了你当前账号的订单。你可以直接问“哪些订单还在路上”，也可以从对应订单卡片发起售后。');
+add('你好，我是订单与售后助手。您可以从订单卡片查看进度或发起售后，也可以直接说“包裹还没到”或“商品有问题”。');
 api('/customer/context').then(renderOrders).catch(error => {$('orders').textContent = error.message;});
 api('/runtime/status').then(data => {
   if (data.mode !== 'live_llm_agent') {
@@ -195,6 +206,7 @@ async function receive() {
   if (!last || last === lastMessageId) return;
   $('chat').replaceChildren();
   for (const item of data.messages) add((item.sender === 'staff' ? '人工客服：' : '') + item.content, item.sender === 'customer' ? 'user' : 'agent');
+  if (latestActions.length) renderFollowUps(latestActions);
   lastMessageId = last;
 }
 setInterval(() => receive().catch(() => {}), 4000);

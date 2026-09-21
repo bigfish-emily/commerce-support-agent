@@ -75,7 +75,7 @@ async def test_customer_small_talk_and_ambiguous_support_use_no_tool_terminal(cl
     assert greeting.status_code == 200
     assert "查询订单" in greeting.json()["answer"]
     assert ambiguous.status_code == 200
-    assert "订单列表" in ambiguous.json()["answer"]
+    assert "订单卡片" in ambiguous.json()["answer"]
 
 
 def _mock_guard(input_on_topic: bool, output_valid: bool = True):
@@ -230,6 +230,27 @@ async def test_customer_context_is_resolved_server_side_and_minimized(client: As
 
 
 @pytest.mark.anyio
+async def test_customer_order_controls_follow_order_state(client: AsyncClient) -> None:
+    response = await client.get("/customer/context")
+    assert response.status_code == 200
+    orders = {item["order_id"]: item for item in response.json()["orders"]}
+
+    delivered_actions = {action["id"] for action in orders[ORDER_ID]["actions"]}
+    pre_shipment_actions = {
+        action["id"] for action in orders["8aec3a066f732dd927ec8fef1752415b"]["actions"]
+    }
+    canceled_actions = {
+        action["id"] for action in orders["1b9ecfe83cdc259250e1a8aca174f0ad"]["actions"]
+    }
+
+    assert {"refund_request", "complaint_escalation"} <= delivered_actions
+    assert "cancel_order" not in delivered_actions
+    assert {"cancel_order", "change_address"} <= pre_shipment_actions
+    assert "cancel_order" not in canceled_actions
+    assert "refund_request" in canceled_actions
+
+
+@pytest.mark.anyio
 async def test_customer_structured_order_action_skips_planner_and_uses_page_context(
     client: AsyncClient,
 ) -> None:
@@ -271,7 +292,24 @@ async def test_customer_structured_overview_lists_owned_active_orders(client: As
         )
 
     assert response.status_code == 200
-    assert "正在运输中的订单" in response.json()["answer"]
+    assert "待发货或配送中的订单" in response.json()["answer"]
+
+
+@pytest.mark.anyio
+async def test_customer_order_summary_uses_owned_orders_without_planner(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2:
+        response = await client.post(
+            "/customer/chat",
+            json={"message": "我喜欢什么样的产品？", "session_id": "customer-order-summary"},
+        )
+
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert "订单记录" in answer
+    assert "健康与美容用品" in answer
+    assert "长期个人偏好" in answer
+    assert "[订单小结]" not in answer
 
 
 @pytest.mark.anyio

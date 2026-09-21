@@ -179,7 +179,9 @@ class AgentActions:
             # knows, while preserving the same downstream tool gates.
             extracted = OlistTaskResult(order_id=selected_repair.value, category="", user_goal="page_context")
             extraction_mode = "trusted_page_context"
-        elif intent in {"small_talk", "clarify", "policy", "qa", "ops_decision", "customer_orders"}:
+        elif intent in {
+            "small_talk", "clarify", "customer_profile", "policy", "qa", "ops_decision", "customer_orders",
+        }:
             # Retrieval consumes the full task text. These read-only intents do
             # not need an order/category slot before retrieval can begin.
             extracted = OlistTaskResult(order_id="", category="", user_goal="not_required")
@@ -247,7 +249,7 @@ class AgentActions:
 
         if intent in {"small_talk", "clarify"}:
             context["primary_tool"] = "none"
-        elif intent == "customer_orders":
+        elif intent in {"customer_orders", "customer_profile"}:
             context["primary_tool"] = "list_owned_orders"
             result = await self._tool_manager.call(
                 "list_owned_orders",
@@ -376,6 +378,8 @@ class AgentActions:
                 list(context.get("owned_orders", [])),
                 str(task.get("order_filter", "all")),
             )
+        elif intent == "customer_profile":
+            answer = _format_customer_order_summary(list(context.get("owned_orders", [])))
         elif intent == "order_status":
             if context.get("order_id_error"):
                 answer = str(context["order_id_error"])
@@ -1171,6 +1175,7 @@ _INTENT_LABELS = {
     "clarify": "信息确认",
     "order_status": "订单查询",
     "customer_orders": "我的订单",
+    "customer_profile": "订单小结",
     "qa": "运营分析",
     "ops_decision": "审核台优先处理",
     "policy": "政策问答",
@@ -1198,6 +1203,8 @@ def _structured_action_plan(action: str, message: str) -> list[dict[str, object]
             "depends_on": [],
             "order_filter": "in_transit" if normalized == "list_active_shipments" else "attention",
         }]
+    if normalized in {"order_summary", "customer_profile"}:
+        return [{"intent": "customer_profile", "text": message, "side_effect": False, "depends_on": []}]
     if normalized in {"refund_policy", "after_sales_policy"}:
         return [{"intent": "policy", "text": message, "side_effect": False, "depends_on": []}]
     action_map = {
@@ -1229,16 +1236,62 @@ def _format_owned_orders(orders: list[dict[str, object]], filter_name: str) -> s
         if filter_name == "attention":
             return "当前没有需要特别留意的订单。"
         return "当前账号下没有可展示的订单。"
-    title = "正在运输中的订单" if filter_name == "in_transit" else "需要留意的订单"
+    title = "待发货或配送中的订单" if filter_name == "in_transit" else "需要留意的订单"
     lines = [title + "："]
     for order in orders[:5]:
-        short_id = str(order.get("order_id", ""))[:8]
-        status = str(order.get("status", ""))
-        category = str(order.get("category", "商品"))
+        status = _customer_order_status_label(str(order.get("status", "")))
+        category = _customer_category_label(str(order.get("category", "商品")))
         delay = order.get("delay_days")
         suffix = f"，预计延迟 {delay} 天" if isinstance(delay, int) and delay > 0 else ""
-        lines.append(f"- {category}（订单 {short_id}…）：{status}{suffix}")
+        lines.append(f"- {category}：{status}{suffix}")
     return "\n".join(lines)
+
+
+def _format_customer_order_summary(orders: list[dict[str, object]]) -> str:
+    """Summarise account-visible purchase categories without inferring user traits."""
+
+    if not orders:
+        return "[订单小结]\n当前没有可用于生成订单小结的记录。"
+    categories: list[str] = []
+    for order in orders:
+        category = _customer_category_label(str(order.get("category", "商品")))
+        if category not in categories:
+            categories.append(category)
+    active_count = sum(
+        str(order.get("status", "")) in {"approved", "invoiced", "processing", "shipped"}
+        for order in orders
+    )
+    category_text = "、".join(categories[:4])
+    more = "等" if len(categories) > 4 else ""
+    progress = f"目前有 {active_count} 笔订单仍在处理中。" if active_count else "目前没有正在处理的订单。"
+    return (
+        "[订单小结]\n"
+        f"从当前 {len(orders)} 笔订单记录看，您购买过 {category_text}{more}。{progress}\n"
+        "这是一份订单记录小结，未将购买记录推断为您的长期个人偏好。"
+    )
+
+
+def _customer_category_label(category: str) -> str:
+    labels = {
+        "health_beauty": "健康与美容用品",
+        "bed_bath_table": "家居用品",
+        "computers_accessories": "电脑配件",
+        "baby": "母婴用品",
+    }
+    return labels.get(category, category.replace("_", " ") or "商品")
+
+
+def _customer_order_status_label(status: str) -> str:
+    labels = {
+        "created": "待付款",
+        "approved": "已付款",
+        "invoiced": "待发货",
+        "processing": "处理中",
+        "shipped": "运输中",
+        "delivered": "已送达",
+        "canceled": "已取消",
+    }
+    return labels.get(status, status or "处理中")
 
 
 def _execution_order(tasks: list[dict[str, object]]) -> list[tuple[int, dict[str, object]]]:

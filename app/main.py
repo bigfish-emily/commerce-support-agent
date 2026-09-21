@@ -720,6 +720,7 @@ def _validated_customer_action(action: str | None) -> str | None:
         "track_order",
         "list_active_shipments",
         "list_attention_orders",
+        "order_summary",
         "refund_policy",
         "refund_request",
         "cancel_order",
@@ -802,6 +803,11 @@ def _customer_follow_up_actions(order_id: str | None = None) -> list[CustomerAct
                 message="哪些订单需要我留意？",
             ),
             CustomerAction(
+                id="order_summary",
+                label="订单小结",
+                message="帮我总结一下当前订单记录。",
+            ),
+            CustomerAction(
                 id="refund_policy",
                 label="了解退款政策",
                 message="退款一般需要满足什么条件？",
@@ -811,25 +817,49 @@ def _customer_follow_up_actions(order_id: str | None = None) -> list[CustomerAct
         CustomerAction(
             id="track_order", label="查看物流", order_id=order_id, message="帮我查看这笔订单的物流进展。"
         ),
-        CustomerAction(
-            id="refund_request", label="申请退款", order_id=order_id,
-            message="我想为这笔订单申请退款。", style="primary",
-        ),
-        CustomerAction(
-            id="cancel_order", label="取消订单", order_id=order_id, message="我想取消这笔订单。"
-        ),
-        CustomerAction(
-            id="invoice_request", label="申请发票", order_id=order_id, message="我想为这笔订单申请发票。"
-        ),
     ]
-    common.append(
-        CustomerAction(
-            id="change_address",
-            label="修改地址",
-            order_id=order_id,
-            message="我想修改这笔订单的收货地址。",
+    order = olist_service.get_order_status(order_id)
+    status = order.status if order else ""
+    if status in {"created", "approved", "invoiced", "processing"}:
+        common.extend([
+            CustomerAction(
+                id="cancel_order", label="取消订单", order_id=order_id, message="我想取消这笔订单。",
+                style="primary",
+            ),
+            CustomerAction(
+                id="change_address", label="修改地址", order_id=order_id,
+                message="我想修改这笔订单的收货地址。",
+            ),
+        ])
+    elif status in {"shipped", "delivered"}:
+        common.extend([
+            CustomerAction(
+                id="refund_request", label="申请退款", order_id=order_id,
+                message="我想为这笔订单申请退款。", style="primary",
+            ),
+            CustomerAction(
+                id="complaint_escalation", label="申请售后", order_id=order_id,
+                message="这笔订单遇到了问题，我想申请售后处理。",
+            ),
+        ])
+    elif status == "canceled":
+        common.extend([
+            CustomerAction(
+                id="refund_request", label="查询退款", order_id=order_id,
+                message="我想查询这笔已取消订单的退款处理情况。", style="primary",
+            ),
+            CustomerAction(
+                id="invoice_request", label="申请发票", order_id=order_id,
+                message="我想为这笔订单申请发票。",
+            ),
+        ])
+    else:
+        common.append(
+            CustomerAction(
+                id="open_support_case", label="申请售后", order_id=order_id,
+                message="这笔订单遇到了问题，我想申请售后处理。", style="primary",
+            )
         )
-    )
     return common
 
 

@@ -109,8 +109,8 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
             return "你好，我可以帮你查询订单、了解售后政策或提交售后申请。请告诉我想处理什么问题。"
         if intent == "clarify":
             return (
-                "可以的。请告诉我想查询订单、了解退款或取消政策，还是申请退款、取消订单或修改地址；"
-                "你也可以先在订单列表中选中对应订单。"
+                "我可以先帮您定位订单，再处理退款、取消或改地址。"
+                "您可以从订单卡片发起服务，也可以直接说遇到的问题，例如“包裹还没到”或“商品有问题”。"
             )
     if (
         len(tasks) == 1
@@ -135,7 +135,14 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
         and tasks[0].get("intent") == "customer_orders"
         and raw_result
     ):
-        return re.sub(r"^\[我的订单\]\s*", "", raw_result).strip()
+        return re.sub(r"^(?:\[我的订单\]\s*)+", "", raw_result).strip()
+    if (
+        len(tasks) == 1
+        and isinstance(tasks[0], dict)
+        and tasks[0].get("intent") == "customer_profile"
+        and raw_result
+    ):
+        return re.sub(r"^(?:\[订单小结\]\s*)+", "", raw_result).strip()
     return ""
 
 
@@ -192,12 +199,24 @@ def _customer_order_status(raw_answer: str) -> str:
     if status == "delivered" or (delivered and delivered != "未送达"):
         answer = "您的订单已送达。"
     elif status:
-        answer = f"您的订单当前状态为 {status}。"
+        answer = f"您的订单当前状态为 {_customer_status_label(status)}。"
     else:
         return "我已查到订单信息，正在为您核对配送进度。"
     if delay_match:
         answer += f"系统记录显示配送比预计晚了 {delay_match.group(1)} 天。"
     return answer + "如商品或配送仍有问题，您可以继续告诉我具体情况。"
+
+
+def _customer_status_label(status: str) -> str:
+    return {
+        "created": "待付款",
+        "approved": "已付款",
+        "invoiced": "待发货",
+        "processing": "处理中",
+        "shipped": "运输中",
+        "delivered": "已送达",
+        "canceled": "已取消",
+    }.get(status, status)
 
 
 def _customer_policy_reply(raw_result: str, question: str) -> str:
