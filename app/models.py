@@ -1,6 +1,21 @@
 from pydantic import BaseModel, Field
 
 
+class CustomerPageContext(BaseModel):
+    """Small, server-validated UI context carried with a customer request."""
+
+    surface: str = Field(default="assistant", min_length=1, max_length=64)
+    selected_order_id: str | None = Field(default=None, max_length=64)
+
+
+class CustomerAction(BaseModel):
+    id: str
+    label: str
+    style: str = "secondary"
+    order_id: str | None = None
+    message: str | None = None
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     session_id: str | None = None
@@ -9,12 +24,15 @@ class ChatRequest(BaseModel):
     role: str = Field(default="customer", min_length=1, max_length=64)
     auth_scopes: list[str] | None = None
     channel: str = Field(default="customer_self_service", min_length=1, max_length=64)
+    page_context: CustomerPageContext = Field(default_factory=CustomerPageContext)
+    requested_action: str | None = Field(default=None, max_length=64)
 
 
 class ChatResponse(BaseModel):
     answer: str
     session_id: str
     sources: list[str] = []
+    ui_actions: list[CustomerAction] = Field(default_factory=list)
 
 
 class TraceSummaryResponse(BaseModel):
@@ -83,7 +101,6 @@ class CustomerCaseResponse(BaseModel):
 
 
 class CustomerAppealRequest(BaseModel):
-    user_id: str = Field(default="demo-customer", min_length=1, max_length=128)
     reason: str = Field(..., min_length=1, max_length=1000)
 
 

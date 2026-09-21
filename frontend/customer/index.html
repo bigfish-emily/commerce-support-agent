@@ -1,4 +1,36 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Olist · 我的售后</title><link rel="stylesheet" href="/static/product.css"></head>
-<body><header><a class="brand" href="/customer">olist<span>客户服务</span></a><span class="account">体验账户</span></header>
-<main class="customer-layout"><aside><div class="aside-title"><h1>我的订单</h1><span id="orderCount"></span></div><div id="orders" aria-live="polite">正在读取订单…</div><div class="support-note">订单有疑问？<br>告诉我们遇到的问题，我们会协助您处理。</div><small class="footnote">体验环境使用公开历史订单，申请不会触发真实付款。</small></aside>
-<section class="service"><div class="service-heading"><div class="avatar">O</div><div><h2>售后服务</h2><span>订单咨询 · 退换与退款 · 申请跟进</span></div></div><div id="availability" role="status" hidden></div><div id="chat" class="messages" aria-live="polite"></div><div id="progress" hidden></div><form id="compose"><div class="shortcuts"><button type="button" data-query="请查询这笔订单的配送状态">查物流</button><button type="button" data-query="我想申请退款">申请退款</button><button type="button" data-query="这笔订单可以取消吗">取消订单</button><button type="button" data-query="退款需要满足什么条件">退款条件</button></div><label class="sr-only" for="message">输入您的问题</label><div class="composer"><textarea id="message" maxlength="2000" rows="2" placeholder="请描述您遇到的问题…" required></textarea><button id="send" title="发送消息" aria-label="发送消息" type="submit">↑</button></div><p id="status" role="status"></p></form></section></main><script src="/static/product-customer.js?v=20260914-1"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Olist · 订单助手</title>
+  <link rel="stylesheet" href="/static/product.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/customer">olist<span>订单助手</span></a>
+    <div class="header-actions"><a href="/review" class="staff-link">工作人员入口</a><span class="account">体验账户</span></div>
+  </header>
+  <main class="customer-layout">
+    <aside class="orders-rail">
+      <div class="aside-title"><div><p class="eyebrow">我的账户</p><h1>订单与售后</h1></div><span id="orderCount"></span></div>
+      <div id="orderSummary" class="order-summary" aria-live="polite"></div>
+      <div id="orders" class="order-list" aria-live="polite">正在读取订单…</div>
+      <small class="footnote">体验环境使用公开历史订单。申请只写入本地沙箱，不会触发真实付款或物流操作。</small>
+    </aside>
+    <section class="service">
+      <div class="service-heading"><div class="avatar">O</div><div><h2>订单助手</h2><span id="selectionHint">查订单、看物流、处理售后，都可以直接告诉我。</span></div></div>
+      <div id="availability" role="status" hidden></div>
+      <div id="chat" class="messages" aria-live="polite"></div>
+      <div id="progress" hidden></div>
+      <form id="compose">
+        <div id="shortcuts" class="shortcuts"><button type="button" data-query="我有哪些订单还在运输中？" data-action="list_active_shipments">查看在途订单</button><button type="button" data-query="哪些订单需要我留意？" data-action="list_attention_orders">查看待处理订单</button><button type="button" data-query="退款一般需要满足什么条件？" data-action="refund_policy">退款政策</button></div>
+        <label class="sr-only" for="message">输入您的问题</label>
+        <div class="composer"><textarea id="message" maxlength="2000" rows="2" placeholder="例如：退款一般需要满足什么条件？" required></textarea><button id="send" title="发送消息" aria-label="发送消息" type="submit">↑</button></div>
+        <p id="status" role="status"></p>
+      </form>
+    </section>
+  </main>
+  <script src="/static/product-customer.js?v=20260921-2"></script>
+</body>
+</html>

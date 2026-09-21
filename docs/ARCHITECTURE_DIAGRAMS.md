@@ -8,16 +8,19 @@
 
 ```mermaid
 flowchart TD
-    A[1 消费者输入 /customer/chat] --> B{2 当前 Session<br/>是否有待审核 case?}
+    Orders[1 我的订单/订单详情<br/>服务端按登录身份加载] --> A[2 原生按钮或消费者输入 /customer/chat]
+    A --> B{3 当前 Session<br/>是否有待审核 case?}
     Staff[售后审核台<br/>/review/sessions] --> C{3 审核决定}
     B -- 有 --> F[告知用户正在等待工作人员审核]
     C -- approve --> D[以 after_sales_operator 身份<br/>恢复 LangGraph checkpoint]
     C -- reject/timeout --> E[清理 pending<br/>记录 rejected/timeout]
     B -- 无 --> G[4 Input Guard<br/>业务域 + 注入风险检查]
     G -- 拒绝 --> H[安全拒绝<br/>不进入工具]
-    G -- 通过 --> I[5 LLM Planner<br/>拆多意图 task_plan]
+    G -- 原生按钮 --> I[5a 结构化动作计划<br/>跳过 planner]
+    G -- 自由文本 --> I2[5b LLM Planner<br/>拆多意图 task_plan]
     I --> J[6 select_next_task<br/>只读优先, 副作用后置]
-    J --> K[7 extract_slots<br/>抽订单号/类目/action_type]
+    I2 --> J
+    J --> K[7 extract_slots<br/>优先使用可信页面订单上下文]
     K --> L[8 retrieve_context<br/>订单事实/政策/FAQ 证据]
     L --> M{9 是否写动作?}
     M -- 否 --> N[10 execute_read_task<br/>直接回答消费者]
@@ -45,7 +48,7 @@ flowchart TD
     AA --> AB[返回 answer/sources/session_id]
 ```
 
-主入口是消费者自助对话。只读问题直接回答，写动作先生成售后 case；低风险动作走自动门禁，高风险动作由 LangGraph `interrupt()` 暂停，审核台读取同一个 checkpoint 里的 draft、policy evidence 和 Verifier 结果，审核通过后再恢复执行。
+主入口嵌在“我的订单/订单详情”中。按钮型标准动作不需要模型重新理解按钮语义，直接生成结构化 task；自由表达、跨订单发现和多意图请求才经过 LLM planner。每条订单相关工具调用还会校验服务端注入的 owned-order 集合。写动作先生成售后 case；低风险动作走自动门禁，高风险动作由 LangGraph `interrupt()` 暂停，审核台读取同一个 checkpoint 里的 draft、policy evidence 和 Verifier 结果，审核通过后再恢复执行。
 
 ## 2. ToolCallManager 治理链路
 
@@ -55,8 +58,8 @@ flowchart TD
 flowchart TD
     Start[Agent 调用工具] --> Validate[1 Pydantic Schema 校验]
     Validate -- 失败 --> Err1[返回 schema_validation_failed]
-    Validate -- 成功 --> Auth[2 Role + auth_scope 权限检查]
-    Auth -- 越权 --> Err2[返回 permission_denied]
+    Validate -- 成功 --> Auth[2 Role + auth_scope + owned-order 校验]
+    Auth -- 越权 --> Err2[返回 permission_denied / order_owner_required]
     Auth -- 通过 --> CheckCache{3 是否可缓存且非 side_effect?}
     CheckCache -- 命中 --> ReturnCached[返回 cached ToolCallResult]
     CheckCache -- 未命中/副作用 --> SideEffectCheck{4 side_effect=True?}
@@ -188,4 +191,4 @@ flowchart TD
 
 ## 总结
 
-项目面向消费者自助售后：LLM 生成结构化计划，业务规则、RAG、工具治理、HITL、Redis 锁、SQLite 幂等和 trace 共同保证售后动作可控、可审计、可评测。
+项目面向消费者订单与自助售后：订单页原生动作生成结构化计划，自由文本由 LLM 生成结构化计划；业务规则、RAG、工具治理、HITL、Redis 锁、SQLite 幂等和 trace 共同保证售后动作可控、可审计、可评测。

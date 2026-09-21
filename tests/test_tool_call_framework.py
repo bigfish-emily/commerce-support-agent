@@ -82,6 +82,22 @@ async def test_empty_auth_scopes_allow_read_but_deny_non_read_tool(manager) -> N
 
 
 @pytest.mark.anyio
+async def test_customer_order_tool_enforces_server_owned_order_set(manager) -> None:
+    result = await manager.call(
+        "get_order_status",
+        {"order_id": "203096f03d82e0dffbc41ebc2e2bcfb7"},
+        ToolCallContext(
+            role="customer",
+            auth_scopes=["orders:read"],
+            allowed_order_ids=["8aec3a066f732dd927ec8fef1752415b"],
+        ),
+    )
+
+    assert not result.ok
+    assert result.error_code == "order_owner_required"
+
+
+@pytest.mark.anyio
 async def test_tool_call_auth_scope_denies_even_when_role_allowed(manager) -> None:
     result = await manager.call(
         "search_policy_knowledge",

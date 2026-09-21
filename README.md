@@ -1,25 +1,26 @@
 # commerce-support-agent
 
-A public-data sandbox for customer self-service after-sales resolution and asynchronous staff review.
+A public-data sandbox for an e-commerce **order assistant** and asynchronous after-sales review.
 
-Customers can ask about an order, policy, refund, cancellation, address change, invoice, or complaint. The agent retrieves owned-order facts and policy evidence, creates a structured case for a business action, and sends material-risk requests to a staff review console. An approved action writes an append-only sandbox event and updates the customer-visible order projection.
+The product starts from the customer's own order context. Standard actions such as tracking a package or starting a refund request are rendered as native order controls; the Agent handles free-form, ambiguous, multi-step requests that need to find an order, retrieve policy evidence, assemble an after-sales case, or coordinate a handoff. Material-risk actions enter a staff review console. Approved actions append a sandbox event and update the customer-visible order projection.
 
 > This repository models an after-sales workflow on historical public data. It does not connect to a real payment, logistics, or OMS provider and never moves money.
 
 ## What It Demonstrates
 
-- **Customer path**: intent and slot extraction, ownership checks, order/policy retrieval, decision and verifier gates, clear customer-facing replies, and case-status polling.
+- **Customer path**: a compact owned-order overview, native order controls, free-form intent planning, ownership checks, order/policy retrieval, decision and verifier gates, and clear customer-facing replies.
 - **Review path**: a durable review packet holds order facts, policy references, decision, verifier output, and customer request. An operator can approve, reject, or receive an appeal after a timeout/rejection.
 - **Durable business state**: Olist facts are the immutable initial snapshot. Approved actions append a case event and update a SQLite order projection, so later order queries expose `refund requested`, `address change requested`, or `canceled` status.
 - **Governed tools**: Pydantic input schemas, role/scope checks, customer ownership guards, tenant-aware read cache, timeout/retry/fallback, redacted audit events, Redis-compatible locks, and SQLite idempotency records.
-- **Workflow control**: LangGraph checkpointing pauses high-risk cases for staff review and resumes the original graph after a decision.
+- **Workflow control**: native page actions bypass LLM planning but enter the same governed workflow. LangGraph checkpointing pauses high-risk cases for staff review and resumes the original graph after a decision.
 - **Enterprise boundary**: local MCP tools plus stdio/remote client adapters demonstrate how an OMS, CRM, payment, or invoice service can be integrated behind a typed tool contract.
 
 ## Product Flow
 
 ```mermaid
 flowchart LR
-    Customer[Customer] --> Chat[/customer/chat]
+    Customer[Customer] --> Context[My orders / order detail]
+    Context -->|native control or free text| Chat[/customer/chat]
     Chat --> Graph[LangGraph case workflow]
     Graph --> Facts[Owned order facts]
     Graph --> Policy[Policy evidence]
@@ -59,7 +60,7 @@ http://127.0.0.1:8000/customer
 http://127.0.0.1:8000/review
 ```
 
-The local review credential is `local-review-demo`; set `REVIEW_API_TOKEN` before exposing the service. Use Redis by setting `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`.
+The customer page defaults to the local `demo-customer` actor. `X-Demo-Customer` is a test-only selector; a production BFF must resolve an authenticated principal and inject the allowed-order set server-side. The local review credential is `local-review-demo`; set `REVIEW_API_TOKEN` before exposing the service. Use Redis by setting `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`.
 
 ## Evaluation
 

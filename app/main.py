@@ -32,6 +32,7 @@ from app.models import (
     CaseMetricsResponse,
     ChatRequest,
     ChatResponse,
+    CustomerAction,
     CustomerAppealRequest,
     CustomerCaseResponse,
     ReviewActionRequest,
@@ -138,32 +139,45 @@ def technical_app() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "demo.html")
 
 
+@app.get("/customer/context")
+def customer_context(x_demo_customer: str | None = Header(default=None)) -> dict:
+    """Return a minimal, ownership-filtered order context for the customer UI.
+
+    ``X-Demo-Customer`` is only a local stand-in for the actor resolved by an
+    authenticated BFF in production.  The browser never supplies a user id in
+    the request body for this route or ``/customer/chat``.
+    """
+    return _customer_context_payload(_resolve_customer_actor(x_demo_customer))
+
+
 @app.get("/customer/orders")
-def customer_orders() -> dict:
-    """Safe fields for the fixed local demonstration account."""
-    orders = []
-    for order_id in sorted(_allowed_customer_order_ids("demo-customer")):
-        order = olist_service.get_order_status(order_id)
-        if order:
-            orders.append({"order_id": order.order_id, "status": order.status,
-                           "category": order.category_summary, "amount": order.payment_value,
-                           "currency": "BRL", "purchased_at": order.purchase_timestamp,
-                           "delivered_at": order.delivered_customer_date})
-    return {"orders": orders}
+def customer_orders(x_demo_customer: str | None = Header(default=None)) -> dict:
+    """Compatibility endpoint for the order rail in the customer product UI."""
+    payload = _customer_context_payload(_resolve_customer_actor(x_demo_customer))
+    return {"orders": payload["orders"]}
 
 
 @app.get("/customer/sessions/{session_id}/progress")
-async def customer_progress(session_id: str) -> dict:
+async def customer_progress(
+    session_id: str,
+    x_demo_customer: str | None = Header(default=None),
+) -> dict:
+    customer_user_id = _resolve_customer_actor(x_demo_customer)
     record = case_service.get_by_session(session_id)
     if not record:
         snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
+        if not snapshot.values:
+            # A new browser session has no graph checkpoint yet.  Returning an
+            # empty progress object keeps initial page polling quiet.
+            return {"case": None}
+        if snapshot.values.get("user_id") != customer_user_id:
+            raise HTTPException(status_code=403, detail="conversation_owner_required")
         values = snapshot.values or {}
-        if values.get("user_id") == "demo-customer":
-            case_id = (values.get("escalation_draft") or {}).get("review_case_id")
-            record = case_service.get(case_id) if case_id else None
+        case_id = (values.get("escalation_draft") or {}).get("review_case_id")
+        record = case_service.get(case_id) if case_id else None
     if not record:
         return {"case": None}
-    if record.get("user_id") != "demo-customer":
+    if record.get("user_id") != customer_user_id:
         raise HTTPException(status_code=403, detail="case_owner_required")
     safe = _customer_case_response(record).model_dump()
     safe.pop("message_text", None)
@@ -304,6 +318,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "role": request.role,
             "auth_scopes": auth_scopes,
             "channel": request.channel,
+            "page_context": request.page_context.model_dump(),
+            "requested_action": request.requested_action or "",
+            "active_order_id": request.page_context.selected_order_id or "",
+            "allowed_order_ids": sorted(_allowed_customer_order_ids(request.user_id))
+            if _is_customer_request(request)
+            else [],
             "messages": history_messages if _is_customer_request(request) and history_messages
             else [{"role": "user", "content": request.message}],
             "route_intent": "",
@@ -369,12 +389,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 
 @app.post("/customer/chat", response_model=ChatResponse)
-async def customer_chat(request: ChatRequest) -> ChatResponse:
+async def customer_chat(
+    request: ChatRequest,
+    x_demo_customer: str | None = Header(default=None),
+) -> ChatResponse:
     """Customer-facing self-service entrypoint with minimal read/draft scopes."""
-    customer_user_id = request.user_id if request.user_id != "demo-user" else "demo-customer"
+    customer_user_id = _resolve_customer_actor(x_demo_customer)
     ownership_denial = _customer_order_access_denied(request, customer_user_id=customer_user_id)
     if ownership_denial is not None:
         return ownership_denial
+    page_context = _validated_customer_page_context(request, customer_user_id)
     session_id = request.session_id or str(uuid.uuid4())
     previous = await agent.aget_state({"configurable": {"thread_id": session_id}})
     if previous.values and previous.values.get("user_id") != customer_user_id:
@@ -389,6 +413,9 @@ async def customer_chat(request: ChatRequest) -> ChatResponse:
             "channel": "customer_self_service",
             "auth_scopes": _resolve_auth_scopes("customer", request.auth_scopes),
             "user_id": customer_user_id,
+            "tenant_id": "olist-demo",
+            "page_context": page_context,
+            "requested_action": _validated_customer_action(request.requested_action),
         }
     )
     response = await chat(customer_request)
@@ -408,6 +435,7 @@ async def customer_chat(request: ChatRequest) -> ChatResponse:
         }
     response.answer = await present(llm_client.chat_openai, request.message, state, record)
     response.sources = []
+    response.ui_actions = _customer_follow_up_actions(page_context.selected_order_id)
     await asyncio.to_thread(conversations.append_message, session_id, "assistant", response.answer)
     return response
 
@@ -439,15 +467,28 @@ class HandoffMode(BaseModel):
     human: bool
 
 
-async def _conversation_owner(session_id: str) -> None:
+async def _customer_conversation_owner(session_id: str, customer_user_id: str):
     snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
-    if not snapshot.values or snapshot.values.get("user_id") != "demo-customer":
+    if not snapshot.values:
         raise HTTPException(status_code=404, detail="conversation_not_found")
+    if snapshot.values.get("user_id") != customer_user_id:
+        raise HTTPException(status_code=403, detail="conversation_owner_required")
+    return snapshot
+
+
+async def _existing_conversation(session_id: str):
+    snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    return snapshot
 
 
 @app.get("/customer/sessions/{session_id}/messages")
-async def customer_messages(session_id: str) -> dict:
-    await _conversation_owner(session_id)
+async def customer_messages(
+    session_id: str,
+    x_demo_customer: str | None = Header(default=None),
+) -> dict:
+    await _customer_conversation_owner(session_id, _resolve_customer_actor(x_demo_customer))
     return {"messages": await asyncio.to_thread(conversations.messages, session_id),
             "human": await asyncio.to_thread(conversations.human_mode, session_id)}
 
@@ -455,14 +496,16 @@ async def customer_messages(session_id: str) -> dict:
 @app.get("/review/sessions/{session_id}/messages")
 async def staff_messages(session_id: str, x_review_token: str | None = Header(default=None)) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
-    return await customer_messages(session_id)
+    await _existing_conversation(session_id)
+    return {"messages": await asyncio.to_thread(conversations.messages, session_id),
+            "human": await asyncio.to_thread(conversations.human_mode, session_id)}
 
 
 @app.post("/review/sessions/{session_id}/messages")
 async def staff_reply(session_id: str, body: StaffMessage,
-                      x_review_token: str | None = Header(default=None)) -> dict:
+    x_review_token: str | None = Header(default=None)) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
-    await _conversation_owner(session_id)
+    await _existing_conversation(session_id)
     await asyncio.to_thread(conversations.set_human_mode, session_id, True)
     await asyncio.to_thread(conversations.append_message, session_id, "staff", body.content)
     record_trace(
@@ -477,9 +520,9 @@ async def staff_reply(session_id: str, body: StaffMessage,
 
 @app.post("/review/sessions/{session_id}/handoff")
 async def staff_handoff(session_id: str, body: HandoffMode,
-                        x_review_token: str | None = Header(default=None)) -> dict:
+    x_review_token: str | None = Header(default=None)) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
-    await _conversation_owner(session_id)
+    await _existing_conversation(session_id)
     await asyncio.to_thread(conversations.set_human_mode, session_id, body.human)
     record_trace(
         session_id=session_id,
@@ -494,7 +537,7 @@ async def staff_handoff(session_id: str, body: HandoffMode,
 @app.post("/review/sessions/{session_id}/suggestion")
 async def staff_suggestion(session_id: str, x_review_token: str | None = Header(default=None)) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
-    await _conversation_owner(session_id)
+    await _existing_conversation(session_id)
     history = await asyncio.to_thread(conversations.messages, session_id)
     snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
     latest = next((m["content"] for m in reversed(history) if m["sender"] == "customer"), "")
@@ -509,13 +552,14 @@ async def staff_suggestion(session_id: str, x_review_token: str | None = Header(
 @app.get("/customer/cases/{case_id}", response_model=CustomerCaseResponse)
 async def get_customer_case(
     case_id: str,
-    user_id: str = Query(default="demo-customer"),
+    x_demo_customer: str | None = Header(default=None),
 ) -> CustomerCaseResponse:
     """Return a customer-safe status view for an after-sales case."""
+    customer_user_id = _resolve_customer_actor(x_demo_customer)
     record = case_service.get(case_id)
     if record is None:
         raise HTTPException(status_code=404, detail="case_not_found")
-    if str(record.get("user_id") or "demo-customer") != user_id:
+    if str(record.get("user_id") or "demo-customer") != customer_user_id:
         raise HTTPException(status_code=403, detail="case_owner_required")
     return _customer_case_response(record)
 
@@ -524,9 +568,11 @@ async def get_customer_case(
 async def appeal_customer_case(
     case_id: str,
     request: CustomerAppealRequest,
+    x_demo_customer: str | None = Header(default=None),
 ) -> CustomerCaseResponse:
     """Reopen a rejected or timed-out case for staff review with new customer evidence."""
-    record = case_service.appeal_case(case_id, request.user_id, request.reason)
+    customer_user_id = _resolve_customer_actor(x_demo_customer)
+    record = case_service.appeal_case(case_id, customer_user_id, request.reason)
     if record is None:
         raise HTTPException(status_code=404, detail="case_not_found_or_not_owned")
     record_trace(
@@ -574,8 +620,7 @@ async def get_review_session(
 ) -> ReviewSessionResponse:
     """Return the staff-facing HITL review packet for a paused case."""
     _authorize_review(role, auth_scopes, x_review_token)
-    config: dict = {"configurable": {"thread_id": session_id}}
-    snapshot = await agent.aget_state(config)
+    snapshot = await _existing_conversation(session_id)
     values = dict(snapshot.values or {})
     return _review_session_response(session_id, bool(snapshot.next), values)
 
@@ -643,6 +688,149 @@ def _customer_case_response(record: dict) -> CustomerCaseResponse:
         expires_at=record.get("expires_at"),
         appeal_count=int(record.get("appeal_count") or 0),
     )
+
+
+def _resolve_customer_actor(x_demo_customer: str | None) -> str:
+    """Resolve the demo actor at the server boundary.
+
+    A production BFF would obtain this value from a verified session/JWT and
+    pass an immutable principal downstream.  Keeping the demo selector in a
+    header makes the trust boundary explicit and avoids accepting ``user_id``
+    from the chat JSON payload.
+    """
+    actor = (x_demo_customer or "demo-customer").strip()
+    if actor not in DEFAULT_CUSTOMER_ORDER_IDS:
+        raise HTTPException(status_code=401, detail="demo_customer_not_authenticated")
+    return actor
+
+
+def _validated_customer_page_context(request: ChatRequest, customer_user_id: str):
+    context = request.page_context.model_copy()
+    selected_order_id = (context.selected_order_id or "").strip().lower()
+    if selected_order_id and selected_order_id not in _allowed_customer_order_ids(customer_user_id):
+        raise HTTPException(status_code=403, detail="selected_order_owner_required")
+    context.selected_order_id = selected_order_id or None
+    return context
+
+
+def _validated_customer_action(action: str | None) -> str | None:
+    if action is None:
+        return None
+    allowed = {
+        "track_order",
+        "list_active_shipments",
+        "list_attention_orders",
+        "refund_policy",
+        "refund_request",
+        "cancel_order",
+        "change_address",
+        "invoice_request",
+        "complaint_escalation",
+        "open_support_case",
+    }
+    if action not in allowed:
+        raise HTTPException(status_code=422, detail="unsupported_customer_action")
+    return action
+
+
+def _customer_context_payload(customer_user_id: str) -> dict[str, object]:
+    """Build the compact personal order view used to ground the assistant.
+
+    It intentionally exposes only customer-safe order fields.  Full facts are
+    retrieved on demand after an owned order is selected or explicitly
+    referenced, keeping raw history and PII out of the model context.
+    """
+    orders: list[dict[str, object]] = []
+    active_shipments = 0
+    attention_count = 0
+    for order_id in _allowed_customer_order_ids(customer_user_id):
+        order = olist_service.get_order_status(order_id)
+        if order is None:
+            continue
+        in_transit = order.status in {"approved", "invoiced", "processing", "shipped"}
+        needs_attention = bool(
+            (isinstance(order.delay_days, int) and order.delay_days > 0)
+            or order.refund_status
+            or order.address_change_status
+        )
+        if in_transit:
+            active_shipments += 1
+        if needs_attention:
+            attention_count += 1
+        orders.append(
+            {
+                "order_id": order.order_id,
+                "status": order.status,
+                "category": order.category_summary,
+                "amount": order.payment_value,
+                "currency": "BRL",
+                "purchased_at": order.purchase_timestamp,
+                "estimated_delivery_at": order.estimated_delivery_date,
+                "delivered_at": order.delivered_customer_date,
+                "delay_days": order.delay_days,
+                "refund_status": order.refund_status,
+                "address_change_status": order.address_change_status,
+                "needs_attention": needs_attention,
+                "in_transit": in_transit,
+                "actions": [action.model_dump() for action in _customer_follow_up_actions(order.order_id)],
+            }
+        )
+    orders.sort(key=lambda item: str(item.get("purchased_at") or ""), reverse=True)
+    return {
+        "customer": {"id": customer_user_id, "display_name": "体验账户"},
+        "summary": {
+            "order_count": len(orders),
+            "active_shipments": active_shipments,
+            "attention_count": attention_count,
+        },
+        "orders": orders,
+    }
+
+
+def _customer_follow_up_actions(order_id: str | None = None) -> list[CustomerAction]:
+    """Native order controls. They carry structured action intent, not IDs in prose."""
+    if not order_id:
+        return [
+            CustomerAction(
+                id="list_active_shipments",
+                label="查看在途订单",
+                message="我有哪些订单还在运输中？",
+            ),
+            CustomerAction(
+                id="list_attention_orders",
+                label="查看待处理订单",
+                message="哪些订单需要我留意？",
+            ),
+            CustomerAction(
+                id="refund_policy",
+                label="了解退款政策",
+                message="退款一般需要满足什么条件？",
+            ),
+        ]
+    common = [
+        CustomerAction(
+            id="track_order", label="查看物流", order_id=order_id, message="帮我查看这笔订单的物流进展。"
+        ),
+        CustomerAction(
+            id="refund_request", label="申请退款", order_id=order_id,
+            message="我想为这笔订单申请退款。", style="primary",
+        ),
+        CustomerAction(
+            id="cancel_order", label="取消订单", order_id=order_id, message="我想取消这笔订单。"
+        ),
+        CustomerAction(
+            id="invoice_request", label="申请发票", order_id=order_id, message="我想为这笔订单申请发票。"
+        ),
+    ]
+    common.append(
+        CustomerAction(
+            id="change_address",
+            label="修改地址",
+            order_id=order_id,
+            message="我想修改这笔订单的收货地址。",
+        )
+    )
+    return common
 
 
 def _resolve_auth_scopes(role: str, provided_scopes: list[str] | None) -> list[str]:

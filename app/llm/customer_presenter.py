@@ -110,7 +110,7 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
         if intent == "clarify":
             return (
                 "可以的。请告诉我想查询订单、了解退款或取消政策，还是申请退款、取消订单或修改地址；"
-                "如涉及具体订单，请提供订单号。"
+                "你也可以先在订单列表中选中对应订单。"
             )
     if (
         len(tasks) == 1
@@ -129,6 +129,13 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
         raw_answer = str(data.get("answer", "")) if isinstance(data, dict) else ""
         if raw_answer:
             return _customer_order_status(raw_answer)
+    if (
+        len(tasks) == 1
+        and isinstance(tasks[0], dict)
+        and tasks[0].get("intent") == "customer_orders"
+        and raw_result
+    ):
+        return re.sub(r"^\[我的订单\]\s*", "", raw_result).strip()
     return ""
 
 

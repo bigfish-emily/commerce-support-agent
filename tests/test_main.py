@@ -38,7 +38,7 @@ async def client() -> AsyncClient:
 async def test_frontend_entrypoints_available(client: AsyncClient) -> None:
     response = await client.get("/")
     assert response.status_code == 200
-    assert "售后服务" in response.text
+    assert "订单助手" in response.text
     assert "/static/product-customer.js" in response.text
 
     customer = await client.get("/customer")
@@ -75,7 +75,7 @@ async def test_customer_small_talk_and_ambiguous_support_use_no_tool_terminal(cl
     assert greeting.status_code == 200
     assert "查询订单" in greeting.json()["answer"]
     assert ambiguous.status_code == 200
-    assert "订单号" in ambiguous.json()["answer"]
+    assert "订单列表" in ambiguous.json()["answer"]
 
 
 def _mock_guard(input_on_topic: bool, output_valid: bool = True):
@@ -204,16 +204,129 @@ async def test_customer_order_access_guard_blocks_other_customer_order(client: A
     response = await client.post(
         "/customer/chat",
         json={
-            "message": f"帮我查一下订单 {ORDER_ID} 的状态",
-            "user_id": "other-customer",
+            "message": "帮我查一下订单 8aec3a066f732dd927ec8fef1752415b 的状态",
             "session_id": "unauthorized-order",
         },
+        headers={"X-Demo-Customer": "customer-smoke"},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert "只能处理当前账号名下的订单" in body["answer"]
     assert body["session_id"] == "unauthorized-order"
+
+
+@pytest.mark.anyio
+async def test_customer_context_is_resolved_server_side_and_minimized(client: AsyncClient) -> None:
+    response = await client.get("/customer/context", headers={"X-Demo-Customer": "customer-smoke"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["customer"]["id"] == "customer-smoke"
+    assert body["summary"]["order_count"] == 1
+    assert [item["order_id"] for item in body["orders"]] == [ORDER_ID]
+    assert "customer_state" not in body["orders"][0]
+    assert body["orders"][0]["actions"][0]["id"] == "track_order"
+
+
+@pytest.mark.anyio
+async def test_customer_structured_order_action_skips_planner_and_uses_page_context(
+    client: AsyncClient,
+) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, patch(
+        "app.llm.intent_planner.IntentPlanner.plan",
+        AsyncMock(side_effect=AssertionError("native action must not call planner")),
+    ):
+        response = await client.post(
+            "/customer/chat",
+            json={
+                "message": "帮我查看这笔订单的物流进展。",
+                "session_id": "native-track-order",
+                "requested_action": "track_order",
+                "page_context": {"surface": "order_detail", "selected_order_id": ORDER_ID},
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "已送达" in body["answer"]
+    assert body["ui_actions"]
+
+
+@pytest.mark.anyio
+async def test_customer_structured_overview_lists_owned_active_orders(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, patch(
+        "app.llm.intent_planner.IntentPlanner.plan",
+        AsyncMock(side_effect=AssertionError("overview control must not call planner")),
+    ):
+        response = await client.post(
+            "/customer/chat",
+            json={
+                "message": "我有哪些订单还在运输中？",
+                "session_id": "native-active-orders",
+                "requested_action": "list_active_shipments",
+            },
+        )
+
+    assert response.status_code == 200
+    assert "正在运输中的订单" in response.json()["answer"]
+
+
+@pytest.mark.anyio
+async def test_customer_rejects_unowned_selected_order_context(client: AsyncClient) -> None:
+    response = await client.post(
+        "/customer/chat",
+        json={
+            "message": "查看物流",
+            "requested_action": "track_order",
+            "page_context": {
+                "surface": "order_detail",
+                "selected_order_id": "8aec3a066f732dd927ec8fef1752415b",
+            },
+        },
+        headers={"X-Demo-Customer": "customer-smoke"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "selected_order_owner_required"
+
+
+@pytest.mark.anyio
+async def test_customer_session_and_case_endpoints_enforce_server_resolved_owner(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2, _mock_plan("escalation"), _mock_task():
+        created = await client.post(
+            "/customer/chat",
+            json={
+                "message": f"给订单 {ORDER_ID} 申请退款",
+                "session_id": "owner-bound-customer-session",
+            },
+        )
+    assert created.status_code == 200
+
+    progress = await client.get("/customer/sessions/brand-new-browser-session/progress")
+    assert progress.status_code == 200
+    assert progress.json() == {"case": None}
+
+    messages = await client.get(
+        "/customer/sessions/owner-bound-customer-session/messages",
+        headers={"X-Demo-Customer": "customer-smoke"},
+    )
+    assert messages.status_code == 403
+    assert messages.json()["detail"] == "conversation_owner_required"
+
+    review = await client.get("/review/cases", headers=REVIEW_HEADERS)
+    case_id = next(
+        item["case_id"]
+        for item in review.json()["cases"]
+        if item["session_id"] == "owner-bound-customer-session"
+    )
+    customer_case = await client.get(
+        f"/customer/cases/{case_id}",
+        headers={"X-Demo-Customer": "customer-smoke"},
+    )
+    assert customer_case.status_code == 403
 
 
 @pytest.mark.anyio
@@ -410,13 +523,13 @@ async def test_review_queue_reject_and_customer_appeal_flow(client: AsyncClient)
     )
     assert rejected.status_code == 200
 
-    status = await client.get(f"/customer/cases/{case_id}", params={"user_id": "demo-customer"})
+    status = await client.get(f"/customer/cases/{case_id}")
     assert status.status_code == 200
     assert status.json()["status"] == "rejected"
 
     appeal = await client.post(
         f"/customer/cases/{case_id}/appeal",
-        json={"user_id": "demo-customer", "reason": "我补充了物流延迟证明，请重新审核。"},
+        json={"reason": "我补充了物流延迟证明，请重新审核。"},
     )
     assert appeal.status_code == 200
     assert appeal.json()["status"] == "appealed_pending_review"

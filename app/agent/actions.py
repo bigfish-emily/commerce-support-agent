@@ -60,8 +60,14 @@ class AgentActions:
     async def plan_tasks(self, state: AgentState) -> dict:
         started_at = time.perf_counter()
         last_message: str = state["messages"][-1]["content"]
-        plan = await self._intent_planner.plan(last_message)
-        tasks = [task.model_dump() for task in plan.tasks]
+        requested_action = str(state.get("requested_action") or "").strip()
+        if requested_action:
+            tasks = _structured_action_plan(requested_action, last_message)
+            planning_mode = "structured_page_action"
+        else:
+            plan = await self._intent_planner.plan(last_message)
+            tasks = [task.model_dump() for task in plan.tasks]
+            planning_mode = plan.planning_mode
         route_intent = str(tasks[0]["intent"]) if tasks else "policy"
         dialog_state = _merge_dialog_state(
             state,
@@ -83,7 +89,7 @@ class AgentActions:
                     {
                         "task_count": len(tasks),
                         "tasks": tasks,
-                        "planning_mode": plan.planning_mode,
+                        "planning_mode": planning_mode,
                         "dialog_state": dialog_state,
                         "duration_ms": _elapsed_ms(started_at),
                     },
@@ -162,7 +168,18 @@ class AgentActions:
         intent = str(task.get("intent", "policy"))
         text = str(state.get("current_task_text") or _latest_user_task_message(state))
         slot_text = _with_order_context(text, _latest_user_task_message(state))
-        if intent in {"small_talk", "clarify", "policy", "qa", "ops_decision"}:
+        selected_order_id = str(
+            dict(state.get("page_context", {})).get("selected_order_id")
+            or state.get("active_order_id", "")
+        ).lower()
+        selected_repair = repair_order_id(selected_order_id) if selected_order_id else None
+        if intent in {"order_status", "escalation"} and selected_repair and selected_repair.ok:
+            # A native order-page control carries a server-validated selection.
+            # Avoid a second model call to rediscover an ID the product already
+            # knows, while preserving the same downstream tool gates.
+            extracted = OlistTaskResult(order_id=selected_repair.value, category="", user_goal="page_context")
+            extraction_mode = "trusted_page_context"
+        elif intent in {"small_talk", "clarify", "policy", "qa", "ops_decision", "customer_orders"}:
             # Retrieval consumes the full task text. These read-only intents do
             # not need an order/category slot before retrieval can begin.
             extracted = OlistTaskResult(order_id="", category="", user_goal="not_required")
@@ -174,6 +191,10 @@ class AgentActions:
                 extracted = await self._task_extractor.extract(slot_text)
                 extraction_mode = "llm"
         order_repair = repair_order_id(extracted.order_id or slot_text)
+        if not order_repair.ok and selected_order_id:
+            if selected_repair and selected_repair.ok:
+                order_repair = selected_repair
+                extraction_mode = "trusted_page_context"
         slots = {
             "order_id": order_repair.value if order_repair.ok else "",
             "order_id_ok": order_repair.ok,
@@ -226,6 +247,14 @@ class AgentActions:
 
         if intent in {"small_talk", "clarify"}:
             context["primary_tool"] = "none"
+        elif intent == "customer_orders":
+            context["primary_tool"] = "list_owned_orders"
+            result = await self._tool_manager.call(
+                "list_owned_orders",
+                {"filter": str(task.get("order_filter", "all"))},
+                self._tool_context(state),
+            )
+            context["owned_orders"] = list(result.data.get("orders", [])) if result.ok else []
         elif intent == "order_status":
             context["primary_tool"] = "get_order_status"
             if slots.get("order_id_ok"):
@@ -340,7 +369,12 @@ class AgentActions:
         elif intent == "clarify":
             answer = (
                 "可以的。请告诉我想查询订单、了解退款/取消政策，还是申请退款、取消订单或修改地址；"
-                "如涉及具体订单，请提供订单号。"
+                "你也可以先在订单列表中选中对应订单。"
+            )
+        elif intent == "customer_orders":
+            answer = _format_owned_orders(
+                list(context.get("owned_orders", [])),
+                str(task.get("order_filter", "all")),
             )
         elif intent == "order_status":
             if context.get("order_id_error"):
@@ -938,6 +972,7 @@ class AgentActions:
             user_id=state.get("user_id", "demo-user"),
             role=role or state.get("role", "support_agent"),
             auth_scopes=list(auth_scopes if auth_scopes is not None else state.get("auth_scopes", [])),
+            allowed_order_ids=list(state.get("allowed_order_ids", [])),
         )
 
 
@@ -1135,11 +1170,75 @@ _INTENT_LABELS = {
     "small_talk": "咨询",
     "clarify": "信息确认",
     "order_status": "订单查询",
+    "customer_orders": "我的订单",
     "qa": "运营分析",
     "ops_decision": "审核台优先处理",
     "policy": "政策问答",
     "escalation": "售后处理",
 }
+
+
+def _structured_action_plan(action: str, message: str) -> list[dict[str, object]]:
+    """Translate a native order-page control into a deterministic task.
+
+    Standard order actions should not depend on the planner recognising the
+    label of a button that the product itself rendered.  Free-form messages
+    still use the LLM planner; this path simply carries the UI intent into the
+    same retrieval, decision, verifier, HITL, and audit workflow.
+    """
+
+    normalized = action.strip().lower()
+    if normalized in {"track_order", "order_status"}:
+        return [{"intent": "order_status", "text": message, "side_effect": False, "depends_on": []}]
+    if normalized in {"list_active_shipments", "list_attention_orders"}:
+        return [{
+            "intent": "customer_orders",
+            "text": message,
+            "side_effect": False,
+            "depends_on": [],
+            "order_filter": "in_transit" if normalized == "list_active_shipments" else "attention",
+        }]
+    if normalized in {"refund_policy", "after_sales_policy"}:
+        return [{"intent": "policy", "text": message, "side_effect": False, "depends_on": []}]
+    action_map = {
+        "refund_request": "refund_request",
+        "cancel_order": "cancel_order",
+        "change_address": "change_address",
+        "invoice_request": "invoice_request",
+        "complaint_escalation": "complaint_escalation",
+        "open_support_case": "open_support_case",
+    }
+    action_type = action_map.get(normalized)
+    if action_type:
+        return [
+            {
+                "intent": "escalation",
+                "text": message,
+                "side_effect": True,
+                "depends_on": [],
+                "action_type": action_type,
+            }
+        ]
+    return [{"intent": "clarify", "text": message, "side_effect": False, "depends_on": []}]
+
+
+def _format_owned_orders(orders: list[dict[str, object]], filter_name: str) -> str:
+    if not orders:
+        if filter_name == "in_transit":
+            return "当前没有正在运输中的订单。"
+        if filter_name == "attention":
+            return "当前没有需要特别留意的订单。"
+        return "当前账号下没有可展示的订单。"
+    title = "正在运输中的订单" if filter_name == "in_transit" else "需要留意的订单"
+    lines = [title + "："]
+    for order in orders[:5]:
+        short_id = str(order.get("order_id", ""))[:8]
+        status = str(order.get("status", ""))
+        category = str(order.get("category", "商品"))
+        delay = order.get("delay_days")
+        suffix = f"，预计延迟 {delay} 天" if isinstance(delay, int) and delay > 0 else ""
+        lines.append(f"- {category}（订单 {short_id}…）：{status}{suffix}")
+    return "\n".join(lines)
 
 
 def _execution_order(tasks: list[dict[str, object]]) -> list[tuple[int, dict[str, object]]]:

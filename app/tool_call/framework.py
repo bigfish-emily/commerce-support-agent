@@ -37,6 +37,7 @@ class ToolCallContext(BaseModel):
     tenant_id: str = "olist-demo"
     session_id: str = "unknown"
     auth_scopes: list[str] = Field(default_factory=list)
+    allowed_order_ids: list[str] = Field(default_factory=list)
 
 
 class ToolCallResult(BaseModel):
@@ -295,6 +296,10 @@ class QueryArgs(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
 
 
+class OwnedOrdersArgs(BaseModel):
+    filter: str = Field(default="all", pattern="^(all|in_transit|attention)$")
+
+
 class PolicySearchArgs(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     k: int = Field(default=3, ge=1, le=10)
@@ -396,6 +401,7 @@ class ToolCallManager:
         try:
             validated = spec.input_model.model_validate(arguments).model_dump()
             self._check_permission(spec, context)
+            self._check_customer_order_ownership(validated, context)
         except Exception as exc:
             error_code = exc.error_code if isinstance(exc, ToolCallError) else "schema_validation_failed"
             result = self._failure(name, error_code, str(exc), started)
@@ -510,6 +516,18 @@ class ToolCallManager:
             )
 
     @staticmethod
+    def _check_customer_order_ownership(arguments: dict[str, Any], context: ToolCallContext) -> None:
+        """Keep model-produced tool arguments inside the authenticated order set."""
+        if context.role != "customer" or "order_id" not in arguments:
+            return
+        order_id = str(arguments["order_id"]).lower()
+        if order_id not in {value.lower() for value in context.allowed_order_ids}:
+            raise ToolCallError(
+                "order_owner_required",
+                "The requested order is not available to the current customer.",
+            )
+
+    @staticmethod
     def _failure(
         name: str,
         error_code: str,
@@ -613,6 +631,24 @@ def build_business_tool_manager(
                 handler=lambda args, ctx: {
                     "answer": format_order_status(olist_service.get_order_status(str(args["order_id"]))),
                     "found": olist_service.get_order_status(str(args["order_id"])) is not None,
+                },
+            ),
+            ToolSpec(
+                name="list_owned_orders",
+                description="List compact owned-order summaries for a customer-facing order assistant.",
+                input_model=OwnedOrdersArgs,
+                allowed_roles=support_roles,
+                risk_level="read",
+                auth_scope="orders:read",
+                cache_ttl_seconds=60,
+                timeout_seconds=3,
+                retries=1,
+                handler=lambda args, ctx: {
+                    "orders": _owned_order_rows(
+                        olist_service,
+                        ctx.allowed_order_ids if ctx.role == "customer" else [],
+                        str(args["filter"]),
+                    )
                 },
             ),
             ToolSpec(
@@ -779,6 +815,39 @@ def _assess_after_sales_case(
         "verification": case.verification.model_dump(),
         "customer_reply": case.customer_reply,
     }
+
+
+def _owned_order_rows(
+    olist_service: OlistService,
+    allowed_order_ids: list[str],
+    filter_name: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for order_id in allowed_order_ids:
+        order = olist_service.get_order_status(order_id)
+        if order is None:
+            continue
+        in_transit = order.status in {"approved", "invoiced", "processing", "shipped"}
+        needs_attention = bool(
+            (isinstance(order.delay_days, int) and order.delay_days > 0)
+            or order.refund_status
+            or order.address_change_status
+        )
+        if filter_name == "in_transit" and not in_transit:
+            continue
+        if filter_name == "attention" and not needs_attention:
+            continue
+        rows.append(
+            {
+                "order_id": order.order_id,
+                "status": order.status,
+                "category": order.category_summary,
+                "estimated_delivery_date": order.estimated_delivery_date,
+                "delay_days": order.delay_days,
+                "payment_value": order.payment_value,
+            }
+        )
+    return sorted(rows, key=lambda item: str(item["order_id"]))
 
 
 def build_tool_cache_from_env() -> ToolCacheBackend:

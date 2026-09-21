@@ -14,6 +14,9 @@ class AgentState(TypedDict):
     role: NotRequired[str]
     auth_scopes: NotRequired[list[str]]
     channel: NotRequired[str]
+    page_context: NotRequired[dict[str, object]]
+    requested_action: NotRequired[str]
+    allowed_order_ids: NotRequired[list[str]]
     messages: list[dict[str, str]]
     route_intent: str
     task_plan: list[dict[str, object]]
