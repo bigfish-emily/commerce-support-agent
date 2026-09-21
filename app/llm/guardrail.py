@@ -28,6 +28,7 @@ class Guardrail:
             return InputGuardResult(on_topic=False, reason="deterministic blocked pattern")
         if (
             _looks_like_marketplace_support(text)
+            or _looks_like_account_history_request(text)
             or _looks_like_safe_followup(text)
             or _looks_like_small_talk(text)
         ):
@@ -196,6 +197,20 @@ def _looks_like_marketplace_support(text: str) -> bool:
         "低分率",
     )
     return any(term in text for term in business_terms)
+
+
+def _looks_like_account_history_request(text: str) -> bool:
+    """Allow safe, read-only account questions without a gateway round trip."""
+
+    normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
+    return any(
+        phrase in normalized
+        for phrase in (
+            "我的购物习惯", "我的消费习惯", "我的购物偏好", "我喜欢什么产品",
+            "我喜欢什么样的产品", "我买过什么", "我买了什么", "我的购买记录",
+            "我平时买什么", "我经常买什么",
+        )
+    )
 
 
 def _looks_like_safe_followup(text: str) -> bool:
