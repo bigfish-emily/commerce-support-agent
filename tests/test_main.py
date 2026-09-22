@@ -17,12 +17,13 @@ REVIEW_HEADERS = {"X-Review-Token": "local-review-demo"}
 
 
 @pytest.fixture(autouse=True)
-def setup_graph_and_state() -> None:
+def setup_graph_and_state(monkeypatch) -> None:
     from langgraph.checkpoint.memory import InMemorySaver
 
     import app.main as main_module
     from app.config.di import agent_graph_builder, case_service
 
+    monkeypatch.setenv("INTERNAL_DEBUG_ENABLED", "1")
     main_module.agent = agent_graph_builder.build(InMemorySaver())
     case_service.reset()
 
@@ -68,6 +69,17 @@ async def test_frontend_entrypoints_available(client: AsyncClient) -> None:
     scenarios = await client.get("/demo/scenarios")
     assert scenarios.status_code == 200
     assert len(scenarios.json()["scenarios"]) == 3
+
+
+@pytest.mark.anyio
+async def test_raw_chat_is_closed_when_internal_debug_is_disabled(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("INTERNAL_DEBUG_ENABLED", "0")
+    response = await client.post("/chat", json={"message": "退款政策是什么？"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "internal_debug_disabled"
 
 
 @pytest.mark.anyio

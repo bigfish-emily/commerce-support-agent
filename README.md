@@ -68,6 +68,10 @@ change. It is enabled only when `DEMO_MODE` is not set to `0`.
 
 The customer page defaults to the local `demo-customer` actor. `X-Demo-Customer` is a test-only selector; a production BFF must resolve an authenticated principal and inject the allowed-order set server-side. The local review credential is `local-review-demo`; set `REVIEW_API_TOKEN` before exposing the service. Use Redis by setting `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`.
 
+`/chat` is an internal debugging surface and is disabled by default. Enable it
+only in local development with `INTERNAL_DEBUG_ENABLED=1`; customer traffic
+uses `/customer/chat`.
+
 ## Evaluation
 
 The project separates product case-resolution evaluation from retrieval and

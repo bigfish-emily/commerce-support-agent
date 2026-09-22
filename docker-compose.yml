@@ -33,6 +33,7 @@ services:
       # The guided demo has a local-only reviewer shortcut. Keep it closed in
       # the container profile; set DEMO_MODE=1 only for a disposable showcase.
       DEMO_MODE: ${DEMO_MODE:-0}
+      INTERNAL_DEBUG_ENABLED: "0"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 volumes:

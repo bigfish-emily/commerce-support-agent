@@ -300,6 +300,12 @@ def review_app() -> FileResponse:
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     """Internal/debug entrypoint. Product traffic should use /customer/chat."""
+    _require_internal_debug()
+    return await _run_chat(request)
+
+
+async def _run_chat(request: ChatRequest) -> ChatResponse:
+    """Execute a request after the caller has crossed its product boundary."""
     session_id: str = request.session_id or str(uuid.uuid4())
     config: dict = {"configurable": {"thread_id": session_id}}
     auth_scopes = _resolve_auth_scopes(request.role, request.auth_scopes)
@@ -558,7 +564,7 @@ async def customer_chat(
             "requested_action": _validated_customer_action(request.requested_action),
         }
     )
-    response = await chat(customer_request)
+    response = await _run_chat(customer_request)
     snapshot = await agent.aget_state({"configurable": {"thread_id": response.session_id}})
     record = case_service.get_by_session(response.session_id)
     if not record:
@@ -1267,6 +1273,13 @@ def _require_demo_mode() -> None:
     enabled = os.environ.get("DEMO_MODE", "1").strip().lower()
     if enabled in {"0", "false", "no", "off"}:
         raise HTTPException(status_code=404, detail="demo_mode_disabled")
+
+
+def _require_internal_debug() -> None:
+    """Do not expose the raw workflow/trace surface in normal deployments."""
+    enabled = os.environ.get("INTERNAL_DEBUG_ENABLED", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        raise HTTPException(status_code=404, detail="internal_debug_disabled")
 
 
 async def _demo_session_payload(
