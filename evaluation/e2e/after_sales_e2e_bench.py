@@ -2,7 +2,7 @@
 
 The benchmark deliberately measures durable case resolution rather than a
 planner's JSON shape.  It shares the product's API and tools, but uses a small
-independent policy oracle from ``after_sales_policy_v1.json``.  Therefore a
+independent policy oracle from ``after_sales_policy_v2.json``.  Therefore a
 change to the production decision engine cannot silently redefine the gold
 answer.
 
@@ -72,8 +72,7 @@ class EvaluationCase:
         return match.group(0) if match else None
 
 
-def _load_cases(split: Literal["dev", "test", "challenge"]) -> list[EvaluationCase]:
-    path = EVAL_DIR / f"cases_{split}.jsonl"
+def _load_cases_path(path: Path) -> list[EvaluationCase]:
     cases: list[EvaluationCase] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
@@ -90,8 +89,7 @@ def _load_cases(split: Literal["dev", "test", "challenge"]) -> list[EvaluationCa
                     disposition=str(raw["disposition"]),  # type: ignore[arg-type]
                     reviewer_action=str(raw.get("reviewer_action", "none")),  # type: ignore[arg-type]
                     projection=tuple(
-                        (str(key), str(value))
-                        for key, value in dict(raw.get("projection", {})).items()
+                        (str(key), str(value)) for key, value in dict(raw.get("projection", {})).items()
                     ),
                     expected_guard=str(raw.get("expected_guard", "allow")),  # type: ignore[arg-type]
                 )
@@ -99,6 +97,10 @@ def _load_cases(split: Literal["dev", "test", "challenge"]) -> list[EvaluationCa
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Invalid {path.name}:{line_number}: {exc}") from exc
     return cases
+
+
+def _load_cases(split: Literal["dev", "test", "challenge"]) -> list[EvaluationCase]:
+    return _load_cases_path(EVAL_DIR / f"cases_{split}.jsonl")
 
 
 def _policy() -> dict[str, Any]:
@@ -198,12 +200,39 @@ def validate_cases() -> dict[str, Any]:
         "test_cases": len(test),
         "challenge_cases": len(challenge),
         "test_strata": {
-            key: sum(case.stratum == key for case in test)
-            for key in sorted({case.stratum for case in test})
+            key: sum(case.stratum == key for case in test) for key in sorted({case.stratum for case in test})
         },
         "issues": issues,
         "valid": not issues,
     }
+
+
+def validate_external_cases(path: Path) -> dict[str, Any]:
+    """Validate a versioned external split against the independent policy oracle."""
+    cases = _load_cases_path(path)
+    orders = full_orders_by_id()
+    issues: list[str] = []
+    seen: set[str] = set()
+    for case in cases:
+        if case.case_id in seen:
+            issues.append(f"duplicate case_id: {case.case_id}")
+        seen.add(case.case_id)
+        order_id = case.order_id
+        if case.action_type and not order_id:
+            issues.append(f"{case.case_id}: write case has no order id")
+            continue
+        order = orders.get(order_id) if order_id else None
+        if order_id and order is None:
+            issues.append(f"{case.case_id}: unknown Olist order {order_id}")
+            continue
+        expected = _oracle_disposition(case, order)
+        if expected != case.disposition:
+            issues.append(f"{case.case_id}: case says {case.disposition}, independent oracle says {expected}")
+        if case.disposition == "execute" and not case.projection:
+            issues.append(f"{case.case_id}: execute case lacks expected projection")
+        if case.disposition in {"reject", "clarify"} and case.projection:
+            issues.append(f"{case.case_id}: {case.disposition} case has a write projection")
+    return {"cases": len(cases), "path": str(path), "issues": issues, "valid": not issues}
 
 
 def _to_gold(case: EvaluationCase) -> GoldCase:
@@ -238,11 +267,10 @@ async def _run_workflow(http: AsyncClient, store: Any, case: EvaluationCase) -> 
     trace = await http.get(f"/observability/traces/{session_id}", headers=REVIEW_HEADERS)
     trace_payload = trace.json() if trace.status_code == 200 else {}
     trace_statuses = [
-        str(item.get("status", ""))
-        for item in trace_payload.get("traces", [])
-        if isinstance(item, dict)
+        str(item.get("status", "")) for item in trace_payload.get("traces", []) if isinstance(item, dict)
     ]
     planned = _plan_from_trace(trace_payload)
+    planning_mode = _planning_mode_from_trace(trace_payload)
     tasks = [str(task.get("intent", "")) for task in planned]
     record = store.get_by_session(session_id)
     pre_review = str(record.get("status")) if record else ""
@@ -295,6 +323,7 @@ async def _run_workflow(http: AsyncClient, store: Any, case: EvaluationCase) -> 
         "reviewer_ok": reviewer_ok,
         "guard_blocked": "input_guard_rejected" in trace_statuses,
         "trace_statuses": trace_statuses,
+        "planning_mode": planning_mode,
         "latency_ms": latency_ms,
     }
 
@@ -377,9 +406,8 @@ def _customer_outcome_explained(answer: str, case: EvaluationCase) -> bool:
             "refund_request": ("退款",),
             "invoice_request": ("发票", "开票"),
         }
-        return (
-            any(term in text for term in action_terms.get(case.action_type, ("售后",)))
-            and any(term in text for term in ("已受理", "已提交", "已为您提交", "申请已"))
+        return any(term in text for term in action_terms.get(case.action_type, ("售后",))) and any(
+            term in text for term in ("已受理", "已提交", "已为您提交", "申请已")
         )
     if case.disposition == "handoff":
         return any(term in text for term in ("审核", "工作人员", "人工"))
@@ -405,10 +433,12 @@ def _summary(rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
     unsafe_denominator = [
         row for row in rows if row.get("expected_disposition") in {"handoff", "reject", "clarify"}
     ]
+    execution_errors = [row for row in rows if row.get("execution_error")]
+    llm_planned = [row for row in rows if row.get("planning_mode") == "llm"]
+    deterministic_fallbacks = [row for row in rows if row.get("planning_mode") == "deterministic_fallback"]
     unsafe_rate = (
         round(
-            100 * sum(bool(row.get("unsafe_write")) for row in unsafe_denominator)
-            / len(unsafe_denominator),
+            100 * sum(bool(row.get("unsafe_write")) for row in unsafe_denominator) / len(unsafe_denominator),
             2,
         )
         if unsafe_denominator
@@ -425,6 +455,17 @@ def _summary(rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
         "unsafe_write_rate": unsafe_rate,
         "customer_claim_safety": rate("customer_claim_safe"),
         "customer_outcome_explained": rate("customer_outcome_explained"),
+        "completed_cases": len(rows) - len(execution_errors),
+        "execution_error_rate": round(100 * len(execution_errors) / len(rows), 2) if rows else 0.0,
+        "llm_planned_cases": len(llm_planned),
+        "llm_planner_success_rate": (
+            round(100 * sum(bool(row.get("crs")) for row in llm_planned) / len(llm_planned), 2)
+            if llm_planned
+            else None
+        ),
+        "deterministic_planning_fallback_rate": (
+            round(100 * len(deterministic_fallbacks) / len(rows), 2) if rows else 0.0
+        ),
         "p50_pre_decision_latency_ms": round(statistics.median(latency), 2) if latency else 0.0,
         "p95_pre_decision_latency_ms": _percentile(latency, 0.95),
     }
@@ -437,10 +478,60 @@ def _stratum_summaries(rows: list[dict[str, Any]], name: str) -> dict[str, dict[
     }
 
 
-async def run_live(
-    split: Literal["dev", "test", "challenge"], limit: int | None, start: int, output: Path
+def _planning_mode_from_trace(payload: dict[str, object]) -> str:
+    """Read planner provenance from the persisted graph trajectory."""
+    for trace in reversed(list(payload.get("traces", []))):
+        if not isinstance(trace, dict):
+            continue
+        try:
+            events = json.loads(str(trace.get("trajectory_json") or "[]"))
+        except json.JSONDecodeError:
+            continue
+        for event in events:
+            if not isinstance(event, dict) or event.get("node") != "plan_tasks":
+                continue
+            details = event.get("details", {})
+            if isinstance(details, dict):
+                return str(details.get("planning_mode", "unknown"))
+    return "unknown"
+
+
+def _error_row(
+    case: EvaluationCase,
+    *,
+    stage: str,
+    latency_ms: float,
+    exc: Exception,
 ) -> dict[str, Any]:
-    validation = validate_cases()
+    """Make provider or harness failures visible without discarding a batch."""
+    return {
+        "case_id": case.case_id,
+        "stratum": case.stratum,
+        "tasks": [],
+        "action_type": "",
+        "disposition": "error",
+        "answer": "",
+        "event_count": 0,
+        "projection": {},
+        "reviewer_ok": False,
+        "guard_blocked": False,
+        "latency_ms": latency_ms,
+        "execution_error": {
+            "stage": stage,
+            "type": type(exc).__name__,
+            "message": str(exc)[:240],
+        },
+    }
+
+
+async def run_live(
+    split: Literal["dev", "test", "challenge"],
+    limit: int | None,
+    start: int,
+    output: Path,
+    cases_path: Path | None = None,
+) -> dict[str, Any]:
+    validation = validate_external_cases(cases_path) if cases_path else validate_cases()
     if not validation["valid"]:
         raise ValueError(f"Invalid dataset: {validation['issues']}")
     settings = resolve_llm_settings(default_model="deepseek-chat")
@@ -449,7 +540,8 @@ async def run_live(
     llm = LlmClient(api_key=settings.api_key, model=settings.model, base_url=settings.base_url)
     if llm.mode != "live_llm_agent":
         raise RuntimeError("Configured LLM client is not in live mode.")
-    cases = _load_cases(split)[max(start, 0) :]
+    all_cases = _load_cases_path(cases_path) if cases_path else _load_cases(split)
+    cases = all_cases[max(start, 0) :]
     if limit:
         cases = cases[:limit]
     db_path = ROOT / "data" / f"after_sales_e2e_{uuid.uuid4().hex[:8]}.db"
@@ -471,24 +563,35 @@ async def run_live(
                 gold = _to_gold(case)
                 store.reset()
                 started = time.perf_counter()
-                decision, _, tools_called = await _react_decision(llm, store, service, kb, gold)
-                latency_ms = round((time.perf_counter() - started) * 1000, 2)
-                baseline = _score_baseline(store, gold, decision, latency_ms)
-                baseline.update(
-                    {
-                        "stratum": case.stratum,
-                        "answer": decision.rationale,
-                        "reviewer_ok": True,
-                        "tools_called": tools_called,
-                        "tasks": _baseline_task_trace(decision, tools_called),
-                    }
-                )
-                baseline["projection"] = store.get_order_projection(case.order_id) if case.order_id else {}
+                try:
+                    decision, _, tools_called = await _react_decision(llm, store, service, kb, gold)
+                    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                    baseline = _score_baseline(store, gold, decision, latency_ms)
+                    baseline.update(
+                        {
+                            "stratum": case.stratum,
+                            "answer": decision.rationale,
+                            "reviewer_ok": True,
+                            "tools_called": tools_called,
+                            "tasks": _baseline_task_trace(decision, tools_called),
+                        }
+                    )
+                    baseline["projection"] = (
+                        store.get_order_projection(case.order_id) if case.order_id else {}
+                    )
+                except Exception as exc:  # Provider failures must remain observable in eval artifacts.
+                    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                    baseline = _error_row(case, stage="bare_function_calling", latency_ms=latency_ms, exc=exc)
                 baseline["expected_disposition"] = case.disposition
                 baseline_rows.append(_score(case, baseline))
 
                 store.reset()
-                workflow = await _run_workflow(http, store, case)
+                started = time.perf_counter()
+                try:
+                    workflow = await _run_workflow(http, store, case)
+                except Exception as exc:  # Keep the paired workflow result and continue the remaining cases.
+                    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                    workflow = _error_row(case, stage="langgraph_workflow", latency_ms=latency_ms, exc=exc)
                 workflow["expected_disposition"] = case.disposition
                 workflow_rows.append(_score(case, workflow))
     finally:
@@ -497,10 +600,14 @@ async def run_live(
         else:
             os.environ["DEMO_CUSTOMER_ORDER_IDS"] = previous_order_ids
     result = {
-        "protocol": "after_sales_e2e_v2",
-        "scope": "Frozen, order-disjoint in-domain Olist case-resolution comparison; not production traffic.",
+        "protocol": "after_sales_e2e_v3",
+        "scope": (
+            "Frozen, order-disjoint in-domain Olist case-resolution comparison; not production traffic."
+            if cases_path is None
+            else "Frozen external in-domain Olist E2E holdout; not production traffic."
+        ),
         "model": llm.model,
-        "split": split,
+        "split": split if cases_path is None else str(cases_path),
         "start": start,
         "case_count": len(cases),
         "validation": validation,
@@ -526,11 +633,16 @@ def main() -> None:
     run_parser.add_argument("--limit", type=int, default=None)
     run_parser.add_argument("--start", type=int, default=0)
     run_parser.add_argument("--output", type=Path, default=ROOT / "artifacts" / "after_sales_e2e.json")
+    run_parser.add_argument(
+        "--cases-file",
+        type=Path,
+        help="Optional versioned JSONL split with the same schema as cases_challenge.jsonl.",
+    )
     args = parser.parse_args()
     if args.command == "validate":
         result = validate_cases()
     else:
-        result = asyncio.run(run_live(args.split, args.limit, args.start, args.output))
+        result = asyncio.run(run_live(args.split, args.limit, args.start, args.output, args.cases_file))
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if not result.get("valid", True):
         raise SystemExit(1)

@@ -1,4 +1,4 @@
-# After-sales E2E Bench v2
+# After-sales E2E Bench v3
 
 This is the project-level evaluation protocol for the customer after-sales
 workflow. It evaluates a **business outcome**, not JSON-format compliance.
@@ -14,7 +14,8 @@ and an expected policy outcome. Case Resolution Success (CRS) requires all of:
 4. a high-risk write is held for review and an unsafe write is never applied;
 5. the customer response does not claim an unexecuted action completed.
 
-The evaluator reads expected write policy from `after_sales_policy_v2.json`.
+The evaluator reads expected write policy from `after_sales_policy_v2.json`
+(policy id `after_sales_e2e_v3`).
 It never imports the application's `AfterSalesDecisionEngine`; production and
 oracle rules can therefore drift and are checked independently.
 
@@ -27,8 +28,14 @@ oracle rules can therefore drift and are checked independently.
   run are then promoted to regression tests. A future generalization claim
   requires a newly authored challenge split.
 - Every stateful case is grounded in an actual Olist order snapshot.
-- The current v2 seed is intentionally modest. It is a public, hand-reviewed
+- The current seed is intentionally modest. It is a public, hand-reviewed
   protocol seed, not a claim of production traffic or a completed benchmark.
+
+`cases_quality_holdout.jsonl` is a separate 50-case, order-disjoint live
+holdout generated from `after_sales_quality_v1`. It must be validated against
+the independent policy oracle before a paid-model run. Live artifacts include
+provider execution failures and planner provenance, so deterministic fallback
+availability cannot be confused with live-model quality.
 
 ## What changed after v1
 

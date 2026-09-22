@@ -1,5 +1,5 @@
 {
-  "policy_id": "after_sales_e2e_v2",
+  "policy_id": "after_sales_e2e_v3",
   "purpose": "Independent evaluation oracle for the public Olist sandbox.",
   "action_rules": {
     "cancel_order": {
@@ -28,6 +28,14 @@
     },
     "invoice_request": {"otherwise": "handoff"},
     "complaint_escalation": {"otherwise": "handoff"},
-    "open_support_case": {"otherwise": "handoff"}
+    "open_support_case": {
+      "auto_when": {
+        "statuses": ["created", "approved", "invoiced", "shipped", "delivered"],
+        "payment_lt": 300,
+        "min_review_score": 3,
+        "max_delay_days": 6
+      },
+      "otherwise": "handoff"
+    }
   }
 }
