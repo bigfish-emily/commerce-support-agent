@@ -22,8 +22,6 @@ services:
       - qdrant
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
       RUNTIME_STORE_BACKEND: redis
       REDIS_URL: redis://redis:6379/0
@@ -32,12 +30,10 @@ services:
       SUPPORT_VECTOR_BACKEND: qdrant
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: olist_support_examples
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./app:/app/app
-      - ./data:/app/data
-      - ./evaluation:/app/evaluation
-      - ./scripts:/app/scripts
+      # The guided demo has a local-only reviewer shortcut. Keep it closed in
+      # the container profile; set DEMO_MODE=1 only for a disposable showcase.
+      DEMO_MODE: ${DEMO_MODE:-0}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 volumes:
   redis-data:

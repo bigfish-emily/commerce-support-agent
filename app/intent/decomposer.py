@@ -172,12 +172,12 @@ def _classify_segment(segment: str) -> str:
     text = segment.lower()
     if _looks_like_customer_profile_request(text):
         return "customer_profile"
-    if _customer_orders_filter(text) is not None:
-        return "customer_orders"
     if _is_small_talk(text):
         return "small_talk"
     if _needs_business_clarification(text):
         return "clarify"
+    if _customer_orders_filter(text) is not None:
+        return "customer_orders"
     if _has_any(text, OPS_DECISION_PATTERNS):
         return "ops_decision"
     has_order_id = bool(re.search(r"\b[a-f0-9]{32}\b", text))

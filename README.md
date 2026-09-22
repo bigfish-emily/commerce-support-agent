@@ -56,9 +56,15 @@ uv run uvicorn app.main:app --reload
 Open:
 
 ```text
+http://127.0.0.1:8000/demo
 http://127.0.0.1:8000/customer
 http://127.0.0.1:8000/review
 ```
+
+Start with `/demo` for a three-minute guided walkthrough. It resets a
+disposable local sandbox for each scenario and shows a delivery-delay refund
+handoff, a self-service delivery query, and a blocked delivered-order address
+change. It is enabled only when `DEMO_MODE` is not set to `0`.
 
 The customer page defaults to the local `demo-customer` actor. `X-Demo-Customer` is a test-only selector; a production BFF must resolve an authenticated principal and inject the allowed-order set server-side. The local review credential is `local-review-demo`; set `REVIEW_API_TOKEN` before exposing the service. Use Redis by setting `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`.
 

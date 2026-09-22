@@ -35,6 +35,8 @@ from app.models import (
     CustomerAction,
     CustomerAppealRequest,
     CustomerCaseResponse,
+    DemoReviewRequest,
+    DemoScenarioRequest,
     ReviewActionRequest,
     ReviewCaseListResponse,
     ReviewSessionResponse,
@@ -66,6 +68,40 @@ DEFAULT_CUSTOMER_ORDER_IDS: dict[str, set[str]] = {
     },
     "customer-smoke": {"203096f03d82e0dffbc41ebc2e2bcfb7"},
 }
+
+# The guided demo deliberately uses the same public Olist snapshots as the
+# product surface, but starts from a clean local case store for every run.
+# It is disabled outside a local/sandbox deployment (DEMO_MODE=0).
+DEMO_SCENARIOS: dict[str, dict[str, str]] = {
+    "delayed_refund": {
+        "title": "配送异常，申请退款",
+        "summary": "订单延迟且评价较低，系统整理证据并交给售后审核。",
+        "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
+        "message": "这笔订单晚到了很多天，商品体验也不好，我想申请退款。",
+        "requested_action": "refund_request",
+        "expected_outcome": "review",
+    },
+    "track_delivery": {
+        "title": "查询配送进度",
+        "summary": "标准查询直接返回订单事实，不占用人工审核。",
+        "order_id": "8aec3a066f732dd927ec8fef1752415b",
+        "message": "帮我看看这笔订单现在配送到哪里了。",
+        "requested_action": "track_order",
+        "expected_outcome": "resolved",
+    },
+    "delivered_address": {
+        "title": "已送达后修改地址",
+        "summary": "订单已送达，系统说明限制并阻止无效写入。",
+        "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
+        "message": (
+            "这笔订单已经送达，但我想改到新地址：西安市雁塔区科技路 1 号，"
+            "收件人小王，电话 13800138000。"
+        ),
+        "requested_action": "change_address",
+        "expected_outcome": "blocked",
+    },
+}
+DEMO_SESSIONS: dict[str, str] = {}
 
 DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     "customer": [
@@ -131,7 +167,79 @@ def customer_app() -> FileResponse:
 
 @app.get("/demo", response_class=FileResponse)
 def demo_app() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "customer" / "index.html")
+    return FileResponse(FRONTEND_DIR / "guided-demo" / "index.html")
+
+
+@app.get("/demo/scenarios")
+def demo_scenarios() -> dict:
+    """Describe the fixed walkthroughs without exposing internal tool details."""
+    _require_demo_mode()
+    return {
+        "scenarios": [
+            {"id": scenario_id, **{key: value for key, value in scenario.items() if key != "message"}}
+            for scenario_id, scenario in DEMO_SCENARIOS.items()
+        ]
+    }
+
+
+@app.post("/demo/run")
+async def run_demo_scenario(request: DemoScenarioRequest) -> dict:
+    """Execute a disposable scenario through the real customer workflow.
+
+    This endpoint is intentionally unavailable with ``DEMO_MODE=0``. It is a
+    convenience layer for a guided local showcase, not an alternate business
+    API or a way to bypass staff authorization in a deployed service.
+    """
+    _require_demo_mode()
+    scenario = DEMO_SCENARIOS.get(request.scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="demo_scenario_not_found")
+
+    # A showcase must be repeatable. The store only contains local sandbox
+    # effects, and each click starts a fresh graph session against the same
+    # immutable public-data snapshot.
+    await asyncio.to_thread(case_service.reset)
+    session_id = f"guided-demo-{uuid.uuid4().hex}"
+    DEMO_SESSIONS.clear()
+    DEMO_SESSIONS[session_id] = request.scenario_id
+    response = await customer_chat(
+        ChatRequest(
+            message=scenario["message"],
+            session_id=session_id,
+            requested_action=scenario["requested_action"],
+            page_context={"surface": "guided_demo", "selected_order_id": scenario["order_id"]},
+        ),
+        x_demo_customer="customer-demo",
+    )
+    return await _demo_session_payload(session_id, scenario, customer_answer=response.answer)
+
+
+@app.post("/demo/sessions/{session_id}/review")
+async def review_demo_scenario(session_id: str, request: DemoReviewRequest) -> dict:
+    """Resume a guided-demo HITL checkpoint as the local demo reviewer."""
+    _require_demo_mode()
+    scenario_id = DEMO_SESSIONS.get(session_id)
+    if scenario_id is None:
+        raise HTTPException(status_code=404, detail="demo_session_not_found")
+    status = "review_approved" if request.decision == "approve" else "review_rejected"
+    resume_value = "__review_approve__" if request.decision == "approve" else "no"
+    response = await _resume_review_session(
+        session_id,
+        resume_value=resume_value,
+        status=status,
+        reviewer_id="guided-demo-reviewer",
+    )
+    messages = await asyncio.to_thread(conversations.messages, session_id)
+    customer_answer = next(
+        (str(item.get("content", "")) for item in reversed(messages) if item.get("sender") == "staff"),
+        response.answer,
+    )
+    return await _demo_session_payload(
+        session_id,
+        DEMO_SCENARIOS[scenario_id],
+        customer_answer=customer_answer,
+        review_decision=request.decision,
+    )
 
 
 @app.get("/technical", response_class=FileResponse)
@@ -1087,11 +1195,35 @@ async def _resume_review_session(
         latency_ms=(time.perf_counter() - t_start) * 1000,
         status=status,
     )
+    await _append_customer_review_update(session_id, result)
     return ChatResponse(
         answer=str(result.get("final_answer", "")),
         session_id=session_id,
         sources=_response_sources(result),
     )
+
+
+async def _append_customer_review_update(session_id: str, result: dict) -> None:
+    """Publish a customer-safe status update after a staff review resumes a graph.
+
+    The graph result contains evidence and tool receipts intended for the
+    operator. Customers receive the same concise, grounded presentation policy
+    used by ``/customer/chat`` and never see the internal execution narrative.
+    """
+    record = case_service.get_by_session(session_id)
+    messages = list(result.get("messages", []) or [])
+    question = next(
+        (
+            str(message.get("content", ""))
+            for message in messages
+            if message.get("role") == "user"
+            and str(message.get("content", "")) not in {"__review_approve__", "no"}
+        ),
+        "售后申请处理进度",
+    )
+    customer_state = {**result, "final_answer": str(result.get("final_answer", ""))}
+    customer_message = await present(llm_client.chat_openai, question, customer_state, record)
+    await asyncio.to_thread(conversations.append_message, session_id, "staff", customer_message)
 
 
 def _review_session_response(session_id: str, has_pending: bool, state: dict) -> ReviewSessionResponse:
@@ -1128,6 +1260,83 @@ def _review_session_response(session_id: str, has_pending: bool, state: dict) ->
         customer_safe_summary=summary,
         order_facts=order_facts,
     )
+
+
+def _require_demo_mode() -> None:
+    """Keep the convenience review endpoint out of a deployed service."""
+    enabled = os.environ.get("DEMO_MODE", "1").strip().lower()
+    if enabled in {"0", "false", "no", "off"}:
+        raise HTTPException(status_code=404, detail="demo_mode_disabled")
+
+
+async def _demo_session_payload(
+    session_id: str,
+    scenario: dict[str, str],
+    *,
+    customer_answer: str,
+    review_decision: str | None = None,
+) -> dict:
+    """Return a small, visitor-safe view of a real workflow execution."""
+    snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
+    state = dict(snapshot.values or {})
+    review = _review_session_response(session_id, bool(snapshot.next), state)
+    draft = dict(review.escalation_draft or {})
+    case = dict(review.after_sales_cases[-1] if review.after_sales_cases else {})
+    decision = dict(draft.get("decision") or case.get("decision") or {})
+    verification = dict(draft.get("verification") or case.get("verification") or {})
+    record = case_service.get_by_session(session_id)
+
+    timeline_labels = {
+        "plan_tasks": "理解用户诉求",
+        "extract_slots": "关联订单信息",
+        "retrieve_context": "核对订单与政策",
+        "build_after_sales_case": "生成售后处理建议",
+        "hitl_gate": "转交人工审核",
+        "finalize_escalation": "同步审核结果",
+        "execute_write_action": "写入售后申请",
+        "finalize_answer": "生成客户回复",
+    }
+    timeline = []
+    for event in review.trajectory_events:
+        node = str(event.get("node", ""))
+        label = timeline_labels.get(node)
+        if label:
+            item = {"label": label, "status": str(event.get("status", "completed"))}
+            if item not in timeline:
+                timeline.append(item)
+    if not timeline:
+        timeline.append({"label": "完成本次咨询", "status": "completed"})
+
+    return {
+        "session_id": session_id,
+        "scenario": {
+            "title": scenario.get("title", "售后处理"),
+            "summary": scenario.get("summary", ""),
+            "order_id": review.order_facts.get("order_id") or scenario.get("order_id", ""),
+        },
+        "customer": {
+            "request": scenario.get("message", ""),
+            "answer": customer_answer,
+        },
+        "status": str(
+            (record or {}).get("status") or ("pending_review" if review.has_pending else "resolved")
+        ),
+        "review_required": review.has_pending,
+        "review_decision": review_decision,
+        "review_packet": {
+            "action_type": draft.get("action_type") or case.get("action_type", ""),
+            "order_facts": review.order_facts,
+            "risk_level": decision.get("risk_level", ""),
+            "confidence": decision.get("confidence"),
+            "handoff_reasons": decision.get("handoff_reasons", []),
+            "evidence": decision.get("evidence", []),
+            "policy_refs": decision.get("policy_refs", []),
+            "customer_message_points": decision.get("customer_message_points", []),
+            "verifier_passed": verification.get("passed"),
+            "next_step": verification.get("required_next_step", ""),
+        },
+        "timeline": timeline,
+    }
 
 
 def _is_customer_request(request: ChatRequest) -> bool:

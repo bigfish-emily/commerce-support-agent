@@ -61,6 +61,43 @@ async def test_frontend_entrypoints_available(client: AsyncClient) -> None:
     assert technical.status_code == 200
     assert "/static/demo.js" in technical.text
 
+    guided_demo = await client.get("/demo")
+    assert guided_demo.status_code == 200
+    assert "售后服务体验" in guided_demo.text
+
+    scenarios = await client.get("/demo/scenarios")
+    assert scenarios.status_code == 200
+    assert len(scenarios.json()["scenarios"]) == 3
+
+
+@pytest.mark.anyio
+async def test_guided_demo_uses_customer_workflow_and_resumes_review(client: AsyncClient) -> None:
+    g1, g2 = _mock_guard(input_on_topic=True)
+    with g1, g2:
+        started = await client.post("/demo/run", json={"scenario_id": "delayed_refund"})
+    assert started.status_code == 200
+    payload = started.json()
+    assert payload["review_required"] is True
+    assert payload["status"] == "pending_review"
+    assert payload["review_packet"]["action_type"] == "refund_request"
+
+    with g1, g2:
+        approved = await client.post(
+            f"/demo/sessions/{payload['session_id']}/review",
+            json={"decision": "approve"},
+        )
+    assert approved.status_code == 200
+    assert approved.json()["review_required"] is False
+    assert approved.json()["status"] == "executed"
+    assert "退款核查申请" in approved.json()["customer"]["answer"]
+    assert "Agent" not in approved.json()["customer"]["answer"]
+
+    for scenario_id in ("track_delivery", "delivered_address"):
+        with g1, g2:
+            response = await client.post("/demo/run", json={"scenario_id": scenario_id})
+        assert response.status_code == 200
+        assert response.json()["review_required"] is False
+
 
 @pytest.mark.anyio
 async def test_customer_small_talk_and_ambiguous_support_use_no_tool_terminal(client: AsyncClient) -> None:
@@ -179,8 +216,8 @@ def _ops_payload(message: str, session_id: str | None = None) -> dict[str, objec
 
 def test_chat_default_scopes_are_role_aware() -> None:
     default_request = ChatRequest(message="退款政策是什么？")
-    assert default_request.role == "customer"
-    assert default_request.channel == "customer_self_service"
+    assert default_request.role == "support_agent"
+    assert default_request.channel == "internal_debug"
 
     customer_scopes = _resolve_auth_scopes("customer", None)
     support_scopes = _resolve_auth_scopes("support_agent", None)
@@ -452,7 +489,10 @@ async def test_policy_question_uses_policy_knowledge(client: AsyncClient) -> Non
     with g1, g2, _mock_plan("policy"), _mock_policy_answer("LLM: compensation needs human approval"):
         response = await client.post("/chat", json={"message": "退款补偿能不能直接承诺？"})
     assert response.status_code == 200
-    assert "不能直接承诺金额或到账时间" in response.json()["answer"]
+    # /chat is the internal/debug surface. Customer-facing policy language is
+    # applied by /customer/chat after the workflow result is grounded.
+    assert "[政策问答]" in response.json()["answer"]
+    assert "LLM: compensation needs human approval" in response.json()["answer"]
     assert "Compensation Boundary Policy" in response.json()["sources"]
 
 
@@ -666,7 +706,7 @@ async def test_confirmed_hitl_session_can_accept_new_policy_task(client: AsyncCl
     with g1, g2, _mock_plan("policy"), _mock_policy_answer("LLM: compensation requires approval"):
         response = await client.post(
             "/chat",
-            json={"message": "退款补偿能不能直接承诺？", "session_id": "s2-next"},
+            json=_support_payload("退款补偿能不能直接承诺？", "s2-next"),
         )
     assert response.status_code == 200
     assert "[政策问答]" in response.json()["answer"]
@@ -999,8 +1039,9 @@ async def test_review_metrics_requires_staff_token(client: AsyncClient) -> None:
     response = await client.get("/review/metrics", headers=REVIEW_HEADERS)
     assert response.status_code == 200
     body = response.json()
-    assert body["baselines"]["customer_flow"]["total"] == 9
-    assert body["baselines"]["tau2_retail"]["total"] == 114
+    baselines = body["product_evaluation"]["baselines"]
+    assert baselines["workflow_e2e_regression"]["total"] == 14
+    assert baselines["tau2_retail"]["total"] == 114
 
 
 @pytest.mark.anyio

@@ -96,6 +96,11 @@ def _deterministic_customer_reply(question: str, state: dict, record: dict | Non
         )
     if status in {"rejected", "timeout_canceled"}:
         return "这项申请暂未通过或已关闭。如需补充说明，您可以提交二次申诉，工作人员会继续核查。"
+    if status == "executed" and action_type:
+        # Staff review resumes from a checkpoint. Its graph event is retained
+        # for audit, while the durable case status is the authoritative signal
+        # for the customer notification.
+        return _customer_write_receipt(action_type, question)
 
     tasks = state.get("task_plan") or []
     context = state.get("current_context") or {}

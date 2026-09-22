@@ -21,9 +21,9 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     tenant_id: str = Field(default="olist-demo", min_length=1, max_length=64)
     user_id: str = Field(default="demo-customer", min_length=1, max_length=128)
-    role: str = Field(default="customer", min_length=1, max_length=64)
+    role: str = Field(default="support_agent", min_length=1, max_length=64)
     auth_scopes: list[str] | None = None
-    channel: str = Field(default="customer_self_service", min_length=1, max_length=64)
+    channel: str = Field(default="internal_debug", min_length=1, max_length=64)
     page_context: CustomerPageContext = Field(default_factory=CustomerPageContext)
     requested_action: str | None = Field(default=None, max_length=64)
 
@@ -106,3 +106,13 @@ class CustomerAppealRequest(BaseModel):
 
 class ReviewCaseListResponse(BaseModel):
     cases: list[dict]
+
+
+class DemoScenarioRequest(BaseModel):
+    """A fixed, disposable walkthrough used only by the public demo surface."""
+
+    scenario_id: str = Field(min_length=1, max_length=64)
+
+
+class DemoReviewRequest(BaseModel):
+    decision: str = Field(pattern="^(approve|reject)$")

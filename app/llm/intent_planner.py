@@ -111,6 +111,11 @@ def _fast_plan(message: str) -> TaskPlanResult | None:
             tasks=[PlannedTask(intent="customer_profile", text=message)],
             planning_mode="deterministic_fast_path",
         )
+    if _needs_business_clarification(text):
+        return TaskPlanResult(
+            tasks=[PlannedTask(intent="clarify", text=message)],
+            planning_mode="deterministic_fast_path",
+        )
     order_filter = _customer_orders_filter(text)
     if order_filter is not None:
         return TaskPlanResult(
@@ -120,11 +125,6 @@ def _fast_plan(message: str) -> TaskPlanResult | None:
     if _is_small_talk(text):
         return TaskPlanResult(
             tasks=[PlannedTask(intent="small_talk", text=message)],
-            planning_mode="deterministic_fast_path",
-        )
-    if _needs_business_clarification(text):
-        return TaskPlanResult(
-            tasks=[PlannedTask(intent="clarify", text=message)],
             planning_mode="deterministic_fast_path",
         )
     has_order_id = bool(re.search(r"[0-9a-f]{32}", text))

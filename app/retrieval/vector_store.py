@@ -102,7 +102,14 @@ class LocalVectorStore:
             for doc_id in document_ids
             if doc_id in self._vectors
         }
-        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:k]
+        # A candidate filter can restrict the search to documents with no
+        # semantic overlap. Returning a zero-score hit looks like evidence to
+        # callers, while Qdrant treats an empty meaningful result as no hit.
+        ranked = sorted(
+            ((doc_id, score) for doc_id, score in scores.items() if score > 0.0),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:k]
         return [
             VectorSearchHit(
                 doc_id=doc_id,

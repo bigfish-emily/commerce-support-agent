@@ -693,10 +693,17 @@ class AgentActions:
         action_type: str,
         state: AgentState,
     ) -> tuple[str, dict[str, object] | None]:
-        task = self._task_extractor.fast_extract(user_message)
-        if task is None:
-            task = await self._task_extractor.extract(user_message)
-        repair = repair_order_id(task.order_id or user_message)
+        # ``extract_slots`` has already resolved a selected order for native
+        # controls. Reusing that verified value prevents a product regression
+        # where a customer clicked "申请退款" on an order page but was asked to
+        # type the same order id again.
+        slot_order_id = str(dict(state.get("current_slots", {})).get("order_id") or "")
+        repair = repair_order_id(slot_order_id) if slot_order_id else None
+        if repair is None or not repair.ok:
+            task = self._task_extractor.fast_extract(user_message)
+            if task is None:
+                task = await self._task_extractor.extract(user_message)
+            repair = repair_order_id(task.order_id or user_message)
         if not repair.ok:
             return repair.message, None
         order_id = repair.value
