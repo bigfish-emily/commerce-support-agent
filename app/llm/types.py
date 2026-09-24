@@ -46,6 +46,14 @@ class TaskPlanResult(BaseModel):
         "llm",
         description="llm, deterministic_fast_path, or deterministic_fallback",
     )
+    llm_attempted: bool = Field(
+        False,
+        description="Whether this turn attempted a live model call before the plan was returned.",
+    )
+    fallback_reason: str | None = Field(
+        default=None,
+        description="Stable internal reason when deterministic fallback replaced an LLM plan.",
+    )
 
 
 class OlistTaskResult(BaseModel):

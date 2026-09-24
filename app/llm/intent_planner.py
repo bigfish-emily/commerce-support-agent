@@ -52,18 +52,22 @@ class IntentPlanner:
             logger.warning("Structured planner failed, trying JSON-text fallback: %s", exc)
             if _is_transport_error(exc):
                 logger.warning("Planner transport error; using deterministic task plan without retry")
-                return fallback_plan(message)
+                return fallback_plan(message, llm_attempted=True, reason=_fallback_reason(exc))
             try:
                 raw = await self._base_llm.ainvoke(add_json_instruction(messages, TaskPlanResult))
                 result = parse_json_model(raw, TaskPlanResult)
             except Exception as fallback_exc:
                 logger.warning("LLM intent planner failed, using deterministic fallback: %s", fallback_exc)
-                return fallback_plan(message)
+                return fallback_plan(message, llm_attempted=True, reason=_fallback_reason(fallback_exc))
         tasks = _dedupe_redundant_tasks([task for task in result.tasks if task.intent in VALID_INTENTS])
         tasks = _ensure_explicit_read_requirements(message, tasks)
         if not tasks:
-            return fallback_plan(message)
-        return TaskPlanResult(tasks=_normalize_dependencies(tasks), planning_mode="llm")
+            return fallback_plan(message, llm_attempted=True, reason="empty_or_invalid_plan")
+        return TaskPlanResult(
+            tasks=_normalize_dependencies(tasks),
+            planning_mode="llm",
+            llm_attempted=True,
+        )
 
     async def classify(self, message: str) -> IntentRouteResult:
         """Compatibility helper for evals that still measure single-label routing."""
@@ -72,7 +76,12 @@ class IntentPlanner:
         return IntentRouteResult(intent=intent)
 
 
-def fallback_plan(message: str) -> TaskPlanResult:
+def fallback_plan(
+    message: str,
+    *,
+    llm_attempted: bool = False,
+    reason: str | None = None,
+) -> TaskPlanResult:
     tasks = [
         PlannedTask(
             intent=task.intent,
@@ -108,7 +117,22 @@ def fallback_plan(message: str) -> TaskPlanResult:
     return TaskPlanResult(
         tasks=_normalize_dependencies(tasks),
         planning_mode="deterministic_fallback",
+        llm_attempted=llm_attempted,
+        fallback_reason=reason,
     )
+
+
+def _fallback_reason(exc: Exception) -> str:
+    """Keep provider failures queryable without persisting vendor error text."""
+
+    name = type(exc).__name__.lower()
+    if "timeout" in name:
+        return "model_timeout"
+    if "connection" in name or "network" in name:
+        return "model_connection_error"
+    if "json" in name or "validation" in name or "valueerror" in name:
+        return "invalid_structured_output"
+    return "model_planning_error"
 
 
 def _fast_plan(message: str) -> TaskPlanResult | None:

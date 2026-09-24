@@ -14,7 +14,17 @@ def test_record_trace_writes_sqlite_row(tmp_path, monkeypatch) -> None:
             "route_intent": "policy",
             "final_answer": "ok",
             "retrieved_policy": ["Human Approval Policy"],
-            "trajectory_events": [{"node": "plan_tasks", "status": "completed"}],
+            "trajectory_events": [
+                {
+                    "node": "plan_tasks",
+                    "status": "completed",
+                    "details": {
+                        "planning_mode": "deterministic_fallback",
+                        "llm_attempted": True,
+                        "fallback_reason": "model_connection_error",
+                    },
+                }
+            ],
         },
         latency_ms=12.3,
         status="ok",
@@ -27,6 +37,10 @@ def test_record_trace_writes_sqlite_row(tmp_path, monkeypatch) -> None:
     summary = trace_summary()
     assert summary["total"] == 1
     assert summary["status_counts"] == {"ok": 1}
+    assert summary["llm_planner_attempts"] == 1
+    assert summary["llm_planner_successes"] == 0
+    assert summary["deterministic_planner_fallbacks"] == 1
+    assert summary["planner_fallback_reason_counts"] == {"model_connection_error": 1}
 
 
 def test_record_trace_redacts_sensitive_fields(tmp_path, monkeypatch) -> None:

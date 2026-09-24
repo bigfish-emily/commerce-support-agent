@@ -205,7 +205,14 @@ multi-intent read/policy/refund handoff.
 ```
 
 The live artifact reports each arm's `execution_error_rate`, completed-case
-count, planner provenance (`llm` versus `deterministic_fallback`), and CRS.
-Only rows planned by the live model belong in a live-model quality claim.
-Fallback rows remain availability evidence, and are reported separately rather
-than inflating the model result.
+count, planner provenance (`llm` versus `deterministic_fallback`), stable
+fallback-reason counts, and CRS. Only rows planned by the live model belong in
+a live-model quality claim. Fallback rows remain availability evidence and are
+reported separately rather than inflating model quality or hiding a gateway
+outage behind a successful workflow result.
+
+The local observability summary exposes the same provenance as
+`llm_planner_attempts`, `llm_planner_successes`,
+`deterministic_planner_fallbacks`, and `planner_fallback_reason_counts`. These
+are runtime availability metrics; they should never be substituted for task
+quality metrics such as CRS or action correctness.

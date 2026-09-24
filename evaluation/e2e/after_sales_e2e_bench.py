@@ -270,7 +270,8 @@ async def _run_workflow(http: AsyncClient, store: Any, case: EvaluationCase) -> 
         str(item.get("status", "")) for item in trace_payload.get("traces", []) if isinstance(item, dict)
     ]
     planned = _plan_from_trace(trace_payload)
-    planning_mode = _planning_mode_from_trace(trace_payload)
+    planner_provenance = _planner_provenance_from_trace(trace_payload)
+    planning_mode = str(planner_provenance["planning_mode"])
     tasks = [str(task.get("intent", "")) for task in planned]
     record = store.get_by_session(session_id)
     pre_review = str(record.get("status")) if record else ""
@@ -324,6 +325,7 @@ async def _run_workflow(http: AsyncClient, store: Any, case: EvaluationCase) -> 
         "guard_blocked": "input_guard_rejected" in trace_statuses,
         "trace_statuses": trace_statuses,
         "planning_mode": planning_mode,
+        "planner_provenance": planner_provenance,
         "latency_ms": latency_ms,
     }
 
@@ -436,6 +438,12 @@ def _summary(rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
     execution_errors = [row for row in rows if row.get("execution_error")]
     llm_planned = [row for row in rows if row.get("planning_mode") == "llm"]
     deterministic_fallbacks = [row for row in rows if row.get("planning_mode") == "deterministic_fallback"]
+    fallback_reasons: dict[str, int] = {}
+    for row in deterministic_fallbacks:
+        provenance = row.get("planner_provenance", {})
+        reason = provenance.get("fallback_reason") if isinstance(provenance, dict) else None
+        name_for_reason = str(reason or "unspecified")
+        fallback_reasons[name_for_reason] = fallback_reasons.get(name_for_reason, 0) + 1
     unsafe_rate = (
         round(
             100 * sum(bool(row.get("unsafe_write")) for row in unsafe_denominator) / len(unsafe_denominator),
@@ -466,6 +474,7 @@ def _summary(rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
         "deterministic_planning_fallback_rate": (
             round(100 * len(deterministic_fallbacks) / len(rows), 2) if rows else 0.0
         ),
+        "deterministic_planning_fallback_reasons": fallback_reasons,
         "p50_pre_decision_latency_ms": round(statistics.median(latency), 2) if latency else 0.0,
         "p95_pre_decision_latency_ms": _percentile(latency, 0.95),
     }
@@ -480,6 +489,11 @@ def _stratum_summaries(rows: list[dict[str, Any]], name: str) -> dict[str, dict[
 
 def _planning_mode_from_trace(payload: dict[str, object]) -> str:
     """Read planner provenance from the persisted graph trajectory."""
+    return str(_planner_provenance_from_trace(payload)["planning_mode"])
+
+
+def _planner_provenance_from_trace(payload: dict[str, object]) -> dict[str, object]:
+    """Extract stable planner provenance without persisting provider error text."""
     for trace in reversed(list(payload.get("traces", []))):
         if not isinstance(trace, dict):
             continue
@@ -492,8 +506,12 @@ def _planning_mode_from_trace(payload: dict[str, object]) -> str:
                 continue
             details = event.get("details", {})
             if isinstance(details, dict):
-                return str(details.get("planning_mode", "unknown"))
-    return "unknown"
+                return {
+                    "planning_mode": str(details.get("planning_mode", "unknown")),
+                    "llm_attempted": bool(details.get("llm_attempted", False)),
+                    "fallback_reason": details.get("fallback_reason"),
+                }
+    return {"planning_mode": "unknown", "llm_attempted": False, "fallback_reason": None}
 
 
 def _error_row(

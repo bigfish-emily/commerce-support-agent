@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     messages: list[dict[str, str]]
     route_intent: str
     task_plan: list[dict[str, object]]
+    planner_provenance: NotRequired[dict[str, object]]
     completed_tasks: list[dict[str, object]]
     current_task_index: NotRequired[int]
     current_task: NotRequired[dict[str, object]]

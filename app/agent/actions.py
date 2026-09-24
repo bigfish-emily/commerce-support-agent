@@ -64,10 +64,20 @@ class AgentActions:
         if requested_action:
             tasks = _structured_action_plan(requested_action, last_message)
             planning_mode = "structured_page_action"
+            planner_provenance = {
+                "planning_mode": planning_mode,
+                "llm_attempted": False,
+                "fallback_reason": None,
+            }
         else:
             plan = await self._intent_planner.plan(last_message)
             tasks = [task.model_dump() for task in plan.tasks]
             planning_mode = plan.planning_mode
+            planner_provenance = {
+                "planning_mode": planning_mode,
+                "llm_attempted": plan.llm_attempted,
+                "fallback_reason": plan.fallback_reason,
+            }
         route_intent = str(tasks[0]["intent"]) if tasks else "policy"
         dialog_state = _merge_dialog_state(
             state,
@@ -78,6 +88,7 @@ class AgentActions:
         return {
             "route_intent": route_intent,
             "task_plan": tasks,
+            "planner_provenance": planner_provenance,
             "turn_count": dialog_state["turn_count"],
             "dialog_state": dialog_state,
             "trajectory_events": [
@@ -90,6 +101,8 @@ class AgentActions:
                         "task_count": len(tasks),
                         "tasks": tasks,
                         "planning_mode": planning_mode,
+                        "llm_attempted": planner_provenance["llm_attempted"],
+                        "fallback_reason": planner_provenance["fallback_reason"],
                         "dialog_state": dialog_state,
                         "duration_ms": _elapsed_ms(started_at),
                     },

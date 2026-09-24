@@ -25,6 +25,12 @@ async def present(llm, question: str, state: dict, record: dict | None) -> str:
     deterministic = _deterministic_customer_reply(question, state, record)
     if deterministic:
         return deterministic
+    provenance = state.get("planner_provenance") or {}
+    # A known planner transport failure is a circuit-breaker signal for this
+    # turn. A second model call adds another long wait without adding grounded
+    # business evidence, so return the customer-safe local reply immediately.
+    if provenance.get("planning_mode") == "deterministic_fallback" and provenance.get("llm_attempted"):
+        return _planner_fallback_reply(question, state)
     context = state.get("current_context") or {}
     packet = {
         "question": question,
@@ -58,6 +64,18 @@ async def present(llm, question: str, state: dict, record: dict | None) -> str:
         return content
     except Exception:
         return "您的问题我已收到，目前还需要核查相关信息，暂时无法确认处理结果。请稍后再试或联系人工客服。"
+
+
+def _planner_fallback_reply(question: str, state: dict) -> str:
+    """Keep an LLM outage from becoming a second user-visible timeout."""
+
+    tasks = state.get("task_plan") or []
+    raw_result = str(state.get("final_answer", ""))
+    if len(tasks) == 1 and isinstance(tasks[0], dict) and tasks[0].get("intent") == "policy":
+        return _customer_policy_reply(raw_result, question)
+    if raw_result:
+        return "我已核对到相关订单信息。为了避免给您错误结论，我需要进一步确认处理条件后再回复您。"
+    return "我已收到您的问题，正在核查订单和处理条件。您也可以补充订单相关情况，方便我继续处理。"
 
 
 def _deterministic_customer_reply(question: str, state: dict, record: dict | None) -> str:

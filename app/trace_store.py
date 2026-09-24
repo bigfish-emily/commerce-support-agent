@@ -102,25 +102,48 @@ def trace_summary() -> dict[str, Any]:
             "total": 0,
             "status_counts": {},
             "route_intent_counts": {},
+            "llm_planner_attempts": 0,
+            "llm_planner_successes": 0,
+            "deterministic_planner_fallbacks": 0,
+            "planner_fallback_reason_counts": {},
             "avg_latency_ms": 0.0,
             "p95_latency_ms": 0.0,
         }
     with sqlite3.connect(TRACE_DB) as conn:
         rows = conn.execute(
-            "SELECT status, route_intent, latency_ms FROM agent_trace ORDER BY created_at"
+            "SELECT status, route_intent, latency_ms, trajectory_json FROM agent_trace ORDER BY created_at"
         ).fetchall()
     latencies = sorted(float(row[2]) for row in rows)
     status_counts: dict[str, int] = {}
     route_counts: dict[str, int] = {}
-    for status, route_intent, _latency in rows:
+    llm_planner_attempts = 0
+    llm_planner_successes = 0
+    deterministic_fallbacks = 0
+    fallback_reason_counts: dict[str, int] = {}
+    for status, route_intent, _latency, trajectory_json in rows:
         status_counts[str(status)] = status_counts.get(str(status), 0) + 1
         route = str(route_intent or "unknown")
         route_counts[route] = route_counts.get(route, 0) + 1
+        provenance = _planner_provenance(_loads_list(trajectory_json))
+        if provenance is None:
+            continue
+        if provenance["llm_attempted"]:
+            llm_planner_attempts += 1
+        if provenance["planning_mode"] == "llm":
+            llm_planner_successes += 1
+        if provenance["planning_mode"] == "deterministic_fallback":
+            deterministic_fallbacks += 1
+            reason = str(provenance["fallback_reason"] or "unspecified")
+            fallback_reason_counts[reason] = fallback_reason_counts.get(reason, 0) + 1
     p95_index = int(0.95 * (len(latencies) - 1)) if latencies else 0
     return {
         "total": len(rows),
         "status_counts": status_counts,
         "route_intent_counts": route_counts,
+        "llm_planner_attempts": llm_planner_attempts,
+        "llm_planner_successes": llm_planner_successes,
+        "deterministic_planner_fallbacks": deterministic_fallbacks,
+        "planner_fallback_reason_counts": fallback_reason_counts,
         "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0.0,
         "p95_latency_ms": round(latencies[p95_index], 2) if latencies else 0.0,
     }
@@ -233,6 +256,21 @@ def _loads_list(raw: Any) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _planner_provenance(events: list[dict[str, Any]]) -> dict[str, object] | None:
+    """Read compact planning metadata from one durable trajectory."""
+
+    for event in reversed(events):
+        if event.get("node") != "plan_tasks" or not isinstance(event.get("details"), dict):
+            continue
+        details = event["details"]
+        return {
+            "planning_mode": str(details.get("planning_mode", "unknown")),
+            "llm_attempted": bool(details.get("llm_attempted", False)),
+            "fallback_reason": details.get("fallback_reason"),
+        }
+    return None
 
 
 def _rate(numerator: int, denominator: int) -> float:

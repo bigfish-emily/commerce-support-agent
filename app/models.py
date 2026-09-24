@@ -39,6 +39,10 @@ class TraceSummaryResponse(BaseModel):
     total: int
     status_counts: dict[str, int]
     route_intent_counts: dict[str, int]
+    llm_planner_attempts: int
+    llm_planner_successes: int
+    deterministic_planner_fallbacks: int
+    planner_fallback_reason_counts: dict[str, int]
     avg_latency_ms: float
     p95_latency_ms: float
 

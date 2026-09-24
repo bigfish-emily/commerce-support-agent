@@ -140,6 +140,23 @@ async def test_intent_planner_does_not_retry_transport_failures() -> None:
     result = await planner.plan("我想了解会员权益")
     assert llm.calls == 1
     assert result.tasks
+    assert result.llm_attempted is True
+    assert result.fallback_reason == "model_timeout"
+
+
+@pytest.mark.anyio
+async def test_customer_presenter_does_not_repeat_failed_planner_call() -> None:
+    state = {
+        "planner_provenance": {
+            "planning_mode": "deterministic_fallback",
+            "llm_attempted": True,
+            "fallback_reason": "model_connection_error",
+        },
+        "task_plan": [{"intent": "policy"}],
+        "final_answer": "[政策问答] 退款需要先核查订单状态和具体原因。",
+    }
+    answer = await present(_NoCallLlm(), "退款政策是什么？", state, None)
+    assert "退款" in answer
 
 
 @pytest.mark.anyio

@@ -6,6 +6,7 @@ from evaluation.after_sales_quality_gate import build_fixture, evaluate, write_l
 from evaluation.e2e.after_sales_e2e_bench import (
     EvaluationCase,
     _error_row,
+    _planner_provenance_from_trace,
     _planning_mode_from_trace,
     _score,
     _summary,
@@ -90,3 +91,8 @@ def test_live_eval_reads_planner_provenance_from_trace() -> None:
         ]
     }
     assert _planning_mode_from_trace(payload) == "deterministic_fallback"
+    assert _planner_provenance_from_trace(payload) == {
+        "planning_mode": "deterministic_fallback",
+        "llm_attempted": False,
+        "fallback_reason": None,
+    }
