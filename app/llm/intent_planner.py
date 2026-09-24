@@ -12,8 +12,15 @@ from app.llm.prompts import INTENT_PLANNER_PROMPT
 from app.llm.types import IntentRouteResult, PlannedTask, TaskPlanResult
 
 VALID_INTENTS = {
-    "small_talk", "clarify", "customer_profile", "customer_orders", "qa", "order_status", "policy",
-    "ops_decision", "escalation",
+    "small_talk",
+    "clarify",
+    "customer_profile",
+    "customer_orders",
+    "qa",
+    "order_status",
+    "policy",
+    "ops_decision",
+    "escalation",
 }
 logger = logging.getLogger(__name__)
 
@@ -24,9 +31,7 @@ class IntentPlanner:
     def __init__(self, llm: ChatOpenAI) -> None:
         self._base_llm = llm
         self._llm = (
-            llm.with_structured_output(TaskPlanResult)
-            if native_structured_output_enabled(llm)
-            else None
+            llm.with_structured_output(TaskPlanResult) if native_structured_output_enabled(llm) else None
         )
 
     async def plan(self, message: str) -> TaskPlanResult:
@@ -96,6 +101,10 @@ def fallback_plan(message: str) -> TaskPlanResult:
                 depends_on=[],
             )
         )
+    # Apply the same user-obligation invariant as the LLM path. A transport
+    # failure must not drop an explicitly requested policy answer before a
+    # subsequent write action.
+    tasks = _ensure_explicit_read_requirements(message, _dedupe_redundant_tasks(tasks))
     return TaskPlanResult(
         tasks=_normalize_dependencies(tasks),
         planning_mode="deterministic_fallback",
@@ -183,8 +192,23 @@ def _fast_plan(message: str) -> TaskPlanResult | None:
 def _is_small_talk(text: str) -> bool:
     normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
     return normalized in {
-        "你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "早上好", "晚上好",
-        "谢谢", "感谢", "多谢", "再见", "拜拜", "你能做什么", "你可以做什么", "帮助",
+        "你好",
+        "您好",
+        "嗨",
+        "哈喽",
+        "hello",
+        "hi",
+        "hey",
+        "早上好",
+        "晚上好",
+        "谢谢",
+        "感谢",
+        "多谢",
+        "再见",
+        "拜拜",
+        "你能做什么",
+        "你可以做什么",
+        "帮助",
     }
 
 
@@ -197,9 +221,17 @@ def _is_customer_profile_request(text: str) -> bool:
     return any(
         phrase in normalized
         for phrase in (
-            "我喜欢什么样的产品", "我喜欢什么产品", "我买过什么", "我买了什么",
-            "我的购买记录", "我的订单小结", "我的购物偏好", "我的购物习惯", "我的消费习惯",
-            "我平时买什么", "我经常买什么",
+            "我喜欢什么样的产品",
+            "我喜欢什么产品",
+            "我买过什么",
+            "我买了什么",
+            "我的购买记录",
+            "我的订单小结",
+            "我的购物偏好",
+            "我的购物习惯",
+            "我的消费习惯",
+            "我平时买什么",
+            "我经常买什么",
         )
     )
 
@@ -222,13 +254,23 @@ def _customer_orders_filter(text: str) -> str | None:
 def _needs_business_clarification(text: str) -> bool:
     normalized = re.sub(r"[\s，。！？!?~～]+", "", text)
     if normalized in {
-        "帮我处理订单", "帮我处理一下", "订单有问题", "我的订单有问题", "我要售后",
-        "订单不太对", "我的订单不太对", "售后怎么处理", "我需要帮助", "帮帮我", "怎么办", "怎么弄",
+        "帮我处理订单",
+        "帮我处理一下",
+        "订单有问题",
+        "我的订单有问题",
+        "我要售后",
+        "订单不太对",
+        "我的订单不太对",
+        "售后怎么处理",
+        "我需要帮助",
+        "帮帮我",
+        "怎么办",
+        "怎么弄",
     }:
         return True
-    return (
-        "订单有问题" in normalized or "订单不太对" in normalized
-    ) and any(word in normalized for word in ("处理", "帮", "售后", "看看"))
+    return ("订单有问题" in normalized or "订单不太对" in normalized) and any(
+        word in normalized for word in ("处理", "帮", "售后", "看看")
+    )
 
 
 def _is_status_confirmation(text: str) -> bool:
@@ -258,10 +300,7 @@ def _direct_action_type(text: str) -> str:
         or "终止订单" in text
         or "撤销订单" in text
         or "cancel order" in text
-        or (
-            has_order_id
-            and any(word in text for word in ("取消", "终止", "撤销", "cancel"))
-        )
+        or (has_order_id and any(word in text for word in ("取消", "终止", "撤销", "cancel")))
     ):
         return "cancel_order"
     address_change_words = ("change", "update", "改", "调整")
@@ -289,6 +328,16 @@ def _direct_action_type(text: str) -> str:
         return "invoice_request"
     if "投诉" in text or (has_order_id and ("complaint" in text or "升级" in text)):
         return "complaint_escalation"
+    support_case_terms = (
+        "创建服务工单",
+        "建立服务工单",
+        "售后工单",
+        "客服跟进",
+        "跟进事项",
+        "创建售后记录",
+    )
+    if has_order_id and any(term in text for term in support_case_terms):
+        return "open_support_case"
     return ""
 
 
@@ -296,9 +345,24 @@ def _needs_llm_disambiguation(text: str) -> bool:
     """Keep terse factual reads fast; send implied after-sales language to the planner."""
 
     signals = (
-        "地址", "收货", "票据", "报销", "开具", "取消手续", "不想等",
-        "不满意", "进一步处理", "售后", "怎么办", "怎么处理", "核对",
-        "政策", "规则", "条件", "资料", "材料",
+        "地址",
+        "收货",
+        "票据",
+        "报销",
+        "开具",
+        "取消手续",
+        "不想等",
+        "不满意",
+        "进一步处理",
+        "售后",
+        "怎么办",
+        "怎么处理",
+        "核对",
+        "政策",
+        "规则",
+        "条件",
+        "资料",
+        "材料",
     )
     return any(signal in text for signal in signals)
 
@@ -307,8 +371,21 @@ def _requires_action_planning(text: str) -> bool:
     """Detect reads that must be preserved before an otherwise direct write."""
 
     signals = (
-        "先", "然后", "同时", "查", "核对", "物流", "状态", "政策", "规则", "条件", "限制",
-        "explain", "policy", "status", "track",
+        "先",
+        "然后",
+        "同时",
+        "查",
+        "核对",
+        "物流",
+        "状态",
+        "政策",
+        "规则",
+        "条件",
+        "限制",
+        "explain",
+        "policy",
+        "status",
+        "track",
     )
     return any(signal in text for signal in signals)
 
@@ -335,7 +412,19 @@ def _normalize_dependencies(tasks: list[PlannedTask]) -> list[PlannedTask]:
 def _dedupe_redundant_tasks(tasks: list[PlannedTask]) -> list[PlannedTask]:
     deduped: list[PlannedTask] = []
     seen_read_only_without_order: set[str] = set()
+    seen_side_effect_actions: set[str] = set()
     for task in tasks:
+        if task.side_effect or task.intent == "escalation":
+            # Clause-level decomposition can surface the same write intent
+            # twice (for example, “explain refund conditions, then request a
+            # refund”). One user turn still authorizes at most one instance
+            # of each action type; distinct actions remain independent tasks.
+            action = task.action_type or "open_support_case"
+            if action in seen_side_effect_actions:
+                continue
+            seen_side_effect_actions.add(action)
+            deduped.append(task)
+            continue
         if not task.side_effect and not _contains_order_id(task.text):
             if task.intent in seen_read_only_without_order:
                 continue
@@ -352,9 +441,19 @@ def _ensure_explicit_read_requirements(message: str, tasks: list[PlannedTask]) -
     if the model only emitted the action.
     """
 
-    asks_for_policy = any(token in message.lower() for token in (
-        "政策", "规则", "条件", "资料", "材料", "需要什么", "怎么处理", "如何处理",
-    ))
+    asks_for_policy = any(
+        token in message.lower()
+        for token in (
+            "政策",
+            "规则",
+            "条件",
+            "资料",
+            "材料",
+            "需要什么",
+            "怎么处理",
+            "如何处理",
+        )
+    )
     has_write = any(task.side_effect or task.intent == "escalation" for task in tasks)
     has_policy = any(task.intent == "policy" for task in tasks)
     if not asks_for_policy or not has_write or has_policy:

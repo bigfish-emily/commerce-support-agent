@@ -530,6 +530,7 @@ async def run_live(
     start: int,
     output: Path,
     cases_path: Path | None = None,
+    strata: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     validation = validate_external_cases(cases_path) if cases_path else validate_cases()
     if not validation["valid"]:
@@ -541,6 +542,9 @@ async def run_live(
     if llm.mode != "live_llm_agent":
         raise RuntimeError("Configured LLM client is not in live mode.")
     all_cases = _load_cases_path(cases_path) if cases_path else _load_cases(split)
+    if strata:
+        wanted = set(strata)
+        all_cases = [case for case in all_cases if case.stratum in wanted]
     cases = all_cases[max(start, 0) :]
     if limit:
         cases = cases[:limit]
@@ -608,6 +612,7 @@ async def run_live(
         ),
         "model": llm.model,
         "split": split if cases_path is None else str(cases_path),
+        "strata_filter": list(strata or ()),
         "start": start,
         "case_count": len(cases),
         "validation": validation,
@@ -638,11 +643,20 @@ def main() -> None:
         type=Path,
         help="Optional versioned JSONL split with the same schema as cases_challenge.jsonl.",
     )
+    run_parser.add_argument(
+        "--strata",
+        nargs="+",
+        help="Optional strata filter, useful for balanced live smoke batches.",
+    )
     args = parser.parse_args()
     if args.command == "validate":
         result = validate_cases()
     else:
-        result = asyncio.run(run_live(args.split, args.limit, args.start, args.output, args.cases_file))
+        result = asyncio.run(
+            run_live(
+                args.split, args.limit, args.start, args.output, args.cases_file, tuple(args.strata or ())
+            )
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if not result.get("valid", True):
         raise SystemExit(1)
