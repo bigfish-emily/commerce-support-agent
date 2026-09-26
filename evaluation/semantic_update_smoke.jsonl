@@ -1,0 +1,10 @@
+{"id":"s1","family":"requested_information","expected":"supplement","context":{"active_task":"refund request; ask for reason","message":"收到的时候已经破了"}}
+{"id":"s2","family":"requested_information","expected":"supplement","context":{"active_task":"change address; ask for city","message":"上海"}}
+{"id":"m1","family":"conditional_consent","expected":"modify","context":{"active_task":"refund both items","message":"可以，但只退黑色那件"}}
+{"id":"m2","family":"conditional_consent","expected":"modify","context":{"active_task":"refund request","message":"换成大一码，不退了"}}
+{"id":"c1","family":"withdrawal","expected":"cancel","context":{"active_task":"refund request","message":"算了"}}
+{"id":"c2","family":"withdrawal","expected":"cancel","context":{"active_task":"refund request","message":"cancel"}}
+{"id":"n1","family":"topic_change","expected":"new_task","context":{"active_task":"refund request","message":"另一单的快递到哪了"}}
+{"id":"n2","family":"topic_change","expected":"new_task","context":{"message":"查一下我的在途订单"}}
+{"id":"a1","family":"ambiguous_acknowledgement","expected":"ambiguous","context":{"active_task":"refund or exchange?","message":"行吧"}}
+{"id":"a2","family":"ambiguous_acknowledgement","expected":"ambiguous","context":{"active_task":"which item to refund?","message":"那个"}}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,13 @@ class MarkdownKnowledgeBase:
             )
             for score, section in ranked
         ]
+
+    def revision(self) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(self._kb_dir.glob("*.md")):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
 
     def _sections(self) -> list[dict[str, str]]:
         sections: list[dict[str, str]] = []
@@ -111,6 +119,10 @@ def _rerank_score(base_score: float, section: dict[str, str], expanded_query: st
         boost += 1.0
     if "return-label" in query and "label" in title:
         boost += 1.0
+    if "cancellation" in title and "follow-up" in title and any(
+        token in query for token in ("case", "工单", "跟进")
+    ):
+        boost += 3.0
     return base_score + boost
 
 
@@ -142,6 +154,8 @@ def _expand_query(query: str) -> str:
         "1星": "low review",
         "2星": "low review",
         "取消": "cancellation canceled",
+        "撤销": "cancellation eligibility canceled",
+        "撤单": "cancellation eligibility canceled",
         "发票": "invoice request billing tax profile",
         "开票": "invoice request billing tax profile",
         "地址": "address change shipping recipient street postal",

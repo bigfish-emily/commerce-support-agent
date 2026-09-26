@@ -44,9 +44,11 @@ from app.models import (
     TraceReplayResponse,
     TraceSummaryResponse,
 )
+from app.review_recovery import ReviewCommandStore
 from app.trace_store import case_metrics, list_session_traces, record_trace, trace_summary
 
 agent: StateGraph | None = None
+review_commands: ReviewCommandStore | None = None
 logger = setup_logger("agent")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -94,8 +96,7 @@ DEMO_SCENARIOS: dict[str, dict[str, str]] = {
         "summary": "订单已送达，系统说明限制并阻止无效写入。",
         "order_id": "203096f03d82e0dffbc41ebc2e2bcfb7",
         "message": (
-            "这笔订单已经送达，但我想改到新地址：西安市雁塔区科技路 1 号，"
-            "收件人小王，电话 13800138000。"
+            "这笔订单已经送达，但我想改到新地址：西安市雁塔区科技路 1 号，收件人小王，电话 13800138000。"
         ),
         "requested_action": "change_address",
         "expected_outcome": "blocked",
@@ -142,12 +143,18 @@ DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown: manage AsyncSqliteSaver lifecycle."""
-    global agent
+    global agent, review_commands
     await asyncio.to_thread(conversations.initialize)
     async with AsyncSqliteSaver.from_conn_string("data/checkpoints.db") as checkpointer:
         agent = agent_graph_builder.build(checkpointer=checkpointer)
+        review_commands = ReviewCommandStore(case_service.path) if hasattr(case_service, "path") else None
+        worker = asyncio.create_task(_review_recovery_loop())
         logger.info("Checkpointer ready (AsyncSqliteSaver: data/checkpoints.db)")
-        yield
+        try:
+            yield
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
     logger.info("Checkpointer closed")
 
 
@@ -319,8 +326,7 @@ async def _run_chat(request: ChatRequest) -> ChatResponse:
         result = {
             "route_intent": "rate_limited",
             "final_answer": (
-                "当前请求过于频繁，请稍后再试。"
-                f"预计 {rate_limit.reset_after_seconds} 秒后恢复。"
+                f"当前请求过于频繁，请稍后再试。预计 {rate_limit.reset_after_seconds} 秒后恢复。"
             ),
         }
         record_trace(
@@ -381,18 +387,11 @@ async def _run_chat(request: ChatRequest) -> ChatResponse:
     if has_interrupt:
         if await _pending_confirmation_expired(session_id, snapshot.values):
             logger.info("GRAPH RESUME | pending side effect expired, canceling")
-            result = await agent.ainvoke(Command(resume="__hitl_timeout__"), config)
-            record_trace(
-                session_id=session_id,
-                user_message=request.message,
-                result=result,
-                latency_ms=(time.perf_counter() - t_start) * 1000,
+            return await _resume_review_session(
+                session_id,
+                resume_value="__hitl_timeout__",
                 status="hitl_timeout_canceled",
-            )
-            return ChatResponse(
-                answer=str(result["final_answer"]),
-                session_id=session_id,
-                sources=_response_sources(result),
+                reviewer_id="system_timeout",
             )
         if _is_customer_request(request):
             pending_result = _pending_confirmation_response(snapshot.values, customer_view=True)
@@ -454,7 +453,8 @@ async def _run_chat(request: ChatRequest) -> ChatResponse:
             "allowed_order_ids": sorted(_allowed_customer_order_ids(request.user_id))
             if _is_customer_request(request)
             else [],
-            "messages": history_messages if _is_customer_request(request) and history_messages
+            "messages": history_messages
+            if _is_customer_request(request) and history_messages
             else [{"role": "user", "content": request.message}],
             "route_intent": "",
             "task_plan": [],
@@ -596,9 +596,13 @@ async def review_conversations(x_review_token: str | None = Header(default=None)
     rows = await asyncio.to_thread(conversations.recent_sessions)
     for row in rows:
         record = await asyncio.to_thread(case_service.get_by_session, row["session_id"])
-        row.update({"order_id": record.get("order_id", "") if record else "",
-                    "action_type": record.get("action_type", "咨询会话") if record else "咨询会话",
-                    "created_at": row["updated_at"]})
+        row.update(
+            {
+                "order_id": record.get("order_id", "") if record else "",
+                "action_type": record.get("action_type", "咨询会话") if record else "咨询会话",
+                "created_at": row["updated_at"],
+            }
+        )
     return {"cases": rows}
 
 
@@ -635,21 +639,26 @@ async def customer_messages(
     x_demo_customer: str | None = Header(default=None),
 ) -> dict:
     await _customer_conversation_owner(session_id, _resolve_customer_actor(x_demo_customer))
-    return {"messages": await asyncio.to_thread(conversations.messages, session_id),
-            "human": await asyncio.to_thread(conversations.human_mode, session_id)}
+    return {
+        "messages": await asyncio.to_thread(conversations.messages, session_id),
+        "human": await asyncio.to_thread(conversations.human_mode, session_id),
+    }
 
 
 @app.get("/review/sessions/{session_id}/messages")
 async def staff_messages(session_id: str, x_review_token: str | None = Header(default=None)) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
     await _existing_conversation(session_id)
-    return {"messages": await asyncio.to_thread(conversations.messages, session_id),
-            "human": await asyncio.to_thread(conversations.human_mode, session_id)}
+    return {
+        "messages": await asyncio.to_thread(conversations.messages, session_id),
+        "human": await asyncio.to_thread(conversations.human_mode, session_id),
+    }
 
 
 @app.post("/review/sessions/{session_id}/messages")
-async def staff_reply(session_id: str, body: StaffMessage,
-    x_review_token: str | None = Header(default=None)) -> dict:
+async def staff_reply(
+    session_id: str, body: StaffMessage, x_review_token: str | None = Header(default=None)
+) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
     await _existing_conversation(session_id)
     await asyncio.to_thread(conversations.set_human_mode, session_id, True)
@@ -665,8 +674,9 @@ async def staff_reply(session_id: str, body: StaffMessage,
 
 
 @app.post("/review/sessions/{session_id}/handoff")
-async def staff_handoff(session_id: str, body: HandoffMode,
-    x_review_token: str | None = Header(default=None)) -> dict:
+async def staff_handoff(
+    session_id: str, body: HandoffMode, x_review_token: str | None = Header(default=None)
+) -> dict:
     _authorize_review("after_sales_operator", ["after_sales:write"], x_review_token)
     await _existing_conversation(session_id)
     await asyncio.to_thread(conversations.set_human_mode, session_id, body.human)
@@ -687,12 +697,16 @@ async def staff_suggestion(session_id: str, x_review_token: str | None = Header(
     history = await asyncio.to_thread(conversations.messages, session_id)
     snapshot = await agent.aget_state({"configurable": {"thread_id": session_id}})
     latest = next((m["content"] for m in reversed(history) if m["sender"] == "customer"), "")
-    draft = await present(llm_client.chat_openai, latest, dict(snapshot.values),
-                          case_service.get_by_session(session_id))
+    draft = await present(
+        llm_client.chat_openai, latest, dict(snapshot.values), case_service.get_by_session(session_id)
+    )
     signals = [word for word in ("投诉", "生气", "失望", "太慢", "着急", "等了", "不满意") if word in latest]
-    return {"draft": draft, "signals": signals,
-            "attention": "建议先回应客户不满或催促，再说明下一步" if signals else "未发现明显不满或催促用词",
-            "signal_method": "本轮文本关键词提示，不代表心理状态判断"}
+    return {
+        "draft": draft,
+        "signals": signals,
+        "attention": "建议先回应客户不满或催促，再说明下一步" if signals else "未发现明显不满或催促用词",
+        "signal_method": "本轮文本关键词提示，不代表心理状态判断",
+    }
 
 
 @app.get("/customer/cases/{case_id}", response_model=CustomerCaseResponse)
@@ -967,43 +981,67 @@ def _customer_follow_up_actions(order_id: str | None = None) -> list[CustomerAct
     order = olist_service.get_order_status(order_id)
     status = order.status if order else ""
     if status in {"created", "approved", "invoiced", "processing"}:
-        common.extend([
-            CustomerAction(
-                id="cancel_order", label="取消订单", order_id=order_id, message="我想取消这笔订单。",
-                style="primary",
-            ),
-            CustomerAction(
-                id="change_address", label="修改地址", order_id=order_id,
-                message="我想修改这笔订单的收货地址。",
-            ),
-        ])
+        common.extend(
+            [
+                CustomerAction(
+                    id="cancel_order",
+                    label="取消订单",
+                    order_id=order_id,
+                    message="我想取消这笔订单。",
+                    style="primary",
+                ),
+                CustomerAction(
+                    id="change_address",
+                    label="修改地址",
+                    order_id=order_id,
+                    message="我想修改这笔订单的收货地址。",
+                ),
+            ]
+        )
     elif status in {"shipped", "delivered"}:
-        common.extend([
-            CustomerAction(
-                id="refund_request", label="申请退款", order_id=order_id,
-                message="我想为这笔订单申请退款。", style="primary",
-            ),
-            CustomerAction(
-                id="complaint_escalation", label="申请售后", order_id=order_id,
-                message="这笔订单遇到了问题，我想申请售后处理。",
-            ),
-        ])
+        common.extend(
+            [
+                CustomerAction(
+                    id="refund_request",
+                    label="申请退款",
+                    order_id=order_id,
+                    message="我想为这笔订单申请退款。",
+                    style="primary",
+                ),
+                CustomerAction(
+                    id="complaint_escalation",
+                    label="申请售后",
+                    order_id=order_id,
+                    message="这笔订单遇到了问题，我想申请售后处理。",
+                ),
+            ]
+        )
     elif status == "canceled":
-        common.extend([
-            CustomerAction(
-                id="refund_request", label="查询退款", order_id=order_id,
-                message="我想查询这笔已取消订单的退款处理情况。", style="primary",
-            ),
-            CustomerAction(
-                id="invoice_request", label="申请发票", order_id=order_id,
-                message="我想为这笔订单申请发票。",
-            ),
-        ])
+        common.extend(
+            [
+                CustomerAction(
+                    id="refund_request",
+                    label="查询退款",
+                    order_id=order_id,
+                    message="我想查询这笔已取消订单的退款处理情况。",
+                    style="primary",
+                ),
+                CustomerAction(
+                    id="invoice_request",
+                    label="申请发票",
+                    order_id=order_id,
+                    message="我想为这笔订单申请发票。",
+                ),
+            ]
+        )
     else:
         common.append(
             CustomerAction(
-                id="open_support_case", label="申请售后", order_id=order_id,
-                message="这笔订单遇到了问题，我想申请售后处理。", style="primary",
+                id="open_support_case",
+                label="申请售后",
+                order_id=order_id,
+                message="这笔订单遇到了问题，我想申请售后处理。",
+                style="primary",
             )
         )
     return common
@@ -1032,10 +1070,7 @@ def _customer_order_access_denied(
         return None
 
     session_id = request.session_id or str(uuid.uuid4())
-    answer = (
-        "为了保护订单隐私，我只能处理当前账号名下的订单。"
-        "请确认登录账号或订单号后再试。"
-    )
+    answer = "为了保护订单隐私，我只能处理当前账号名下的订单。请确认登录账号或订单号后再试。"
     record_trace(
         session_id=session_id,
         user_message=request.message,
@@ -1163,11 +1198,9 @@ async def _pending_confirmation_expired(session_id: str, state: dict) -> bool:
     pending = state.get("pending_side_effect", {}) if state else {}
     if not pending.get("requires_confirmation"):
         return False
-    if os.environ.get("RUNTIME_STORE_STRICT_HITL_TTL", "1").strip().lower() not in {"0", "false", "no"}:
-        runtime_pending = await runtime_store.get_pending_confirmation(session_id)
-        if runtime_pending is None:
-            return True
-    expires_at = pending.get("expires_at")
+    record = await asyncio.to_thread(case_service.get_by_session, session_id)
+    # Redis eviction/restart is not a business deadline. Durable case data wins.
+    expires_at = record.get("expires_at") if record else pending.get("expires_at")
     return isinstance(expires_at, (int, float)) and time.time() >= float(expires_at)
 
 
@@ -1178,10 +1211,96 @@ async def _resume_review_session(
     status: str,
     reviewer_id: str,
 ) -> ChatResponse:
+    if review_commands is None:
+        return await _apply_review_command(
+            session_id, resume_value=resume_value, status=status, reviewer_id=reviewer_id
+        )
+    record = await asyncio.to_thread(case_service.get_by_session, session_id)
+    if record is None:
+        raise HTTPException(409, "申请记录不存在，不能恢复写操作。")
+    command_id = await asyncio.to_thread(
+        review_commands.enqueue, record, resume_value=resume_value, status=status, reviewer_id=reviewer_id
+    )
+    command = await asyncio.to_thread(review_commands.claim, command_id)
+    if command is None:
+        return ChatResponse(answer="审核决定已登记，请查看申请最新状态。", session_id=session_id, sources=[])
+    return await _run_review_command(command)
+
+
+async def _run_review_command(command: dict) -> ChatResponse:
+    store = review_commands
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(30)
+            if not await asyncio.to_thread(store.renew, command):
+                raise RuntimeError("Review command lease lost")
+
+    pulse = asyncio.create_task(heartbeat())
+    try:
+        result = await _apply_review_command(
+            command["session_id"],
+            expected_case_id=command["command_id"].rsplit(":", 1)[0],
+            **command["payload"],
+        )
+        if pulse.done():
+            pulse.result()
+        await asyncio.to_thread(store.finish, command)
+        return result
+    except Exception as exc:
+        await asyncio.to_thread(store.finish, command, type(exc).__name__)
+        raise
+    finally:
+        pulse.cancel()
+        await asyncio.gather(pulse, return_exceptions=True)
+
+
+async def _review_recovery_loop() -> None:
+    while True:
+        try:
+            if review_commands is not None:
+                await asyncio.to_thread(review_commands.enqueue_expired, time.time())
+                for _ in range(20):
+                    command = await asyncio.to_thread(review_commands.claim)
+                    if command is None:
+                        break
+                    await _run_review_command(command)
+        except Exception:
+            logger.exception("Review recovery delayed; durable command retained")
+        await asyncio.sleep(max(1, int(os.environ.get("REVIEW_SCAN_SECONDS", "15"))))
+
+
+async def _apply_review_command(
+    session_id: str,
+    *,
+    resume_value: str,
+    status: str,
+    reviewer_id: str,
+    expected_case_id: str | None = None,
+) -> ChatResponse:
     config: dict = {"configurable": {"thread_id": session_id}}
     snapshot = await agent.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(409, "申请存在，但执行检查点缺失，需要恢复检查点后重试。")
+    if expected_case_id:
+        target = await asyncio.to_thread(case_service.get, expected_case_id)
+        if target is None or target.get("session_id") != session_id:
+            raise HTTPException(409, "审核命令与持久申请不匹配。")
+        current_case_id = dict(snapshot.values.get("pending_side_effect", {})).get("review_case_id")
+        if current_case_id and current_case_id != expected_case_id:
+            if target.get("status") not in {"pending_review", "appealed_pending_review"}:
+                return ChatResponse(
+                    answer="该申请已有处理结果，未重复处理。", session_id=session_id, sources=[]
+                )
+            raise HTTPException(409, "检查点正在处理其他申请，原审核命令保留待核对。")
+    if snapshot.next and not any(getattr(task, "interrupts", ()) for task in getattr(snapshot, "tasks", ())):
+        await agent.ainvoke(None, config)
+        snapshot = await agent.aget_state(config)
     if not snapshot.next:
-        return ChatResponse(answer="该 session 当前没有待审核售后动作。", session_id=session_id, sources=[])
+        record = case_service.get_by_session(session_id)
+        if record and record.get("status") in {"pending_review", "appealed_pending_review"}:
+            raise HTTPException(409, "申请与检查点状态不一致，已保留审核决定待核对。")
+        return ChatResponse(answer="申请已有处理结果，请查看最新状态。", session_id=session_id, sources=[])
 
     t_start = time.perf_counter()
     if await _pending_confirmation_expired(session_id, snapshot.values):
@@ -1190,10 +1309,7 @@ async def _resume_review_session(
         case_service.mark_review_result(session_id, "timeout_canceled", reviewer_id="system_timeout")
     else:
         result = await agent.ainvoke(Command(resume=resume_value), config)
-        if status == "review_approved":
-            case_service.mark_review_result(session_id, "executed", reviewer_id=reviewer_id)
-        elif status == "review_rejected":
-            case_service.mark_review_result(session_id, "rejected", reviewer_id=reviewer_id)
+        # finalize_escalation owns the business result; approval is not proof of execution.
     record_trace(
         session_id=session_id,
         user_message=f"[staff_review:{status}:{reviewer_id}]",
@@ -1247,11 +1363,17 @@ def _review_session_response(session_id: str, has_pending: bool, state: dict) ->
                 order_id = match.group(0)
                 break
     order = olist_service.get_order_status(order_id) if order_id else None
-    order_facts = {
-        "order_id": order.order_id, "order_status": order.status,
-        "payment_value": order.payment_value, "delay_days": order.delay_days,
-        "review_score": order.review_score,
-    } if order else {}
+    order_facts = (
+        {
+            "order_id": order.order_id,
+            "order_status": order.status,
+            "payment_value": order.payment_value,
+            "delay_days": order.delay_days,
+            "review_score": order.review_score,
+        }
+        if order
+        else {}
+    )
     summary = "当前没有待审核售后 case。"
     if has_pending and action_type:
         summary = f"待审核动作：{action_type}；订单：{order_id[:8] if order_id else 'unknown'}。"

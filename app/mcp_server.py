@@ -145,6 +145,18 @@ async def list_tools(
     return types.ListToolsResult(
         tools=[
             types.Tool(
+                name="search_policy_knowledge",
+                description="Retrieve public sandbox support policies.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "minLength": 1},
+                        "k": {"type": "integer", "minimum": 1, "maximum": 20},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            types.Tool(
                 name="get_order_status",
                 description="Return Olist order status, delivery, payment, and review facts.",
                 input_schema=_object_schema({"order_id": "32-character Olist order id"}, ["order_id"]),
@@ -193,7 +205,27 @@ async def call_tool(
     params: types.CallToolRequestParams,
 ) -> types.CallToolResult:
     args = params.arguments or {}
-    if params.name == "get_order_status":
+    if params.name == "search_policy_knowledge":
+        from pydantic import BaseModel, Field
+
+        class SearchArgs(BaseModel):
+            query: str = Field(min_length=1, max_length=2000)
+            k: int = Field(default=3, ge=1, le=20)
+
+        parsed = SearchArgs.model_validate(args)
+        structured = {
+            "sections": [
+                dict(
+                    source=h.source,
+                    source_type=h.source_type,
+                    section_title=h.section_title,
+                    text=h.text,
+                    score=h.score,
+                )
+                for h in knowledge_base.search(parsed.query, k=parsed.k)
+            ]
+        }
+    elif params.name == "get_order_status":
         structured = {"answer": get_order_status(str(args.get("order_id", "")))}
     elif params.name == "search_category_risk":
         structured = {"insights": search_category_risk(str(args.get("query", "")))}
@@ -236,8 +268,7 @@ def _object_schema(properties: dict[str, str], required: list[str]) -> dict[str,
     return {
         "type": "object",
         "properties": {
-            name: {"type": "string", "description": description}
-            for name, description in properties.items()
+            name: {"type": "string", "description": description} for name, description in properties.items()
         },
         "required": required,
     }

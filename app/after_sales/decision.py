@@ -180,6 +180,8 @@ class AfterSalesDecisionEngine:
             action_type=action_type,  # type: ignore[arg-type]
             reason_code=reason_code,
             confidence=round(confidence, 2),
+            confidence_source="legacy_heuristic",
+            rule_id=f"{action_type}:{outcome}:{order.status}",
             risk_level=risk,  # type: ignore[arg-type]
             requires_human=requires_human,
             handoff_reasons=handoff_reasons,
@@ -204,7 +206,11 @@ def verify_decision(decision: AfterSalesDecision) -> VerificationResult:
             flags.append("high_risk_action_without_hitl")
         if decision.action_type in decision.allowed_actions and not decision.policy_refs:
             flags.append("write_action_without_policy_reference")
-    if decision.confidence < 0.65 and decision.outcome not in {"ask_clarification", "needs_human_review"}:
+    if (
+        decision.confidence_source == "model_calibrated"
+        and decision.confidence < 0.65
+        and decision.outcome not in {"ask_clarification", "needs_human_review"}
+    ):
         flags.append("low_confidence_without_safe_exit")
     if decision.outcome == "reject" and decision.allowed_actions:
         flags.append("reject_with_allowed_write_action")
@@ -251,8 +257,6 @@ def _handoff_reasons(
         reasons.append("delivery_sla_breach")
     if requires_human and risk_signals.get("has_low_review"):
         reasons.append("low_customer_rating")
-    if requires_human and confidence < 0.75:
-        reasons.append("low_decision_confidence")
     if requires_human and not policy_refs:
         reasons.append("missing_policy_evidence")
     if outcome == "ask_clarification":
@@ -336,10 +340,10 @@ def _risk_signals(order: OrderStatusView, user_request: str) -> dict[str, object
         "mentions_compensation": any(token in text for token in ("refund", "退款", "赔付", "补偿", "退钱")),
         "mentions_address": any(token in text for token in ("address", "地址")),
         "mentions_complaint": any(token in text for token in ("complaint", "投诉", "升级")),
-        "already_refunded": False,
-        "partial_refund": False,
-        "coupon_or_points_payment": False,
-        "suspected_abuse": False,
+        "already_refunded": None,
+        "partial_refund": None,
+        "coupon_or_points_payment": None,
+        "suspected_abuse": None,
     }
 
 
@@ -366,7 +370,11 @@ def _low_risk_auto_gate(
     if action_type == "open_support_case":
         return order.payment_value < 300
     if action_type == "cancel_order":
-        return bool(risk_signals.get("pre_shipment")) and order.payment_value < 50
+        return (
+            all(risk_signals.get(key) is False for key in ("already_refunded", "partial_refund"))
+            and bool(risk_signals.get("pre_shipment"))
+            and order.payment_value < 50
+        )
     if action_type == "change_address":
         return bool(risk_signals.get("pre_shipment")) and order.payment_value < 50
     return False

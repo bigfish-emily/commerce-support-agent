@@ -21,6 +21,7 @@ DecisionOutcome = Literal[
 ]
 
 RiskLevel = Literal["low", "medium", "high"]
+CURRENT_POLICY_VERSION = "after_sales_rules_v2_unknown_evidence"
 
 
 class AfterSalesDecision(BaseModel):
@@ -30,6 +31,11 @@ class AfterSalesDecision(BaseModel):
     action_type: AfterSalesAction
     reason_code: str
     confidence: float = Field(..., ge=0, le=1)
+    confidence_source: Literal["legacy_heuristic", "model_uncalibrated", "model_calibrated"] = (
+        "legacy_heuristic"
+    )
+    policy_version: str = CURRENT_POLICY_VERSION
+    rule_id: str = ""
     risk_level: RiskLevel
     requires_human: bool
     handoff_reasons: list[str] = Field(default_factory=list)

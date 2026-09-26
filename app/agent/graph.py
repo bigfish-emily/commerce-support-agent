@@ -14,16 +14,17 @@ class AgentGraph:
     def build(self, checkpointer: BaseCheckpointSaver) -> StateGraph:
         """Graph topology:
 
-        plan_tasks -> select_next_task -> extract_slots -> retrieve_context
+        plan_tasks -> execute_ready_reads -> select_next_task -> extract_slots -> retrieve_context
         retrieve_context -> execute_read_task for read-only tasks
         retrieve_context -> build_after_sales_case for write-intent tasks
         build_after_sales_case -> await_confirmation for high-risk writes
         build_after_sales_case -> select_next_task after reject/clarify/auto-execute
-        finalize_escalation -> select_next_task after HITL resume
+        finalize_escalation -> execute_ready_reads -> select_next_task after HITL resume
         """
         graph: StateGraph = StateGraph(AgentState)
 
         graph.add_node("plan_tasks", self._actions.plan_tasks)
+        graph.add_node("execute_ready_reads", self._actions.execute_ready_reads)
         graph.add_node("select_next_task", self._actions.select_next_task)
         graph.add_node("extract_slots", self._actions.extract_slots)
         graph.add_node("retrieve_context", self._actions.retrieve_context)
@@ -34,7 +35,8 @@ class AgentGraph:
         graph.add_node("finalize_answer", self._actions.finalize_answer)
 
         graph.set_entry_point("plan_tasks")
-        graph.add_edge("plan_tasks", "select_next_task")
+        graph.add_edge("plan_tasks", "execute_ready_reads")
+        graph.add_edge("execute_ready_reads", "select_next_task")
         graph.add_conditional_edges(
             "select_next_task",
             self._route_after_select,
@@ -52,17 +54,17 @@ class AgentGraph:
                 "read": "execute_read_task",
             },
         )
-        graph.add_edge("execute_read_task", "select_next_task")
+        graph.add_edge("execute_read_task", "execute_ready_reads")
         graph.add_conditional_edges(
             "build_after_sales_case",
             self._route_after_after_sales,
             {
                 "await_confirmation": "await_confirmation",
-                "continue": "select_next_task",
+                "continue": "execute_ready_reads",
             },
         )
         graph.add_edge("await_confirmation", "finalize_escalation")
-        graph.add_edge("finalize_escalation", "select_next_task")
+        graph.add_edge("finalize_escalation", "execute_ready_reads")
         graph.add_edge("finalize_answer", END)
 
         return graph.compile(checkpointer=checkpointer)

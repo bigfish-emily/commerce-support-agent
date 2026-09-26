@@ -576,6 +576,7 @@ def evaluate_verifier() -> dict[str, Any]:
                     action_type=action,  # type: ignore[arg-type]
                     reason_code="injected_fault",
                     confidence=0.4,
+                    confidence_source="model_calibrated",
                     risk_level="low",
                     requires_human=False,
                     allowed_actions=[action],

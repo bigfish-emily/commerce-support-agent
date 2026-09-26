@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import os
 import re
 import time
 
 from langgraph.types import interrupt
 
+from app.after_sales.execution_guard import action_fingerprint, order_fingerprint
+from app.after_sales.models import CURRENT_POLICY_VERSION
 from app.agent.state import AgentState
 from app.llm.intent_planner import IntentPlanner
 from app.llm.response_generator import OlistTaskExtractor, PolicyResponseGenerator, QaResponseGenerator
@@ -60,6 +63,25 @@ class AgentActions:
     async def plan_tasks(self, state: AgentState) -> dict:
         started_at = time.perf_counter()
         last_message: str = state["messages"][-1]["content"]
+        semantic_backend = os.environ.get("SEMANTIC_DECISION_SHADOW", "off")
+        if semantic_backend != "off" and hasattr(self._intent_planner, "observe_update"):
+            observation = await self._intent_planner.observe_update(
+                {
+                    "message": last_message,
+                    "active_task": state.get("dialog_state", {}),
+                    "previous_messages": state["messages"][-3:-1],
+                },
+                semantic_backend,
+            )
+            state["trajectory_events"] = [
+                *state.get("trajectory_events", []),
+                _event(
+                    "semantic_decision_shadow",
+                    "observe",
+                    "error" if observation.get("error") else "ok",
+                    observation,
+                ),
+            ]
         requested_action = str(state.get("requested_action") or "").strip()
         if requested_action:
             tasks = _structured_action_plan(requested_action, last_message)
@@ -109,6 +131,79 @@ class AgentActions:
                 ),
             ],
         }
+
+    async def execute_ready_reads(self, state: AgentState) -> dict:
+        """Fork independent reads into private state; join in plan order."""
+        import copy
+
+        terminal = _terminal_task_indices(list(state.get("completed_tasks", [])))
+        complete = _completed_task_indices(list(state.get("completed_tasks", [])))
+        ready = []
+        for idx, task in _execution_order(state.get("task_plan", [])):
+            if idx in terminal:
+                continue
+            if task.get("side_effect") or task.get("intent") == "escalation":
+                break
+            if any(dep not in complete for dep in task.get("depends_on", [])):
+                continue
+            if task.get("intent") in {
+                "order_status",
+                "customer_orders",
+                "customer_profile",
+                "policy",
+                "qa",
+                "ops_decision",
+            }:
+                ready.append((idx, task))
+        if len(ready) < 2:
+            return {}
+        semaphore = asyncio.Semaphore(4)
+
+        async def run(idx: int, task: dict) -> dict:
+            async with semaphore:
+                local = copy.deepcopy(state)
+                local.update(
+                    current_task_index=idx,
+                    current_task=task,
+                    current_task_text=str(task.get("text") or _latest_user_task_message(state)),
+                )
+                try:
+                    for node in (self.extract_slots, self.retrieve_context, self.execute_read_task):
+                        local.update(await node(local))
+                except Exception:
+                    local["completed_tasks"] = _upsert_task_status(
+                        list(state.get("completed_tasks", [])), idx, str(task.get("intent")), "failed"
+                    )
+                    local["answer_parts"] = [*state.get("answer_parts", []), "部分查询暂时失败，请稍后重试。"]
+                    local["trajectory_events"] = [
+                        *state.get("trajectory_events", []),
+                        _event("execute_read_task", str(task.get("intent")), "failed", {"task_index": idx}),
+                    ]
+                return local
+
+        results = await asyncio.gather(*(run(idx, task) for idx, task in ready))
+        update = {}
+        for field in (
+            "completed_tasks",
+            "answer_parts",
+            "trajectory_events",
+            "retrieved_policy",
+            "retrieved_insights",
+            "retrieved_support_docs",
+        ):
+            original = list(state.get(field, []))
+            update[field] = original + [
+                item for result in results for item in result.get(field, [])[len(original) :]
+            ]
+        update["trajectory_events"].append(
+            _event(
+                "execute_ready_reads",
+                "workflow",
+                "completed",
+                {"task_indices": [idx for idx, _ in ready], "concurrency_limit": 4},
+            )
+        )
+        return update
 
     def select_next_task(self, state: AgentState) -> dict:
         completed = list(state.get("completed_tasks", []))
@@ -182,8 +277,7 @@ class AgentActions:
         text = str(state.get("current_task_text") or _latest_user_task_message(state))
         slot_text = _with_order_context(text, _latest_user_task_message(state))
         selected_order_id = str(
-            dict(state.get("page_context", {})).get("selected_order_id")
-            or state.get("active_order_id", "")
+            dict(state.get("page_context", {})).get("selected_order_id") or state.get("active_order_id", "")
         ).lower()
         selected_repair = repair_order_id(selected_order_id) if selected_order_id else None
         if intent in {"order_status", "escalation"} and selected_repair and selected_repair.ok:
@@ -193,7 +287,13 @@ class AgentActions:
             extracted = OlistTaskResult(order_id=selected_repair.value, category="", user_goal="page_context")
             extraction_mode = "trusted_page_context"
         elif intent in {
-            "small_talk", "clarify", "customer_profile", "policy", "qa", "ops_decision", "customer_orders",
+            "small_talk",
+            "clarify",
+            "customer_profile",
+            "policy",
+            "qa",
+            "ops_decision",
+            "customer_orders",
         }:
             # Retrieval consumes the full task text. These read-only intents do
             # not need an order/category slot before retrieval can begin.
@@ -548,6 +648,40 @@ class AgentActions:
                 "trajectory_events": events,
             }
 
+        current_order = await asyncio.to_thread(
+            self._olist_service.get_order_status, str(draft.get("order_id", ""))
+        )
+        review_id = draft.get("review_case_id")
+        if review_id:
+            record = await asyncio.to_thread(self._case_service.get, str(review_id))
+            if (
+                record is None
+                or record.get("session_id") != state.get("session_id")
+                or record.get("order_id") != draft.get("order_id")
+                or record.get("status") not in {"pending_review", "appealed_pending_review"}
+                or (record.get("expires_at") is not None and float(record["expires_at"]) <= time.time())
+            ):
+                draft["execution_status"] = "failed"
+                return "审核记录已失效或与当前申请不一致，未执行订单操作。"
+        assessed = draft.get("after_sales_case", {})
+        assessment_changed = (
+            isinstance(assessed, dict)
+            and bool(assessed)
+            and current_order is not None
+            and (
+                assessed.get("order_status") != current_order.status
+                or assessed.get("payment_value") != current_order.payment_value
+            )
+        )
+        if current_order is None or assessment_changed:
+            return {
+                "completed_tasks": _upsert_task_status(completed, idx, "escalation", "failed"),
+                "answer_parts": [*state.get("answer_parts", []), "无法核实订单，请重新查询后提交。"],
+            }
+        draft["execution_binding"] = {
+            "action": action_fingerprint(draft, state),
+            "order": order_fingerprint(current_order),
+        }
         if draft.get("requires_confirmation") is False:
             # The customer never receives a write scope. A low-risk action is
             # executed by the constrained system actor only after the
@@ -558,7 +692,8 @@ class AgentActions:
                 role_override="after_sales_operator",
                 auth_scopes_override=["after_sales:write"],
             )
-            completed = _upsert_task_status(completed, idx, "escalation", "completed")
+            execution_status = str(draft.get("execution_status", "failed"))
+            completed = _upsert_task_status(completed, idx, "escalation", execution_status)
             answer_parts = [
                 *state.get("answer_parts", []),
                 f"[售后升级]\n{answer}\n\n{execution_answer}",
@@ -575,7 +710,7 @@ class AgentActions:
                     _event(
                         "execute_write_action",
                         "escalation",
-                        "completed",
+                        execution_status,
                         {
                             "task_index": idx,
                             "tool": "execute_side_effect",
@@ -616,16 +751,19 @@ class AgentActions:
             "task_index": idx,
             "review_case_id": review_case_id,
             "created_at": created_at,
-            "expires_at": created_at + timeout_seconds,
+            "expires_at": dict(review_case.get("record", {})).get("expires_at", created_at + timeout_seconds),
             "timeout_seconds": timeout_seconds,
             "handoff_reasons": handoff_reasons,
         }
         if self._runtime_store is not None:
-            await self._runtime_store.put_pending_confirmation(
-                str(state.get("session_id", "unknown")),
-                pending_side_effect,
-                timeout_seconds,
-            )
+            try:
+                await self._runtime_store.put_pending_confirmation(
+                    str(state.get("session_id", "unknown")),
+                    pending_side_effect,
+                    timeout_seconds,
+                )
+            except Exception:
+                logging.getLogger(__name__).warning("Pending index unavailable; durable case retained")
         completed = _upsert_task_status(completed, idx, "escalation", "awaiting_confirmation")
         answer_parts = [*state.get("answer_parts", []), f"[售后升级]\n{answer}"]
         final_answer = "\n\n".join(answer_parts)
@@ -642,9 +780,9 @@ class AgentActions:
             "trajectory_events": [
                 *events,
                 _event(
-                        "hitl_gate",
-                        "escalation",
-                        "awaiting_confirmation",
+                    "hitl_gate",
+                    "escalation",
+                    "awaiting_confirmation",
                     {
                         "task_index": idx,
                         "tool": "prepare_side_effect",
@@ -657,9 +795,7 @@ class AgentActions:
     async def finalize_answer(self, state: AgentState) -> dict:
         answers = list(state.get("answer_parts", []))
         final_answer = (
-            "\n\n".join(answers)
-            if answers
-            else "没有识别到可执行的电商客服任务，请补充订单号或问题。"
+            "\n\n".join(answers) if answers else "没有识别到可执行的电商客服任务，请补充订单号或问题。"
         )
         if _is_customer_channel(state):
             final_answer = _strip_internal_answer_labels(final_answer)
@@ -837,11 +973,11 @@ class AgentActions:
                 role_override=reviewer_override,
                 auth_scopes_override=["after_sales:write"] if reviewer_override else None,
             )
-            status = "completed"
+            status = str(draft.get("execution_status", "failed"))
             if reviewer_override and hasattr(self._case_service, "mark_review_result"):
                 self._case_service.mark_review_result(
                     str(state.get("session_id", "unknown")),
-                    "executed",
+                    "executed" if status == "completed" else status,
                     reviewer_id=reviewer_override,
                 )
         elif confirmed:
@@ -870,7 +1006,10 @@ class AgentActions:
         if task_index is not None:
             completed = _upsert_task_status(completed, task_index, "escalation", status)
         if self._runtime_store is not None:
-            await self._runtime_store.clear_pending_confirmation(str(state.get("session_id", "unknown")))
+            try:
+                await self._runtime_store.clear_pending_confirmation(str(state.get("session_id", "unknown")))
+            except Exception:
+                logging.getLogger(__name__).warning("Pending index cleanup failed; business result retained")
 
         return {
             "final_answer": answer,
@@ -903,6 +1042,29 @@ class AgentActions:
         auth_scopes_override: list[str] | None = None,
     ) -> str:
         action_type = str(draft.get("action_type", "open_support_case"))
+        binding = draft.get("execution_binding")
+        if isinstance(binding, dict) and binding.get("action") == action_fingerprint(draft, state):
+            lookup = getattr(self._case_service, "get_execution_receipt", None)
+            if lookup is not None:
+                receipt = await asyncio.to_thread(
+                    lookup, action_type, str(draft.get("order_id", "")), str(draft.get("message_text", ""))
+                )
+                if receipt is not None:
+                    draft["execution_status"] = "completed"
+                    return f"该申请已处理，已恢复原处理记录：{receipt['case_id']}，未重复执行。"
+        current_order = await asyncio.to_thread(
+            self._olist_service.get_order_status, str(draft.get("order_id", ""))
+        )
+        if (
+            not isinstance(binding, dict)
+            or binding.get("action") != action_fingerprint(draft, state)
+            or current_order is None
+            or binding.get("order") != order_fingerprint(current_order)
+            or dict(draft.get("decision", {})).get("policy_version", CURRENT_POLICY_VERSION)
+            != CURRENT_POLICY_VERSION
+        ):
+            draft["execution_status"] = "failed"
+            return "订单或申请内容已变化，原确认不可继续使用，请重新提交审核。"
         tool_result = await self._tool_manager.call(
             "execute_side_effect",
             {
@@ -914,8 +1076,14 @@ class AgentActions:
         )
         action_label = _ACTION_LABELS.get(action_type, "售后升级处理")
         if not tool_result.ok:
+            draft["execution_status"] = (
+                "outcome_unknown" if tool_result.error_code == "outcome_unknown" else "failed"
+            )
+            if draft["execution_status"] == "outcome_unknown":
+                return f"{action_label}的执行结果尚未确认，请勿重复提交，需要核对处理结果。"
             reason = tool_result.error_message or tool_result.error_code or "unknown error"
             return f"未执行{action_label}：{reason}。"
+        draft["execution_status"] = "completed"
         result = tool_result.data["result"]
         duplicate_hint = "（重复请求，已返回已有结果）" if result["duplicate"] else ""
         return f"已执行{action_label}：{result['result_id']}。{duplicate_hint}"
@@ -928,8 +1096,7 @@ class AgentActions:
         if any(token in lowered for token in ("cancel order", "cancel purchase", "取消订单")):
             return "cancel_order"
         if any(
-            token in lowered
-            for token in ("change shipping address", "change address", "改地址", "修改地址")
+            token in lowered for token in ("change shipping address", "change address", "改地址", "修改地址")
         ):
             return "change_address"
         if any(token in lowered for token in ("invoice", "发票", "开票")):
@@ -1113,7 +1280,7 @@ def _format_after_sales_decision_answer(
     lines = [
         "售后 case 决策：",
         f"- 动作：{action_label}",
-        f"- 结论：{outcome}；风险等级：{risk}；置信度：{confidence}",
+        f"- 结论：{outcome}；风险等级：{risk}；历史规则分值（非概率）：{confidence}",
         f"- 证据：{evidence_text}",
         f"- 政策依据：{refs_text or '未命中明确政策，需谨慎处理'}",
         f"- Verifier：next_step={next_step}；flags={flags_text}",
@@ -1234,13 +1401,15 @@ def _structured_action_plan(action: str, message: str) -> list[dict[str, object]
     if normalized in {"track_order", "order_status"}:
         return [{"intent": "order_status", "text": message, "side_effect": False, "depends_on": []}]
     if normalized in {"list_active_shipments", "list_attention_orders"}:
-        return [{
-            "intent": "customer_orders",
-            "text": message,
-            "side_effect": False,
-            "depends_on": [],
-            "order_filter": "in_transit" if normalized == "list_active_shipments" else "attention",
-        }]
+        return [
+            {
+                "intent": "customer_orders",
+                "text": message,
+                "side_effect": False,
+                "depends_on": [],
+                "order_filter": "in_transit" if normalized == "list_active_shipments" else "attention",
+            }
+        ]
     if normalized in {"order_summary", "customer_profile"}:
         return [{"intent": "customer_profile", "text": message, "side_effect": False, "depends_on": []}]
     if normalized in {"refund_policy", "after_sales_policy"}:
@@ -1302,8 +1471,7 @@ def _format_customer_order_summary(orders: list[dict[str, object]]) -> str:
         if category not in categories:
             categories.append(category)
     active_count = sum(
-        str(order.get("status", "")) in {"approved", "invoiced", "processing", "shipped"}
-        for order in orders
+        str(order.get("status", "")) in {"approved", "invoiced", "processing", "shipped"} for order in orders
     )
     category_text = "、".join(categories[:4])
     more = "等" if len(categories) > 4 else ""
@@ -1402,7 +1570,7 @@ def _completed_task_indices(completed: list[dict[str, object]]) -> set[int]:
 
 
 def _terminal_task_indices(completed: list[dict[str, object]]) -> set[int]:
-    terminal = {"completed", "canceled", "timeout_canceled", "failed", "blocked"}
+    terminal = {"completed", "canceled", "timeout_canceled", "failed", "blocked", "outcome_unknown"}
     return {
         int(item["index"])
         for item in completed
@@ -1432,11 +1600,7 @@ def _upsert_task_status(
 
 def _should_include_previous_answer(state: AgentState) -> bool:
     events = state.get("trajectory_events", [])
-    return bool(
-        state.get("final_answer")
-        and events
-        and events[-1].get("node") == "finalize_escalation"
-    )
+    return bool(state.get("final_answer") and events and events[-1].get("node") == "finalize_escalation")
 
 
 def _maybe_int(value: object) -> int | None:
@@ -1482,13 +1646,9 @@ def _merge_dialog_state(
     if handoff_reasons:
         merged_handoff.extend(handoff_reasons)
 
-    next_missing_slots = (
-        missing_slots if missing_slots is not None else dialog_state.get("missing_slots", [])
-    )
+    next_missing_slots = missing_slots if missing_slots is not None else dialog_state.get("missing_slots", [])
     next_turn_count = (
-        turn_count
-        if turn_count is not None
-        else dialog_state.get("turn_count", _turn_count(state))
+        turn_count if turn_count is not None else dialog_state.get("turn_count", _turn_count(state))
     )
     dialog_state.update(
         {

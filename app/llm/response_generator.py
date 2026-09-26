@@ -121,10 +121,19 @@ class PolicyResponseGenerator:
         text = user_message.lower()
         if "发票" in text:
             return "开具发票前需要核对订单和发票信息。您可以先提交申请，工作人员会确认信息后继续处理。"
-        if "取消" in text:
+        if any(term in text for term in ("取消", "撤销", "撤单", "cancel")):
+            if any(
+                section.get("section_title") == "Order Cancellation Eligibility Policy"
+                for section in policy_sections
+            ):
+                return (
+                    "如果订单已经发货或送达，就不能直接取消；已取消的订单也无需重复取消。"
+                    "尚未发货的订单可以提交取消申请，由工作人员核查。"
+                    "如果已经收货后遇到问题，可以告诉我具体情况，再确认适合的售后处理方式。"
+                    "这条答复只是说明规则，没有为您取消订单或提交退款。"
+                )
             return (
-                "能否取消订单取决于当前订单和物流状态。"
-                "订单尚未进入配送时可以提交申请，工作人员会为您核查。"
+                "能否取消订单取决于当前订单和物流状态。订单尚未进入配送时可以提交申请，工作人员会为您核查。"
             )
         if "地址" in text:
             return "修改收货地址需要先确认订单尚未进入配送。请提交申请，工作人员会核对后告知您结果。"
@@ -142,9 +151,7 @@ class OlistTaskExtractor:
     def __init__(self, llm: ChatOpenAI) -> None:
         self._base_llm = llm
         self._llm = (
-            llm.with_structured_output(OlistTaskResult)
-            if native_structured_output_enabled(llm)
-            else None
+            llm.with_structured_output(OlistTaskResult) if native_structured_output_enabled(llm) else None
         )
 
     async def extract(self, user_message: str) -> OlistTaskResult:
@@ -197,11 +204,7 @@ def _regex_task_result(user_message: str) -> OlistTaskResult:
     order_id = re.sub(r"[^0-9a-fA-F]", "", order_match.group(0)).lower() if order_match else ""
     return OlistTaskResult(
         order_id=order_id if len(order_id) == 32 else "",
-        category=(
-            category_match.group(0).replace(" ", "_").replace("-", "_")
-            if category_match
-            else ""
-        ),
+        category=(category_match.group(0).replace(" ", "_").replace("-", "_") if category_match else ""),
         user_goal="fallback extraction",
     )
 

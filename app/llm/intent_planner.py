@@ -28,14 +28,15 @@ logger = logging.getLogger(__name__)
 class IntentPlanner:
     """Plan ordered business tasks from a user request."""
 
-    def __init__(self, llm: ChatOpenAI) -> None:
+    def __init__(self, llm: ChatOpenAI, *, allow_fast_path: bool = True) -> None:
         self._base_llm = llm
+        self._allow_fast_path = allow_fast_path
         self._llm = (
             llm.with_structured_output(TaskPlanResult) if native_structured_output_enabled(llm) else None
         )
 
     async def plan(self, message: str) -> TaskPlanResult:
-        fast_plan = _fast_plan(message)
+        fast_plan = _fast_plan(message) if self._allow_fast_path else None
         if fast_plan is not None:
             return fast_plan
         messages = [
@@ -74,6 +75,11 @@ class IntentPlanner:
         plan = await self.plan(message)
         intent = plan.tasks[0].intent if plan.tasks else "policy"
         return IntentRouteResult(intent=intent)
+
+    async def observe_update(self, context: dict, backend: str) -> dict:
+        from app.llm.semantic_decision import classify_update
+
+        return (await classify_update(context, backend=backend, llm=self._base_llm)).model_dump()
 
 
 def fallback_plan(

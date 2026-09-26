@@ -109,6 +109,7 @@ async def test_tool_call_auth_scope_denies_even_when_role_allowed(manager) -> No
     assert result.error_code == "permission_denied"
     assert "policy:read" in str(result.error_message)
 
+
 @pytest.mark.anyio
 async def test_tool_call_cache_for_read_only_tools(manager) -> None:
     args = {"query": "health beauty 类目有什么运营风险？"}
@@ -180,6 +181,11 @@ class FakeRedis:
         return int(existed)
 
     async def eval(self, script: str, keys_count: int, key: str, token: str) -> int:
+        if "INCR" in script:
+            count = await self.incr(key)
+            if await self.ttl(key) < 0:
+                await self.expire(key, int(token))
+            return [count, await self.ttl(key)]
         if self.values.get(key) == token:
             return await self.delete(key)
         return 0

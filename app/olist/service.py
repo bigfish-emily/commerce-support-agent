@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -387,9 +388,20 @@ class SQLiteCaseService:
         )
         return str(result["result_id"])
 
+    def get_execution_receipt(self, action_type: str, order_id: str, message_text: str) -> dict | None:
+        """Only a committed business event is evidence of a completed local write."""
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT c.* FROM cases c WHERE c.idempotency_key = ? AND c.status = 'executed' "
+                "AND EXISTS (SELECT 1 FROM order_events e WHERE e.case_id = c.case_id)",
+                (_idempotency_key(action_type, order_id, message_text),),
+            ).fetchone()
+            return dict(row) if row else None
+
     def execute_action(self, action_type: str, order_id: str, message_text: str) -> dict[str, object]:
         idempotency_key = _idempotency_key(action_type, order_id, message_text)
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             existing = conn.execute(
                 "SELECT * FROM cases WHERE idempotency_key = ?",
@@ -460,19 +472,19 @@ class SQLiteCaseService:
         }
 
     def reset(self) -> None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.execute("DELETE FROM cases")
             conn.execute("DELETE FROM order_events")
             conn.execute("DELETE FROM order_projections")
 
     def get(self, case_id: str) -> dict | None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
             return dict(row) if row else None
 
     def get_by_session(self, session_id: str) -> dict | None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM cases WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -492,7 +504,7 @@ class SQLiteCaseService:
         case_payload: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         idempotency_key = _idempotency_key(action_type, order_id, message_text)
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             existing = conn.execute(
                 "SELECT * FROM cases WHERE idempotency_key = ?",
@@ -545,7 +557,7 @@ class SQLiteCaseService:
         }
 
     def mark_review_result(self, session_id: str, status: str, reviewer_id: str = "") -> dict | None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT case_id FROM cases WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -568,7 +580,7 @@ class SQLiteCaseService:
             return dict(updated) if updated else None
 
     def appeal_case(self, case_id: str, user_id: str, reason: str) -> dict | None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM cases WHERE case_id = ?",
@@ -593,7 +605,7 @@ class SQLiteCaseService:
             return dict(updated) if updated else None
 
     def list_pending(self, limit: int = 50) -> list[dict]:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -607,7 +619,7 @@ class SQLiteCaseService:
             return [dict(row) for row in rows]
 
     def get_order_projection(self, order_id: str) -> dict[str, Any]:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT projection_json FROM order_projections WHERE order_id = ?",
@@ -622,7 +634,7 @@ class SQLiteCaseService:
         return payload if isinstance(payload, dict) else {}
 
     def count_order_events(self, order_id: str) -> int:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM order_events WHERE order_id = ?",
                 (order_id,),
@@ -630,7 +642,7 @@ class SQLiteCaseService:
         return int(row[0]) if row else 0
 
     def _ensure_schema(self) -> None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cases (

@@ -1,0 +1,16 @@
+{
+  "backend": "rules",
+  "dataset_sha256": "65f7dbd2f4924ae3eec78d50887b0e88d1dcef70f48497c189355907a8a644b0",
+  "limitations": "Component evaluation; smoke fixtures are not an independent benchmark.",
+  "n": 10,
+  "provider_errors": 0,
+  "accuracy": 0.6,
+  "macro_f1_fixed_5_labels": 0.5666666666666667,
+  "p50_ms": 0.002500019036233425,
+  "p95_ms": 0.045599997974932194,
+  "multiclass_brier": null,
+  "brier_n": 0,
+  "usage_observed_n": 0,
+  "input_tokens": 0,
+  "output_tokens": 0
+}

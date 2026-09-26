@@ -1,6 +1,19 @@
 from app.olist.knowledge import MarkdownKnowledgeBase
 
 
+def test_cancellation_synonyms_retrieve_applicable_policy():
+    from app.llm.offline import OfflineChatModel
+    from app.llm.response_generator import PolicyResponseGenerator
+
+    query = "包裹已经送达后还能撤销订单吗？"
+    hits = MarkdownKnowledgeBase().search(query)
+    sections = [{"section_title": hit.section_title, "text": hit.text} for hit in hits]
+    assert any(hit.section_title == "Order Cancellation Eligibility Policy" for hit in hits)
+    reply = PolicyResponseGenerator(OfflineChatModel()).customer_safe_template(query, sections)
+    assert "不能直接取消" in reply
+    assert "没有为您取消订单" in reply
+
+
 def test_markdown_knowledge_base_searches_policy_sections() -> None:
     hits = MarkdownKnowledgeBase().search("refund coupon compensation human confirmation", k=2)
     assert hits

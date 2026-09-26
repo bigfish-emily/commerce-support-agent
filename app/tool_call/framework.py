@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import logging
 import os
 import time
 import uuid
@@ -22,6 +23,7 @@ from app.olist.service import (
     format_order_status,
 )
 from app.retrieval.hybrid import HybridSupportRetriever
+from app.tool_call.write_journal import WriteJournal
 
 
 class ToolCallError(Exception):
@@ -98,6 +100,9 @@ class RuntimeStore(ToolCacheBackend, Protocol):
 
     async def release_lock(self, key: str, token: str) -> None:
         """Release a lock only if its token still matches."""
+
+    async def renew_lock(self, key: str, token: str, ttl_seconds: int) -> bool:
+        """Extend only the current owner's lease."""
 
 
 class InMemoryToolCache:
@@ -178,6 +183,13 @@ class InMemoryRuntimeStore(InMemoryToolCache):
         if cached and cached[1] == token:
             self._locks.pop(key, None)
 
+    async def renew_lock(self, key: str, token: str, ttl_seconds: int) -> bool:
+        cached = self._locks.get(key)
+        if not cached or cached[1] != token or cached[0] <= time.time():
+            return False
+        self._locks[key] = (time.time() + ttl_seconds, token)
+        return True
+
 
 class RedisToolCache:
     """Redis-backed cache for multi-worker tool-call deployments."""
@@ -226,13 +238,17 @@ class RedisRuntimeStore(RedisToolCache):
 
     async def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
         namespaced = self._runtime_key("rate", key)
-        count = int(await self._client.incr(namespaced))
-        if count == 1:
-            await self._client.expire(namespaced, max(window_seconds, 1))
-            reset_after = window_seconds
-        else:
-            ttl = int(await self._client.ttl(namespaced))
-            reset_after = ttl if ttl > 0 else window_seconds
+        # Atomic increment + expiry; also repairs legacy counters without TTL.
+        script = """
+        local count = redis.call('INCR', KEYS[1])
+        local ttl = redis.call('TTL', KEYS[1])
+        if ttl < 0 then
+            redis.call('EXPIRE', KEYS[1], ARGV[1])
+            ttl = tonumber(ARGV[1])
+        end
+        return {count, ttl}
+        """
+        count, reset_after = map(int, await self._client.eval(script, 1, namespaced, max(window_seconds, 1)))
         return RateLimitDecision(
             allowed=count <= limit,
             key=key,
@@ -287,6 +303,18 @@ class RedisRuntimeStore(RedisToolCache):
     def _runtime_key(self, kind: str, key: str) -> str:
         return f"{self._runtime_prefix}:{kind}:{key}"
 
+    async def renew_lock(self, key: str, token: str, ttl_seconds: int) -> bool:
+        return bool(
+            await self._client.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                "return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end",
+                1,
+                self._runtime_key("lock", key),
+                token,
+                ttl_seconds,
+            )
+        )
+
 
 class OrderStatusArgs(BaseModel):
     order_id: str = Field(..., min_length=32, max_length=64)
@@ -339,6 +367,7 @@ class ToolSpec:
     auth_scope: str = "support:read"
     idempotency_required: bool = False
     cache_ttl_seconds: float | None = None
+    cache_revision: Callable[[], str] | None = None
     timeout_seconds: float = 2.0
     retries: int = 0
     backoff_seconds: float = 0.05
@@ -358,8 +387,10 @@ class ToolCallManager:
         specs: list[ToolSpec],
         cache_backend: ToolCacheBackend | None = None,
         runtime_store: RuntimeStore | None = None,
+        write_journal: WriteJournal | None = None,
     ) -> None:
         self._specs = {spec.name: spec for spec in specs}
+        self._write_journal = write_journal
         self._runtime = runtime_store
         self._cache = cache_backend or runtime_store or InMemoryRuntimeStore()
         self.audit_events: list[dict[str, Any]] = []
@@ -408,24 +439,70 @@ class ToolCallManager:
             self._audit(context, name, arguments, result)
             return result
 
+        cache_revision = await asyncio.to_thread(spec.cache_revision) if spec.cache_revision else "1"
         cache_key = (
-            self._cache_key(name, validated, context.tenant_id)
+            self._cache_key(
+                name,
+                {
+                    "arguments": validated,
+                    "revision": cache_revision,
+                    "principal": {
+                        "user_id": context.user_id,
+                        "role": context.role,
+                        "scopes": sorted(context.auth_scopes),
+                        "orders": sorted(context.allowed_order_ids),
+                    },
+                },
+                context.tenant_id,
+            )
             if spec.cache_ttl_seconds and not spec.side_effect
             else None
         )
         if cache_key:
-            cached = await self._cache.get(cache_key)
+            try:
+                cached = await self._cache.get(cache_key)
+            except Exception:
+                cached = None
+                logging.getLogger(__name__).warning("Read cache unavailable; using source")
             if cached:
                 result = cached.model_copy(update={"cached": True})
                 self._audit(context, name, validated, result)
                 return result
 
+        operation_key = None
+        if spec.side_effect and self._write_journal is not None:
+            # Quarantine the entire order/action after an ambiguous write, even
+            # if the user rephrases it. Successful business deduplication is separate.
+            scope = (
+                {
+                    "order_id": validated.get("order_id"),
+                }
+                if validated.get("order_id")
+                else validated
+            )
+            operation_key = self._cache_key(
+                "order-write" if validated.get("order_id") else name, scope, context.tenant_id
+            )
+            if not await asyncio.to_thread(self._write_journal.begin, operation_key):
+                result = self._failure(
+                    name, "outcome_unknown", "An earlier write requires reconciliation.", started
+                )
+                self._audit(context, name, validated, result)
+                return result
         if spec.side_effect and self._runtime is not None:
             result = await self._execute_with_lock(spec, validated, context, started)
         else:
             result = await self._execute(spec, validated, context, started)
-        if cache_key and result.ok:
-            await self._cache.set(cache_key, result, float(spec.cache_ttl_seconds))
+        if operation_key is not None:
+            if result.error_code in {"side_effect_in_progress", "runtime_unavailable"}:
+                await asyncio.to_thread(self._write_journal.release_unstarted, operation_key)
+            else:
+                await asyncio.to_thread(self._write_journal.finish, operation_key, result.ok)
+        if cache_key and result.ok and not result.error_code:
+            try:
+                await self._cache.set(cache_key, result, float(spec.cache_ttl_seconds))
+            except Exception:
+                logging.getLogger(__name__).warning("Read cache fill failed")
         self._audit(context, name, validated, result)
         return result
 
@@ -436,9 +513,18 @@ class ToolCallManager:
         context: ToolCallContext,
         started: float,
     ) -> ToolCallResult:
-        lock_key = self._cache_key(spec.name, arguments, context.tenant_id)
+        # Wording changes must not permit simultaneous writes to one order.
+        scope = {"order_id": arguments["order_id"]} if arguments.get("order_id") else arguments
+        lock_key = self._cache_key(
+            "order-write" if arguments.get("order_id") else spec.name, scope, context.tenant_id
+        )
         lock_ttl = max(int((spec.timeout_seconds + spec.backoff_seconds) * (spec.retries + 1)) + 1, 3)
-        token = await self._runtime.acquire_lock(f"side-effect:{lock_key}", lock_ttl)
+        try:
+            token = await self._runtime.acquire_lock(f"side-effect:{lock_key}", lock_ttl)
+        except Exception:
+            return self._failure(
+                spec.name, "runtime_unavailable", "Coordination unavailable; write not dispatched.", started
+            )
         if token is None:
             return self._failure(
                 spec.name,
@@ -446,10 +532,34 @@ class ToolCallManager:
                 "Another worker is already executing the same side-effect request.",
                 started,
             )
+        lost = asyncio.Event()
+
+        async def renew() -> None:
+            while True:
+                await asyncio.sleep(lock_ttl / 3)
+                try:
+                    if not await self._runtime.renew_lock(f"side-effect:{lock_key}", token, lock_ttl):
+                        lost.set()
+                        return
+                except Exception:
+                    lost.set()
+                    return
+
+        renewal = asyncio.create_task(renew())
         try:
-            return await self._execute(spec, arguments, context, started)
+            result = await self._execute(spec, arguments, context, started)
+            if lost.is_set():
+                return self._failure(
+                    spec.name, "outcome_unknown", "Write lease lost; reconcile before retry.", started
+                )
+            return result
         finally:
-            await self._runtime.release_lock(f"side-effect:{lock_key}", token)
+            renewal.cancel()
+            await asyncio.gather(renewal, return_exceptions=True)
+            try:
+                await self._runtime.release_lock(f"side-effect:{lock_key}", token)
+            except Exception:
+                logging.getLogger(__name__).warning("Write lease release failed; expires by TTL")
 
     async def _execute(
         self,
@@ -476,6 +586,17 @@ class ToolCallManager:
                 )
             except Exception as exc:
                 last_error = exc
+                # A timeout does not prove that a remote write was rolled back.
+                # Preserve uncertainty; retry only in a provider-specific adapter
+                # which can reconcile using the same durable idempotency key.
+                if spec.side_effect:
+                    return self._failure(
+                        spec.name,
+                        "outcome_unknown",
+                        "Write outcome is unconfirmed; reconcile before resubmitting.",
+                        started,
+                        attempts,
+                    )
                 if attempt < spec.retries:
                     await asyncio.sleep(spec.backoff_seconds * (2**attempt))
 
@@ -610,6 +731,9 @@ def build_business_tool_manager(
     support_roles = frozenset({"customer", "support_agent", "after_sales_operator", "ops_manager", "admin"})
     ops_roles = frozenset({"ops_manager", "admin"})
     after_sales_engine = AfterSalesDecisionEngine()
+    from app.tool_call.mcp_policy import policy_handler_from_env
+
+    remote_policy_handler = policy_handler_from_env()
 
     return ToolCallManager(
         [
@@ -620,7 +744,7 @@ def build_business_tool_manager(
                 allowed_roles=support_roles,
                 risk_level="read",
                 auth_scope="orders:read",
-                cache_ttl_seconds=300,
+                cache_ttl_seconds=None,
                 timeout_seconds=3,
                 retries=1,
                 fallback=lambda args, ctx, exc: {
@@ -640,7 +764,7 @@ def build_business_tool_manager(
                 allowed_roles=support_roles,
                 risk_level="read",
                 auth_scope="orders:read",
-                cache_ttl_seconds=60,
+                cache_ttl_seconds=None,
                 timeout_seconds=3,
                 retries=1,
                 handler=lambda args, ctx: {
@@ -685,22 +809,26 @@ def build_business_tool_manager(
                 allowed_roles=support_roles,
                 risk_level="read",
                 auth_scope="policy:read",
-                cache_ttl_seconds=300,
-                timeout_seconds=5,
+                cache_ttl_seconds=None if remote_policy_handler else 300,
+                cache_revision=None if remote_policy_handler else knowledge_base.revision,
+                timeout_seconds=15 if remote_policy_handler else 5,
                 retries=1,
                 fallback=lambda args, ctx, exc: {"sections": [], "fallback_reason": str(exc)},
-                handler=lambda args, ctx: {
-                    "sections": [
-                        {
-                            "source": hit.source,
-                            "source_type": hit.source_type,
-                            "section_title": hit.section_title,
-                            "text": hit.text,
-                            "score": hit.score,
-                        }
-                        for hit in knowledge_base.search(str(args["query"]), k=int(args["k"]))
-                    ]
-                },
+                handler=remote_policy_handler
+                or (
+                    lambda args, ctx: {
+                        "sections": [
+                            {
+                                "source": hit.source,
+                                "source_type": hit.source_type,
+                                "section_title": hit.section_title,
+                                "text": hit.text,
+                                "score": hit.score,
+                            }
+                            for hit in knowledge_base.search(str(args["query"]), k=int(args["k"]))
+                        ]
+                    }
+                ),
             ),
             ToolSpec(
                 name="search_support_examples",
@@ -733,7 +861,7 @@ def build_business_tool_manager(
                 allowed_roles=support_roles,
                 risk_level="medium",
                 auth_scope="after_sales:draft",
-                cache_ttl_seconds=120,
+                cache_ttl_seconds=None,
                 timeout_seconds=3,
                 retries=1,
                 handler=lambda args, ctx: {
@@ -780,6 +908,9 @@ def build_business_tool_manager(
         ],
         cache_backend=cache_backend,
         runtime_store=runtime_store,
+        write_journal=WriteJournal(case_service.path)
+        if isinstance(case_service, SQLiteCaseService)
+        else None,
     )
 
 
@@ -856,10 +987,10 @@ def build_tool_cache_from_env() -> ToolCacheBackend:
 
 def build_runtime_store_from_env() -> RuntimeStore:
     backend = (
-        os.environ.get("RUNTIME_STORE_BACKEND")
-        or os.environ.get("TOOL_CACHE_BACKEND")
-        or "memory"
-    ).strip().lower()
+        (os.environ.get("RUNTIME_STORE_BACKEND") or os.environ.get("TOOL_CACHE_BACKEND") or "memory")
+        .strip()
+        .lower()
+    )
     if backend in {"memory", "inmemory", "local", ""}:
         return InMemoryRuntimeStore()
     if backend == "redis":

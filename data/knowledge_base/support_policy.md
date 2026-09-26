@@ -46,6 +46,19 @@ If the review is low but the order is otherwise delivered on time, the Agent sho
 still offer a service-recovery case because the complaint may relate to product
 quality, seller behavior, missing items, packaging, or post-delivery support.
 
+## Order Cancellation Eligibility Policy
+
+Scope: all orders in this demo marketplace. Policy ID: cancellation-eligibility-v1.
+Direct cancellation is unavailable once an order is shipped or delivered, and an
+already canceled order cannot be canceled again. Created, approved, or invoiced
+orders may be submitted for cancellation review. Unknown refund history requires
+review and must not be treated as proof that the order has never been refunded.
+
+A question such as "can I cancel after delivery?" asks about eligibility; explain
+the restriction without creating a cancellation or refund request. If the customer
+needs further help, collect the actual issue for the return/after-sales process.
+Do not claim cancellation or a refund has completed without a business receipt.
+
 ## Cancellation Follow-Up Policy
 
 Canceled orders require special care because the customer's desired next step may be
