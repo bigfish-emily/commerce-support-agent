@@ -1,30 +1,22 @@
-stateDiagram-v2
-    [*] --> NewRequest: 消费者请求进入 /customer/chat
-    NewRequest --> CheckPending: 读取 LangGraph checkpoint + Redis HITL TTL
-    CheckPending --> InputGuard: 没有 pending
-    CheckPending --> CustomerPendingReply: 有 pending
-    CustomerPendingReply --> [*]: 告知等待工作人员审核
-
-    [*] --> StaffReview: 售后人员进入 /review/sessions
-    StaffReview --> TimeoutPath: Redis TTL 不存在或 expires_at 过期
-    StaffReview --> ResumeConfirm: approve
-    StaffReview --> ResumeCancel: reject
-
-    InputGuard --> PlanTasks: 业务域与安全检查通过
-    PlanTasks --> SelectNextTask: 生成 task_plan
-    SelectNextTask --> ExtractSlots: 选择下一个可执行任务
-    ExtractSlots --> RetrieveContext: 抽 order_id/category/action_type
-    RetrieveContext --> ExecuteReadTask: 只读任务
-    ExecuteReadTask --> SelectNextTask: 继续下一个任务
-    RetrieveContext --> BuildAfterSalesCase: 副作用任务
-    BuildAfterSalesCase --> SelectNextTask: reject / clarify / low-risk execute 已结束
-    BuildAfterSalesCase --> AwaitConfirmation: high-risk write 需要 HITL
-    AwaitConfirmation --> Interrupted: interrupt() 持久化状态
-    Interrupted --> [*]: 返回用户安全话术并生成审核包
-
-    TimeoutPath --> FinalizeEscalation: Command(resume="__hitl_timeout__")
-    ResumeConfirm --> FinalizeEscalation: Command(resume="__review_approve__")
-    ResumeCancel --> FinalizeEscalation: Command(resume="no")
-    FinalizeEscalation --> SelectNextTask: 执行/取消后继续剩余任务
-    SelectNextTask --> FinalizeAnswer: 无剩余任务
-    FinalizeAnswer --> [*]: 返回最终 answer/sources/trace
+sequenceDiagram
+    actor C as 消费者
+    participant A as API / 工作流
+    participant S as 持久化状态
+    actor R as 审核人员
+    C->>A: 1. 提交需要审核的申请
+    A->>S: 2. 保存申请、执行绑定与 checkpoint
+    A-->>C: 3. 申请待审核，当前请求返回
+    R->>A: 4. 查看申请、事实与对话
+    A-->>R: 返回审核材料
+    alt 批准
+        R->>A: 5. 提交批准，Command 恢复
+        A->>A: 6. 复核绑定后执行工具
+        A->>S: 7. 保存成功、失败或结果未知
+    else 驳回
+        R->>A: 提交驳回，恢复并记录取消结果
+        A->>S: 保存审核结论
+    else 收到超时取消信号
+        A->>S: 恢复并保存超时取消状态
+    end
+    C->>A: 8. 页面轮询最新状态
+    A-->>C: 返回与实际执行一致的进度

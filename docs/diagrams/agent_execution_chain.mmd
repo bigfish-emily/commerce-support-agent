@@ -1,35 +1,14 @@
-flowchart TD
-    A[1 Customer message /customer/chat] --> B{2 Pending staff review<br/>in current session?}
-    Staff[Staff review console<br/>/review/sessions] --> C{3 Review decision}
-    B -- yes --> F[Tell customer case is waiting<br/>staff review]
-    C -- approve --> D[Resume LangGraph checkpoint<br/>as after_sales_operator]
-    C -- reject or timeout --> E[Clear pending state<br/>record rejected/timeout]
-    B -- no --> G[4 Input Guard<br/>business domain + injection risk]
-    G -- rejected --> H[Safe rejection<br/>no tool execution]
-    G -- accepted --> I[5 LLM Planner<br/>decompose task_plan]
-    I --> J[6 select_next_task<br/>read-only first, side effects later]
-    J --> K[7 extract_slots<br/>slot extraction + argument repair]
-    K --> L[8 retrieve_context<br/>facts / policy / support corpus / category evidence]
-    L --> M{9 Side-effect task?}
-    M -- no --> N[10 execute_read_task]
-    N --> J
-    M -- yes --> O[11 build_after_sales_case]
-    O --> P[12 Decision Engine]
-    P --> Q[13 Verifier]
-    Q --> R{14 Next action}
-    R -- stop --> S[Safe rejection]
-    R -- clarify --> T[Ask for missing information]
-    R -- execute --> U[Low-risk automatic execution]
-    R -- hitl --> V[LangGraph interrupt<br/>create staff review packet]
-    U --> W[15 ToolCallManager]
-    D --> W
-    W --> Y[16 execute_side_effect<br/>Redis lock + SQLite idempotency]
-    S --> Z[17 finalize_answer]
-    T --> Z
-    E --> Z
-    F --> Z
-    H --> Z
-    Y --> J
-    J -- no remaining task --> Z
-    Z --> AA[18 SQLite trace + case metrics]
-    AA --> AB[Return answer / sources / session_id]
+flowchart TB
+    P["1. 生成计划<br/>plan_tasks"] -->|"计划写入 state"| PR["独立只读批次<br/>execute_ready_reads：最多并发4项"]
+    PR -->|"私有状态执行后按计划顺序合并"| S{"2. 选择下一任务<br/>select_next_task"}
+    S -->|"workflow_complete 为真"| A["9. 汇总结果<br/>finalize_answer"]
+    A -->|"图执行结束"| E["返回 HTTP 层"]
+    S -->|"还有待处理任务"| X["3. 提取参数<br/>extract_slots"]
+    X -->|"订单、动作等参数"| R["4. 准备上下文<br/>retrieve_context"]
+    R -->|"只读任务"| Q["5. 查询并记录结果<br/>execute_read_task"]
+    R -->|"副作用或 escalation"| B["6. 形成售后处理结果<br/>build_after_sales_case"]
+    B -->|"需要人工确认"| W["7. 挂起等待审核<br/>await_confirmation"]
+    W -->|"审核或超时信号恢复"| F["8. 完成审核处理<br/>finalize_escalation"]
+    Q -->|"更新任务状态"| PR
+    B -->|"自动处理、澄清或拒绝"| PR
+    F -->|"记录结果，继续原计划"| PR

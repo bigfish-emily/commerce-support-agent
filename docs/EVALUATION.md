@@ -1,5 +1,25 @@
 # Evaluation
 
+## Evidence Status (2026-09-25)
+
+The historical 7/24 versus 22/24 comparison below is exploratory. The arms did
+not share identical tool schemas or governance, and the scorer includes ordered
+task coverage and phrase-based answer checks. It cannot isolate component
+contributions or establish a fair production-agent advantage. The challenge was
+subsequently inspected for debugging and is now a regression set, not an unseen
+holdout. Rule-policy changes also invalidate comparisons without a pinned policy
+version. Do not present this difference as a current matched-tool causal result.
+
+New experiments must share identity/ownership enforcement, business tool
+contracts, initial mutable state, policy information, history and explicit
+budgets. Grade allowed business outcomes, not internal node order. Report model
+errors and fallback usage separately; a fallback pass is not a successful model
+prediction. Freeze scenario families before selecting thresholds or prompts.
+
+Semantic classifier comparisons are available through
+`python -m evaluation.semantic_update_eval`; they are component experiments,
+not end-to-end task-success measurements. See `docs/EXECUTION_INTEGRITY.md`.
+
 ## What Is Being Measured
 
 The primary product metric is **Case Resolution Success (CRS)**. A case passes
@@ -74,9 +94,9 @@ it excludes the duration a human reviewer may take to act.
 
 The baseline's task coverage is derived from its observed tool calls, not its
 self-reported final JSON. It therefore receives credit for a read or write it
-actually performed. The workflow's advantage comes from the decision and
-verification gates, durable review boundary, and deterministic customer
-receipts, rather than from a scoring convention.
+actually performed. The observed difference may reflect workflow constraints,
+different tool surfaces, customer receipt formatting, and scoring conventions.
+This run cannot separate those effects; attribution requires controlled ablations.
 
 ## Failure Analysis and Regression
 

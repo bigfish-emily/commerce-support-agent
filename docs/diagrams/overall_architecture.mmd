@@ -1,27 +1,14 @@
-flowchart LR
-    Customer[Customer] --> CustomerUI[Self-service chat /customer]
-    Reviewer[After-sales reviewer] --> ReviewUI[Review console /review]
-    CustomerUI --> Guard[Input guard]
-    Guard --> Planner[LLM task planner]
-    Planner --> Graph[LangGraph plan-and-execute graph]
-    ReviewUI --> HITL
-
-    Graph --> ReadTools[Read-only deterministic tools]
-    Graph --> RAG[Workflow-constrained RAG]
-    Graph --> Case[AfterSalesCase builder]
-
-    ReadTools --> Olist[Olist order facts and category profiles]
-    RAG --> Policy[Policy / FAQ / merchant rules KB]
-
-    Case --> Decision[AfterSalesDecisionEngine]
-    Decision --> Verifier[Verifier]
-    Verifier --> SafeExit[Reject or clarify]
-    Verifier --> HITL[Async HITL review queue]
-    HITL --> ToolManager[ToolCallManager]
-    ToolManager --> SideEffect[Refund / cancel / address / invoice / complaint tools]
-
-    ToolManager --> Redis[Redis runtime store: cache, lock, TTL, rate limit]
-    ToolManager --> MCP[MCP server/client boundary]
-    Graph --> Trace[SQLite trace and case metrics]
-    Trace --> Eval[Product-flow, policy, and red-team evals]
-    Eval --> CI[GitHub Actions CI]
+flowchart TB
+    subgraph UI["入口"]
+      C["消费者订单页 /customer"]
+      H["工作人员审核台 /review"]
+    end
+    C -->|"提交请求 / 轮询进度"| API["1. FastAPI：身份、会话、接口"]
+    H -->|"查看证据 / 审核 / 人工回复"| API
+    API -->|"运行或恢复任务"| G["2. LangGraph：组织业务流程"]
+    G -->|"需要语言理解或表达时"| L["LLM"]
+    G -->|"查询事实与执行动作"| T["3. 工具治理与业务处理"]
+    G -->|"保存 / 读取执行状态"| CK["Checkpoint"]
+    T -->|"读取事实与政策"| D["Olist 订单 + 本地政策"]
+    T -->|"保存申请与事件"| DB["SQLite 业务状态"]
+    T -->|"缓存与短期协调"| RT["RuntimeStore：内存 / Redis"]

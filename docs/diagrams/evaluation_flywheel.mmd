@@ -1,11 +1,10 @@
-flowchart TD
-    Cases[Manually reviewed after-sales cases] --> Core[AfterSalesBench core]
-    Cases --> Planner[LLMPlannerBench]
-    Core --> State[Case lifecycle and order-projection oracle]
-    Planner --> Plan[Task-plan and slot coverage]
-    State --> Control[Full vs handoff-all vs execute-on-intent]
-    Plan --> Control
-    Control --> Report[docs/EVALUATION.md + published_results.json]
-    Report --> Regression[New failure becomes a named regression case]
-    Regression --> CI[CI: pytest + offline core workflow]
-    CI --> Cases
+flowchart TB
+    C["1. 代码 / Prompt / 知识库变更"] --> O["2A. CI 与离线检查"]
+    C -->|"手动开启模型与预算"| L["2B. 真实 LLM 实验"]
+    O --> A["3A. 程序约束与检索结果"]
+    L --> B["3B. 逐行请求、工具结果<br/>模型、成本、延迟"]
+    A --> R["4. 按各自协议分析结果"]
+    B --> R
+    R -->|"发现失败"| F["5. 定位错误并修复"]
+    F --> S["6. 固定回归样本"]
+    S -->|"下次改动再次检查"| O

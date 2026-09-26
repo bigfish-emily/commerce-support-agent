@@ -13,7 +13,7 @@ The product starts from the customer's own order context. Standard actions such 
 - **Durable business state**: Olist facts are the immutable initial snapshot. Approved actions append a case event and update a SQLite order projection, so later order queries expose `refund requested`, `address change requested`, or `canceled` status.
 - **Governed tools**: Pydantic input schemas, role/scope checks, customer ownership guards, tenant-aware read cache, timeout/retry/fallback, redacted audit events, Redis-compatible locks, and SQLite idempotency records.
 - **Workflow control**: native page actions bypass LLM planning but enter the same governed workflow. LangGraph checkpointing pauses high-risk cases for staff review and resumes the original graph after a decision.
-- **Enterprise boundary**: local MCP tools plus stdio/remote client adapters demonstrate how an OMS, CRM, payment, or invoice service can be integrated behind a typed tool contract.
+- **Integration adapters**: standalone MCP tools and stdio/remote clients are available for integration experiments. The default customer workflow calls governed Python handlers directly; it is not an end-to-end MCP deployment.
 
 ## Product Flow
 
@@ -27,10 +27,16 @@ flowchart LR
     Facts --> Decide[Decision + verifier]
     Policy --> Decide
     Decide -->|read / clarify / reject| Reply[Customer reply]
+    Decide -->|eligible low-risk action| Check[Recheck action and order binding]
     Decide -->|review required| Case[Persistent case packet]
     Case --> Console[/review]
-    Console -->|approve| Write[Governed write tool]
-    Write --> Event[SQLite event + order projection]
+    Console -->|approve| Check
+    Console -->|reject / timeout| Reply
+    Check -->|valid| Write[Governed write tool]
+    Check -->|changed or missing| Reply
+    Write -->|success| Event[SQLite event + order projection]
+    Write -->|unknown result| Hold[Quarantine pending reconciliation]
+    Hold --> Reply
     Event --> Reply
 ```
 
@@ -75,10 +81,9 @@ uses `/customer/chat`.
 ## Evaluation
 
 The project separates product case-resolution evaluation from retrieval and
-external tool-use experiments. The primary in-domain protocol holds the model,
-customer message, Olist snapshot, policy pack, tool surface, and initial
-SQLite state fixed. It compares a thin native function-calling loop with the
-actual LangGraph workflow.
+external tool-use experiments. The historical comparison used a thin native
+function-calling loop and the LangGraph workflow with different tool surfaces
+and governance. It is exploratory and does not isolate component improvements.
 
 On the first run of a separately authored 24-case challenge split with
 `deepseek-chat`, the thin loop achieved **7/24 Case Resolution Success
@@ -86,13 +91,23 @@ On the first run of a separately authored 24-case challenge split with
 zero unsafe writes, versus one unsafe write in the baseline's 15 write-risk
 cases. The two workflow failures were retained as bad-case regressions: a
 colloquial cancellation-status question and a delivered-order address request.
+These inspected cases now serve as regressions. The score includes ordered
+coverage and phrase checks; it is not a fair matched-tool or unseen-test claim.
 The protocol, definitions, failure analysis, and limits are documented below.
 
 - [Evaluation design and ablation plan](docs/EVALUATION.md)
+- [Execution integrity and semantic classifier experiments](docs/EXECUTION_INTEGRITY.md)
 - [Architecture diagrams](docs/ARCHITECTURE_DIAGRAMS.md)
+- [Detailed implementation guide](docs/PROJECT_GUIDE.md)
+- [Recovery, timeout scheduling and cache protocol](docs/RECOVERY_PROTOCOL.md)
 - [User manual](docs/USER_MANUAL.md)
 
 ## Scope
+
+The optional Jev shadow-classification adapter is disabled. Account access is
+currently unavailable, and no live Jev quality or speed results are claimed.
+Policy retrieval uses lexical Markdown matching; the separate support-corpus
+experiment uses BM25 and hashing vectors with optional Qdrant storage.
 
 This is a reference implementation for an Olist-backed after-sales sandbox. A production deployment would replace its fixed demo identity, public historical facts, policy pack, and local stores with IAM, OMS, CRM, payment, logistics, notification, and observability services.
 

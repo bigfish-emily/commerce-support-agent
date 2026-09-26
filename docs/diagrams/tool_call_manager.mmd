@@ -1,24 +1,12 @@
-flowchart TD
-    Start[Agent 调用工具] --> Validate[1 Pydantic Schema 校验]
-    Validate -- 失败 --> Err1[返回 schema_validation_failed]
-    Validate -- 成功 --> Auth[2 Role + auth_scope 权限检查]
-    Auth -- 越权 --> Err2[返回 permission_denied]
-    Auth -- 通过 --> CheckCache{3 是否可缓存且非 side_effect?}
-    CheckCache -- 命中 --> ReturnCached[返回 cached ToolCallResult]
-    CheckCache -- 未命中/副作用 --> SideEffectCheck{4 side_effect=True?}
-    SideEffectCheck -- 是 --> AcquireLock[5 Redis/RuntimeStore SET NX 锁<br/>防多 worker 并发写]
-    AcquireLock -- 拿锁失败 --> Err3[返回 side_effect_in_progress]
-    AcquireLock -- 拿锁成功 --> Exec[6 async/to_thread 执行<br/>timeout + retry + exponential backoff]
-    SideEffectCheck -- 否 --> Exec
-    Exec -- 成功 --> MaybeCache{7 只读工具开启 TTL cache?}
-    MaybeCache -- 是 --> UpdateCache[写 tenant-scoped cache]
-    MaybeCache -- 否 --> Audit
-    UpdateCache --> Audit[8 脱敏审计日志<br/>who/when/tool/args_hash/result/latency]
-    Exec -- 失败/超时 --> HasFallback{9 配置 fallback?}
-    HasFallback -- 有 --> RunFallback[执行 fallback handler] --> Audit
-    HasFallback -- 无 --> Err4[返回 error_code/error_message] --> Audit
-    ReturnCached --> Audit
-    Err1 --> Audit
-    Err2 --> Audit
-    Err3 --> Audit
-    Audit --> Done[返回标准 ToolCallResult]
+flowchart TB
+    I["1. 工具名 + 参数 + 调用身份"] --> V{"2. 工具存在、参数合法<br/>权限与归属通过？"}
+    V -->|"否"| E["返回标准错误"]
+    V -->|"是"| C{"3. 启用缓存且命中？"}
+    C -->|"是"| H["使用缓存结果"]
+    C -->|"否"| X["4. 异步或线程执行<br/>超时限制 + 有限退避重试"]
+    X -->|"成功"| S["5. 配置缓存时写入 TTL 缓存"]
+    X -->|"最终失败"| F["5. 使用配置的 fallback<br/>或返回工具错误"]
+    H --> O["6. 脱敏审计 + ToolCallResult"]
+    S --> O
+    F --> O
+    E --> O

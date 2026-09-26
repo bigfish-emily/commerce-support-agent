@@ -1,26 +1,19 @@
-flowchart TD
-    Agent[Agent executor] --> Registry[Tool registry / ToolCallManager]
-    Registry --> Metadata[list_enterprise_tool_boundaries]
-    Metadata --> Schema[input schema]
-    Metadata --> Auth[auth_scope and role allowlist]
-    Metadata --> Risk[risk_level and side_effect flag]
-    Metadata --> Idem[idempotency_required]
-    Metadata --> Audit[audit contract]
-
-    Registry --> LocalMCP[Local MCP server]
-    Registry --> RemoteMCP[Remote MCP client]
-
-    LocalMCP --> OrderTool[get_order_status]
-    LocalMCP --> RiskTool[search_category_risk]
-    LocalMCP --> CaseTool[assess_after_sales_case]
-    LocalMCP --> ReportTool[generate_after_sales_priority_report]
-
-    RemoteMCP --> Stripe[Stripe sandbox MCP]
-    RemoteMCP --> OMS[Enterprise OMS MCP]
-    RemoteMCP --> CRM[CRM / ticket MCP]
-    RemoteMCP --> KB[Policy KB MCP]
-
-    Stripe --> AuditStream[Audit / trace event]
-    OMS --> AuditStream
-    CRM --> AuditStream
-    KB --> AuditStream
+flowchart TB
+    subgraph MAIN["A. 默认客户主链路"]
+      direction LR
+      G["工作流"] -->|"受治理调用"| T["ToolCallManager"]
+      T -->|"Python 调用"| H["本地 handlers"]
+      T -->|"POLICY_TOOL_TRANSPORT=mcp_stdio/mcp_http"| PC["Policy MCP client：发现工具并校验结构"]
+    end
+    subgraph SERVER["B. 独立 MCP server"]
+      direction LR
+      C["外部 MCP 调用方"] -->|"stdio"| S["本地 MCP server"]
+      S -->|"调用工具函数"| D["Olist / 政策"]
+      PC -->|"stdio：受信本地进程"| S
+    end
+    subgraph CLIENT["C. 外部 MCP 接入组件"]
+      direction LR
+      A["例如 Stripe adapter"] -->|"使用 client"| E["ExternalMcpToolClient"]
+      E -->|"stdio / HTTP"| R["配置的 MCP server"]
+      PC -->|"HTTPS + 服务令牌：公共政策服务"| R
+    end

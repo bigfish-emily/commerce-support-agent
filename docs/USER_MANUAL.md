@@ -6,7 +6,7 @@
 
 本地默认账户为 `demo-customer`，包含 5 笔公开历史订单。`X-Demo-Customer` 仅用于本地演示不同账户；生产接入由 BFF 从登录会话/JWT 解析用户身份与可访问订单，浏览器请求体中的 `user_id` 不参与客户接口的身份判定。
 
-涉及业务写入的请求会生成申请：客户立即看到受理状态，后台审核完成后页面会自动刷新进度。应用没有真实支付或退款能力，所有写动作仅作用于本地业务服务。
+写请求根据规则进入自动处理、澄清、拒绝或人工审核。需要审核时，客户立即看到受理状态，审核后页面通过轮询刷新进度。用户的确认不能代替工作人员批准；审核后订单或申请内容变化会阻断执行，需重新评估。若执行结果未知，系统保留待核对记录，不能将它理解为已退款或直接重复提交。应用没有真实支付能力，所有写动作仅作用于本地业务服务。
 
 打开 `http://127.0.0.1:8000/review` 进入审核台。默认本地凭证为 `local-review-demo`，可用 `REVIEW_API_TOKEN` 覆盖。审核人员可查看客户对话和订单事实、接手会话、使用可编辑的 AI 回复草稿，以及批准或驳回待审核申请。
 
@@ -19,7 +19,7 @@ uv sync --extra dev
 uv run uvicorn app.main:app --reload
 ```
 
-未配置 key 时，应用使用本地 fallback，适合测试流程。配置 OpenAI-compatible key 后会启用真实模型：
+未配置 key 时，应用使用本地 fallback，适合检查流程，不代表真实模型能力。配置 OpenAI-compatible key 后可调用真实模型；按钮和部分快速路径仍可能不经过模型，应以每次 trace 为准：
 
 ```text
 OPENAI_API_KEY=your-key
@@ -28,6 +28,8 @@ OPENAI_MODEL=your-chat-model
 ```
 
 部分兼容网关不稳定支持原生 structured output；本项目会改用“JSON 文本 + Pydantic 校验”的兼容路径。
+
+Jev 当前无法获取访问权限；保持 `SEMANTIC_DECISION_SHADOW=off`，不影响业务主链路。架构、RAG 与数据边界见 [项目完整说明](PROJECT_GUIDE.md)。
 
 ## 推荐演示
 
