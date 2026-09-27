@@ -1,6 +1,24 @@
 # Evaluation
 
-## Evidence Status (2026-09-25)
+## Live Matched Comparison (2026-09-27)
+
+See [the complete report and request/response evidence](../evaluation/results/matched_business_20260927/README.md).
+The new comparison independently runs the protected function-calling loop and
+production StateGraph business core with the same model, business handlers,
+policy, identity, initial mutable state and scripted reviewer. Internal node
+order is not scored. Correct final projection and write counts are checked
+separately from a blinded model judge's reply-completeness/factuality assessment.
+
+On 50 inspected cases, workflow task success changed from 22/50 to 43/50 after
+schema/context/presentation repairs; current protected-loop success is 47/50.
+The workflow used 1.2 versus 4.3 model calls/request. Legitimate review is accepted
+as task success and separately reduces autonomous resolution. This experiment
+does not isolate DecisionEngine or Verifier contributions: both arms retain them.
+It covers the business core through the final customer reply, not HTTP/UI or
+real payment processing. The two-template-per-family sample is a regression
+set and does not establish generalization to real customer traffic.
+
+## Historical Evidence (2026-09-25)
 
 The historical 7/24 versus 22/24 comparison below is exploratory. The arms did
 not share identical tool schemas or governance, and the scorer includes ordered
@@ -20,10 +38,10 @@ Semantic classifier comparisons are available through
 `python -m evaluation.semantic_update_eval`; they are component experiments,
 not end-to-end task-success measurements. See `docs/EXECUTION_INTEGRITY.md`.
 
-## What Is Being Measured
+## Historical CRS Scorer
 
-The primary product metric is **Case Resolution Success (CRS)**. A case passes
-only when the workflow:
+The earlier **Case Resolution Success (CRS)** scorer required the following.
+Its path/order requirements are not used by the new matched comparison above:
 
 1. covers the customer-requested tasks in their requested order;
 2. selects the correct disposition: answer, clarify, reject, auto-execute, or

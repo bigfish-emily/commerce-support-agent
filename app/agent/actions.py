@@ -92,7 +92,12 @@ class AgentActions:
                 "fallback_reason": None,
             }
         else:
-            plan = await self._intent_planner.plan(last_message)
+            page = state.get("page_context") or {}
+            selected = page.get("selected_order_id") or state.get("active_order_id")
+            context = None
+            if selected and selected in (state.get("allowed_order_ids") or []):
+                context = {"selected_order_id": selected}
+            plan = await self._intent_planner.plan(last_message, context=context)
             tasks = [task.model_dump() for task in plan.tasks]
             planning_mode = plan.planning_mode
             planner_provenance = {

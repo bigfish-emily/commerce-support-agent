@@ -23,7 +23,12 @@ CUSTOMER_PROMPT = """你是一名中文电商售后客服。根据提供的事�
 
 async def present(llm, question: str, state: dict, record: dict | None) -> str:
     deterministic = _deterministic_customer_reply(question, state, record)
-    if deterministic:
+    completed = state.get("completed_tasks") or []
+    read_intents = {str(t.get("intent")) for t in completed if t.get("intent") != "escalation"}
+    compound = bool(read_intents and (
+        record or _completed_write_action(state)
+    ))
+    if deterministic and not compound:
         return deterministic
     provenance = state.get("planner_provenance") or {}
     # A known planner transport failure is a circuit-breaker signal for this
@@ -35,6 +40,8 @@ async def present(llm, question: str, state: dict, record: dict | None) -> str:
     packet = {
         "question": question,
         "business_result": state.get("final_answer", ""),
+        "completed_results": state.get("answer_parts", []),
+        "verified_action_receipt": deterministic,
         "current_context": context,
         "application_status": record.get("status") if record else None,
     }
@@ -56,6 +63,8 @@ async def present(llm, question: str, state: dict, record: dict | None) -> str:
             "HITL", "ToolCall", "system prompt", "risk_level", "review_score", "冻结", "case",
         )):
             raise ValueError("invalid_customer_reply")
+        if any(word in content for word in ("退款成功", "已到账", "已经到账")):
+            raise ValueError("unsupported_money_movement")
         if (not record or record.get("status") != "executed") and any(
             word in content
             for word in ("已退款", "退款成功", "已到账", "已经到账", "已取消订单", "地址已修改")

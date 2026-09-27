@@ -80,20 +80,20 @@ uses `/customer/chat`.
 
 ## Evaluation
 
-The project separates product case-resolution evaluation from retrieval and
-external tool-use experiments. The historical comparison used a thin native
-function-calling loop and the LangGraph workflow with different tool surfaces
-and governance. It is exploratory and does not isolate component improvements.
+The latest live experiment uses **50 authored order-page cases** and
+`deepseek-flash`, with the same business handlers, policy, ownership checks,
+approval rules and initial state for a protected tool loop and the workflow.
 
-On the first run of a separately authored 24-case challenge split with
-`deepseek-chat`, the thin loop achieved **7/24 Case Resolution Success
-(29.17%)** and the workflow achieved **22/24 (91.67%)**. The workflow produced
-zero unsafe writes, versus one unsafe write in the baseline's 15 write-risk
-cases. The two workflow failures were retained as bad-case regressions: a
-colloquial cancellation-status question and a delivered-order address request.
-These inspected cases now serve as regressions. The score includes ordered
-coverage and phrase checks; it is not a fair matched-tool or unseen-test claim.
-The protocol, definitions, failure analysis, and limits are documented below.
+Fixing nested JSON schemas, page-context propagation and compound replies
+raised workflow task success from **22/50 to 43/50** on the inspected regression
+set. The contemporaneous protected loop scored **47/50**: the workflow is not
+claimed to outperform it on overall success. Workflow mean model calls were
+**1.2 vs 4.3**, with core P95 **2.13s vs 5.51s**, excluding human wait time.
+Business-state checks and model-judged reply quality are reported separately.
+
+[Results, scoring rules and row-level API evidence](evaluation/results/matched_business_20260927/README.md)
+include both versions and every failed case. These are sandbox regression
+results, not an unseen benchmark or production customer-resolution rate.
 
 - [Evaluation design and ablation plan](docs/EVALUATION.md)
 - [Execution integrity and semantic classifier experiments](docs/EXECUTION_INTEGRITY.md)

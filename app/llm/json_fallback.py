@@ -32,11 +32,10 @@ def native_structured_output_enabled(llm: object) -> bool:
 
 
 def json_instruction(schema: type[BaseModel]) -> str:
-    fields = ", ".join(schema.model_fields)
     return (
         "\n\nReturn ONLY valid JSON. Do not wrap it in markdown. "
-        f"The JSON object must match this schema name: {schema.__name__}. "
-        f"Top-level fields: {fields}."
+        "Follow the complete JSON Schema, including nested objects and non-null types:\n"
+        + json.dumps(schema.model_json_schema(), ensure_ascii=False)
     )
 
 

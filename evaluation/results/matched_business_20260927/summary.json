@@ -1,0 +1,1074 @@
+{
+  "before": {
+    "arms": {
+      "protected_tool_loop": {
+        "business_success": {
+          "n": 49,
+          "d": 50,
+          "rate": 0.98,
+          "wilson95": [
+            0.8950431352816304,
+            0.9964608319110235
+          ]
+        },
+        "answer_success": {
+          "n": 44,
+          "d": 50,
+          "rate": 0.88,
+          "wilson95": [
+            0.7619492111337642,
+            0.9438247628937535
+          ]
+        },
+        "task_success": {
+          "n": 44,
+          "d": 50,
+          "rate": 0.88,
+          "wilson95": [
+            0.7619492111337642,
+            0.9438247628937535
+          ]
+        },
+        "autonomous_success": {
+          "n": 15,
+          "d": 50,
+          "rate": 0.3,
+          "wilson95": [
+            0.1910338908960936,
+            0.4375061227736339
+          ]
+        },
+        "reviewed": {
+          "n": 34,
+          "d": 50,
+          "rate": 0.68,
+          "wilson95": [
+            0.5418944286372394,
+            0.792419559060006
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 50,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07135003417431873
+          ]
+        },
+        "mean_model_calls": 3.58,
+        "mean_estimated_usd": 0.002050884,
+        "p50_seconds": 3.7546915002167225,
+        "p95_seconds": 6.410197100136429,
+        "tool_first_attempt_success": {
+          "n": 313,
+          "d": 313,
+          "rate": 1.0,
+          "wilson95": [
+            0.9878753295021867,
+            1.0
+          ]
+        },
+        "planner_fallback": null,
+        "requires_review_count": 30,
+        "unnecessary_review": {
+          "n": 4,
+          "d": 20,
+          "rate": 0.2,
+          "wilson95": [
+            0.0806563532712,
+            0.41602172202575993
+          ]
+        },
+        "by_scenario": {
+          "cancel_question": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "invoice": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "multi": {
+            "n": 5,
+            "d": 10,
+            "rate": 0.5,
+            "wilson95": [
+              0.23658959361548731,
+              0.7634104063845126
+            ]
+          },
+          "refund": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "support": {
+            "n": 9,
+            "d": 10,
+            "rate": 0.9,
+            "wilson95": [
+              0.5958436145024278,
+              0.9821242504842788
+            ]
+          }
+        }
+      },
+      "stategraph": {
+        "business_success": {
+          "n": 27,
+          "d": 50,
+          "rate": 0.54,
+          "wilson95": [
+            0.40398634328388083,
+            0.6703056539821737
+          ]
+        },
+        "answer_success": {
+          "n": 22,
+          "d": 50,
+          "rate": 0.44,
+          "wilson95": [
+            0.3116198721023534,
+            0.5769421319985648
+          ]
+        },
+        "task_success": {
+          "n": 22,
+          "d": 50,
+          "rate": 0.44,
+          "wilson95": [
+            0.3116198721023534,
+            0.5769421319985648
+          ]
+        },
+        "autonomous_success": {
+          "n": 10,
+          "d": 50,
+          "rate": 0.2,
+          "wilson95": [
+            0.11243629945973886,
+            0.3303737210448524
+          ]
+        },
+        "reviewed": {
+          "n": 17,
+          "d": 50,
+          "rate": 0.34,
+          "wilson95": [
+            0.2243676963506106,
+            0.47846431458517147
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 50,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07135003417431873
+          ]
+        },
+        "mean_model_calls": 1.44,
+        "mean_estimated_usd": 0.000666174,
+        "p50_seconds": 1.0918417000211775,
+        "p95_seconds": 1.3826713999733329,
+        "tool_first_attempt_success": {
+          "n": 118,
+          "d": 118,
+          "rate": 1.0,
+          "wilson95": [
+            0.9684705387979147,
+            1.0
+          ]
+        },
+        "planner_fallback": {
+          "n": 23,
+          "d": 50,
+          "rate": 0.46,
+          "wilson95": [
+            0.3296943460178263,
+            0.5960136567161192
+          ]
+        },
+        "requires_review_count": 30,
+        "unnecessary_review": {
+          "n": 2,
+          "d": 20,
+          "rate": 0.1,
+          "wilson95": [
+            0.027865893984153206,
+            0.30103820641179335
+          ]
+        },
+        "by_scenario": {
+          "cancel_question": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "invoice": {
+            "n": 5,
+            "d": 10,
+            "rate": 0.5,
+            "wilson95": [
+              0.23658959361548731,
+              0.7634104063845126
+            ]
+          },
+          "multi": {
+            "n": 1,
+            "d": 10,
+            "rate": 0.1,
+            "wilson95": [
+              0.01787574951572113,
+              0.4041563854975721
+            ]
+          },
+          "refund": {
+            "n": 4,
+            "d": 10,
+            "rate": 0.4,
+            "wilson95": [
+              0.16817758120350967,
+              0.6873304525498135
+            ]
+          },
+          "support": {
+            "n": 2,
+            "d": 10,
+            "rate": 0.2,
+            "wilson95": [
+              0.056680947980693314,
+              0.5098431532792765
+            ]
+          }
+        }
+      }
+    },
+    "paired": {
+      "before": "protected_tool_loop",
+      "after": "stategraph",
+      "pairs": 50,
+      "fixed": 0,
+      "regressed": 22,
+      "delta_pp": -44.0,
+      "mcnemar_exact_p": 4.76837158203125e-07
+    },
+    "transport_or_execution_error_cases": [
+      "matched-support-01"
+    ],
+    "sensitivity_excluding_error_pairs": {
+      "protected_tool_loop": {
+        "business_success": {
+          "n": 49,
+          "d": 49,
+          "rate": 1.0,
+          "wilson95": [
+            0.9272997032640949,
+            0.9999999999999999
+          ]
+        },
+        "answer_success": {
+          "n": 44,
+          "d": 49,
+          "rate": 0.8979591836734694,
+          "wilson95": [
+            0.7824337583502992,
+            0.9556211075129601
+          ]
+        },
+        "task_success": {
+          "n": 44,
+          "d": 49,
+          "rate": 0.8979591836734694,
+          "wilson95": [
+            0.7824337583502992,
+            0.9556211075129601
+          ]
+        },
+        "autonomous_success": {
+          "n": 15,
+          "d": 49,
+          "rate": 0.30612244897959184,
+          "wilson95": [
+            0.1951532349314748,
+            0.4452815740069374
+          ]
+        },
+        "reviewed": {
+          "n": 34,
+          "d": 49,
+          "rate": 0.6938775510204082,
+          "wilson95": [
+            0.5547184259930626,
+            0.8048467650685251
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 49,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07270029673590504
+          ]
+        },
+        "mean_model_calls": 3.6530612244897958,
+        "mean_estimated_usd": 0.002092738775510204,
+        "p50_seconds": 3.7546915002167225,
+        "p95_seconds": 5.20919240009971
+      },
+      "stategraph": {
+        "business_success": {
+          "n": 27,
+          "d": 49,
+          "rate": 0.5510204081632653,
+          "wilson95": [
+            0.41314866799678107,
+            0.6814737507036366
+          ]
+        },
+        "answer_success": {
+          "n": 22,
+          "d": 49,
+          "rate": 0.4489795918367347,
+          "wilson95": [
+            0.3185262492963633,
+            0.5868513320032188
+          ]
+        },
+        "task_success": {
+          "n": 22,
+          "d": 49,
+          "rate": 0.4489795918367347,
+          "wilson95": [
+            0.3185262492963633,
+            0.5868513320032188
+          ]
+        },
+        "autonomous_success": {
+          "n": 10,
+          "d": 49,
+          "rate": 0.20408163265306123,
+          "wilson95": [
+            0.11481727042813811,
+            0.33637270110943834
+          ]
+        },
+        "reviewed": {
+          "n": 17,
+          "d": 49,
+          "rate": 0.3469387755102041,
+          "wilson95": [
+            0.2292420960931444,
+            0.4868906478056021
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 49,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07270029673590504
+          ]
+        },
+        "mean_model_calls": 1.4489795918367347,
+        "mean_estimated_usd": 0.0006710877551020408,
+        "p50_seconds": 1.0918417000211775,
+        "p95_seconds": 1.3789393999613822
+      }
+    },
+    "actual_model_response_names": [
+      "deepseek-flash"
+    ],
+    "recorded_requests_including_judge": 279,
+    "estimated_usd_including_judge": 0.143868
+  },
+  "after": {
+    "arms": {
+      "protected_tool_loop": {
+        "business_success": {
+          "n": 48,
+          "d": 50,
+          "rate": 0.96,
+          "wilson95": [
+            0.8653966212204534,
+            0.9889613473391734
+          ]
+        },
+        "answer_success": {
+          "n": 48,
+          "d": 50,
+          "rate": 0.96,
+          "wilson95": [
+            0.8653966212204534,
+            0.9889613473391734
+          ]
+        },
+        "task_success": {
+          "n": 47,
+          "d": 50,
+          "rate": 0.94,
+          "wilson95": [
+            0.8378265662912299,
+            0.9793854036353695
+          ]
+        },
+        "autonomous_success": {
+          "n": 15,
+          "d": 50,
+          "rate": 0.3,
+          "wilson95": [
+            0.1910338908960936,
+            0.4375061227736339
+          ]
+        },
+        "reviewed": {
+          "n": 33,
+          "d": 50,
+          "rate": 0.66,
+          "wilson95": [
+            0.5215356854148285,
+            0.7756323036493895
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 50,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07135003417431873
+          ]
+        },
+        "mean_model_calls": 4.3,
+        "mean_estimated_usd": 0.0024542519999999996,
+        "p50_seconds": 4.471600099932402,
+        "p95_seconds": 5.506520399823785,
+        "tool_first_attempt_success": {
+          "n": 308,
+          "d": 308,
+          "rate": 1.0,
+          "wilson95": [
+            0.9876809251876595,
+            1.0
+          ]
+        },
+        "planner_fallback": null,
+        "requires_review_count": 30,
+        "unnecessary_review": {
+          "n": 3,
+          "d": 20,
+          "rate": 0.15,
+          "wilson95": [
+            0.05236779195949584,
+            0.36042329588695743
+          ]
+        },
+        "by_scenario": {
+          "cancel_question": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "invoice": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "multi": {
+            "n": 9,
+            "d": 10,
+            "rate": 0.9,
+            "wilson95": [
+              0.5958436145024278,
+              0.9821242504842788
+            ]
+          },
+          "refund": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "support": {
+            "n": 8,
+            "d": 10,
+            "rate": 0.8,
+            "wilson95": [
+              0.49015684672072335,
+              0.9433190520193067
+            ]
+          }
+        }
+      },
+      "stategraph": {
+        "business_success": {
+          "n": 50,
+          "d": 50,
+          "rate": 1.0,
+          "wilson95": [
+            0.9286499658256813,
+            1.0
+          ]
+        },
+        "answer_success": {
+          "n": 43,
+          "d": 50,
+          "rate": 0.86,
+          "wilson95": [
+            0.738135428014719,
+            0.9304925473797714
+          ]
+        },
+        "task_success": {
+          "n": 43,
+          "d": 50,
+          "rate": 0.86,
+          "wilson95": [
+            0.738135428014719,
+            0.9304925473797714
+          ]
+        },
+        "autonomous_success": {
+          "n": 10,
+          "d": 50,
+          "rate": 0.2,
+          "wilson95": [
+            0.11243629945973886,
+            0.3303737210448524
+          ]
+        },
+        "reviewed": {
+          "n": 35,
+          "d": 50,
+          "rate": 0.7,
+          "wilson95": [
+            0.562493877226366,
+            0.8089661091039063
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 50,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07135003417431873
+          ]
+        },
+        "mean_model_calls": 1.2,
+        "mean_estimated_usd": 0.0007531739999999999,
+        "p50_seconds": 1.0791220997925848,
+        "p95_seconds": 2.133790099993348,
+        "tool_first_attempt_success": {
+          "n": 230,
+          "d": 230,
+          "rate": 1.0,
+          "wilson95": [
+            0.9835717853452937,
+            1.0
+          ]
+        },
+        "planner_fallback": {
+          "n": 0,
+          "d": 50,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07135003417431873
+          ]
+        },
+        "requires_review_count": 30,
+        "unnecessary_review": {
+          "n": 5,
+          "d": 20,
+          "rate": 0.25,
+          "wilson95": [
+            0.11186005278940309,
+            0.4687050099580636
+          ]
+        },
+        "by_scenario": {
+          "cancel_question": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "invoice": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "multi": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "refund": {
+            "n": 10,
+            "d": 10,
+            "rate": 1.0,
+            "wilson95": [
+              0.7224598312333834,
+              1.0
+            ]
+          },
+          "support": {
+            "n": 3,
+            "d": 10,
+            "rate": 0.3,
+            "wilson95": [
+              0.10778928748621183,
+              0.6032267800204347
+            ]
+          }
+        }
+      }
+    },
+    "paired": {
+      "before": "protected_tool_loop",
+      "after": "stategraph",
+      "pairs": 50,
+      "fixed": 2,
+      "regressed": 6,
+      "delta_pp": -8.0,
+      "mcnemar_exact_p": 0.2890625
+    },
+    "transport_or_execution_error_cases": [
+      "matched-support-01"
+    ],
+    "sensitivity_excluding_error_pairs": {
+      "protected_tool_loop": {
+        "business_success": {
+          "n": 48,
+          "d": 49,
+          "rate": 0.9795918367346939,
+          "wilson95": [
+            0.8930623153224584,
+            0.9963884204614692
+          ]
+        },
+        "answer_success": {
+          "n": 48,
+          "d": 49,
+          "rate": 0.9795918367346939,
+          "wilson95": [
+            0.8930623153224584,
+            0.9963884204614692
+          ]
+        },
+        "task_success": {
+          "n": 47,
+          "d": 49,
+          "rate": 0.9591836734693877,
+          "wilson95": [
+            0.8628671652316889,
+            0.9887346030720717
+          ]
+        },
+        "autonomous_success": {
+          "n": 15,
+          "d": 49,
+          "rate": 0.30612244897959184,
+          "wilson95": [
+            0.1951532349314748,
+            0.4452815740069374
+          ]
+        },
+        "reviewed": {
+          "n": 33,
+          "d": 49,
+          "rate": 0.673469387755102,
+          "wilson95": [
+            0.5337894368740628,
+            0.7879267867073578
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 49,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07270029673590504
+          ]
+        },
+        "mean_model_calls": 4.387755102040816,
+        "mean_estimated_usd": 0.002504338775510204,
+        "p50_seconds": 4.471600099932402,
+        "p95_seconds": 5.466390799963847
+      },
+      "stategraph": {
+        "business_success": {
+          "n": 49,
+          "d": 49,
+          "rate": 1.0,
+          "wilson95": [
+            0.9272997032640949,
+            0.9999999999999999
+          ]
+        },
+        "answer_success": {
+          "n": 42,
+          "d": 49,
+          "rate": 0.8571428571428571,
+          "wilson95": [
+            0.7333202681083708,
+            0.9290366627945541
+          ]
+        },
+        "task_success": {
+          "n": 42,
+          "d": 49,
+          "rate": 0.8571428571428571,
+          "wilson95": [
+            0.7333202681083708,
+            0.9290366627945541
+          ]
+        },
+        "autonomous_success": {
+          "n": 10,
+          "d": 49,
+          "rate": 0.20408163265306123,
+          "wilson95": [
+            0.11481727042813811,
+            0.33637270110943834
+          ]
+        },
+        "reviewed": {
+          "n": 34,
+          "d": 49,
+          "rate": 0.6938775510204082,
+          "wilson95": [
+            0.5547184259930626,
+            0.8048467650685251
+          ]
+        },
+        "unsafe_write": {
+          "n": 0,
+          "d": 49,
+          "rate": 0.0,
+          "wilson95": [
+            0.0,
+            0.07270029673590504
+          ]
+        },
+        "mean_model_calls": 1.2040816326530612,
+        "mean_estimated_usd": 0.0007555102040816326,
+        "p50_seconds": 1.0791220997925848,
+        "p95_seconds": 2.083115499932319
+      }
+    },
+    "actual_model_response_names": [
+      "deepseek-flash"
+    ],
+    "recorded_requests_including_judge": 325,
+    "estimated_usd_including_judge": 0.1801035
+  },
+  "before_manifest": {
+    "protocol": "matched_business_v1",
+    "cases_hash": "95e15716b61f8d5ec31997b83929d5732269ca0a80067a8fa8311e401937c77f",
+    "policy_hash": "6e266eaedd64cb920bf13631388cfd21b59ae37a20acfda763045bc81bcab34b",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_order_status",
+          "description": "Read the selected customer's order and logistics facts.",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "search_policy_knowledge",
+          "description": "Retrieve and explain applicable support policy.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "submit_after_sales",
+          "description": "Process an EXPLICIT application through the SAME policy rules, verification, approval and idempotency as the workflow. It returns blocked/clarify/auto-completed/pending-review. Use no mutation for an eligibility question.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action_type": {
+                "type": "string",
+                "enum": [
+                  "refund_request",
+                  "cancel_order",
+                  "change_address",
+                  "invoice_request",
+                  "complaint_escalation",
+                  "open_support_case"
+                ]
+              }
+            },
+            "required": [
+              "action_type"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    ],
+    "model": "deepseek-flash",
+    "temperature": 0,
+    "case_limit": 50,
+    "per_arm_model_call_limit": 8,
+    "usd_reservation_cap": 0.5,
+    "scope": "50 authored single-turn order-page requests; new orders, known scenario families; core-to-customer-answer, not HTTP or production traffic",
+    "reviewer": "approve whenever shared rules require review; human waiting time excluded",
+    "code_hashes": {
+      "app\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\logger.py": "f31d99a75f194d504af80e5fea9330e22d06f779372b04ff0469c324d618a56d",
+      "app\\main.py": "d7bdf4e38aeeb6f7b93f2ac790d7e7ce74544010ba731661c46ed4c344c22c77",
+      "app\\models.py": "695f338dea0be22bda13439efab9f83bbad3c17cfd09d2b253bb412a8e1d7d69",
+      "app\\mcp_server.py": "0c982f16156363951ae51682ac06004b8bc395551695a847ed8ed301c9ff013c",
+      "app\\mcp_client.py": "be7d1ecf2300f00598a63c18453dd981b21333c726b85c7fbd9e79e28f9e41ba",
+      "app\\trace_store.py": "56ae218edc77e1001b118730f4fd1be3560de9c2c6b5e7af8ab6936a51753bfb",
+      "app\\stripe_mcp.py": "ae27c3252d8c5c446f005420fdfb9b5c418c0a18b326fd2c5a8f261320600cc8",
+      "app\\support_conversations.py": "51500b1eb3baa9e43b2cf4fdcd746aaf2ace19afa72863e55f9ed5d5776f8d0b",
+      "app\\evaluation_snapshot.py": "9cb538a3af6f424e95bba817245bd75133db6d84a26a84767141e3dbc4246cde",
+      "app\\review_recovery.py": "0cc50199290f69fe303092348c2d2f143c0dd6136df87267458a64d402aed9bc",
+      "app\\agent\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\agent\\state.py": "0cd688b38faf9f9309542a1363181e4deb75d0383e246cc10b5aea1215955487",
+      "app\\agent\\graph.py": "b02a6c0a82fc2b59b1e2bd1e53b4fe445c76ab9697d5b4f999e013eb84d29c10",
+      "app\\agent\\actions.py": "7e8d65dad280499b28b8d798a09300880bd5d4a0ac72e6c1c37a776893c1f60f",
+      "app\\config\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\config\\di.py": "39562f208c5d6eee9fd86c1b0571efeb6c726d64125da6d42f3dd9a36494b221",
+      "app\\config\\llm_settings.py": "af4067981b6094b0a6d0c94fc77f65abe9e0ff04c7967756fc225577642632c5",
+      "app\\llm\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\llm\\client.py": "0116502e5e297f9586bfb083f02149861388eb9c4cd0f15324179dea47677bae",
+      "app\\llm\\guardrail.py": "801f19055a8d62da3e0a59241500a73ac013ea5cc884554ef45882fbf692b050",
+      "app\\llm\\prompts.py": "c9173d04e020f84440441a006dc846d45b3435920e69549f517e3ec9d70f8ade",
+      "app\\llm\\types.py": "401ba317470d08063dd4a7100d5e3e6d69313172227b9316a446733412ab02e8",
+      "app\\llm\\response_generator.py": "e5d03ddaf12c518aabdc54aa1578afccb9ecc0b49d1bbb3831fe8fef37ed6f04",
+      "app\\llm\\intent_planner.py": "0391062213c31f52da0299b150d450e8de1eedb5c60eed02d7a5df68fcbbe73f",
+      "app\\llm\\offline.py": "bc79f2502b24e2b0bf93bc0c1c894e73c8ccf02bce3c0ab2d6775a3c3e43cacd",
+      "app\\llm\\json_fallback.py": "3a72eafb1f378d3998a2145cc138fe226b5d627d81cc76da6b5a5cfa0bee912e",
+      "app\\llm\\customer_presenter.py": "1fc72bef212629e3d1f0fc4318b7dc41025612131d74089929d801e143e9f28b",
+      "app\\llm\\semantic_decision.py": "688d2b464c6dc05920bcdbde6076d366bbe42bbbb4e8e2e4cfbb041c62afd57d",
+      "app\\olist\\__init__.py": "4ab132db8bae8c3e98c1a17ed03922dcc88719796ec48c496f1674ab8cbf647c",
+      "app\\olist\\catalog.py": "803ae0737b67d493681be1a895e8503dc23e02f6a5f6d4257bd8063b0aaec761",
+      "app\\olist\\service.py": "a9399274453b3ebef4d0cc6a86dc5ca1dab682235cbd3f3f99464bb2518d6f2c",
+      "app\\olist\\retrieval.py": "6862bc42a4b5817a1ddc7675262eff47462b8eb3ca07f7baeffdbbfee653ad9d",
+      "app\\olist\\knowledge.py": "d2f375c64883441cd54c0256391759f47a739633f55cfb26cb06387f3e0d4c0f",
+      "app\\intent\\__init__.py": "4197a0d373a464e2a65623e51d378e559e7e8af1a5bac3f178178a18f7afed7c",
+      "app\\intent\\mapping.py": "ff735b51dc20519cbb555f87184489ae7fdadda67810664fcde85e62dbc63c62",
+      "app\\intent\\decomposer.py": "a2dec1e49a8c9abf28bd6a0ce24ef5ab91dd23bdc76b378642bdd06ede5ae4b9",
+      "app\\tools\\__init__.py": "1a71ae6b5d88bcf1952a50ccf045f0c6cc46a165e68102a1999ed57d2b21f83f",
+      "app\\tools\\repair.py": "c103f81856db47d83688974570c45a6197de15a9af36a510aaf7a9c18e80489b",
+      "app\\retrieval\\__init__.py": "be0a1dfcde6c6829b7e3a461eb46986ba55f259722d7b442cd79c5347a93c96f",
+      "app\\retrieval\\hybrid.py": "dbd0e47750574c316ba59c0e7efffcf4e04a7fb690103a17ebca31512789db14",
+      "app\\retrieval\\vector_store.py": "77ab9b69010abae1a4e753625a39b9e8b3365931ac1ce9a773f1071ad64b7775",
+      "app\\tool_call\\__init__.py": "67cfefa5d8edc990eadfc854ff5a99c693bcaf78e3a1fa564eaf5742c8afb913",
+      "app\\tool_call\\framework.py": "fe77fdc9173635ab58c476e949d40a986cfbb5ed530286c07f8a1729da2f63ea",
+      "app\\tool_call\\write_journal.py": "122f9775994788e0c596ebccfe55bfd8eacccb7c10376b0c9b15ae1ea4ec1fff",
+      "app\\tool_call\\mcp_policy.py": "88a3fe419b56b1b430ace17de8a41485adfb031fb72423554c1b814343f78f4a",
+      "app\\after_sales\\__init__.py": "7db8a2a8c0b7034420ce006f99ec53afa16292004f08879e797367dba8e9f2d0",
+      "app\\after_sales\\models.py": "e32032e809bcb5f4bc314faef04ceed83f12b793153c5c7813a8dd15cf2de7e7",
+      "app\\after_sales\\decision.py": "4bbdfb923a1150b7e227a5f0ebb499d28e5912904701e7afd4da8dbe9f734466",
+      "app\\after_sales\\execution_guard.py": "540a76cf6cedfc89f11e79d126579296d2ed0cd7f53eec3debfd8332731ca430"
+    },
+    "judge": "same model, arm labels removed and order randomized; not human validated"
+  },
+  "after_manifest": {
+    "protocol": "matched_business_v1",
+    "cases_hash": "95e15716b61f8d5ec31997b83929d5732269ca0a80067a8fa8311e401937c77f",
+    "policy_hash": "6e266eaedd64cb920bf13631388cfd21b59ae37a20acfda763045bc81bcab34b",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_order_status",
+          "description": "Read the selected customer's order and logistics facts.",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "search_policy_knowledge",
+          "description": "Retrieve and explain applicable support policy.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "submit_after_sales",
+          "description": "Process an EXPLICIT application through the SAME policy rules, verification, approval and idempotency as the workflow. It returns blocked/clarify/auto-completed/pending-review. Use no mutation for an eligibility question.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action_type": {
+                "type": "string",
+                "enum": [
+                  "refund_request",
+                  "cancel_order",
+                  "change_address",
+                  "invoice_request",
+                  "complaint_escalation",
+                  "open_support_case"
+                ]
+              }
+            },
+            "required": [
+              "action_type"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    ],
+    "model": "deepseek-flash",
+    "temperature": 0,
+    "case_limit": 50,
+    "per_arm_model_call_limit": 8,
+    "usd_reservation_cap": 0.3,
+    "scope": "50 authored single-turn order-page requests; new orders, known scenario families; core-to-customer-answer, not HTTP or production traffic",
+    "reviewer": "approve whenever shared rules require review; human waiting time excluded",
+    "code_hashes": {
+      "app\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\logger.py": "f31d99a75f194d504af80e5fea9330e22d06f779372b04ff0469c324d618a56d",
+      "app\\main.py": "d7bdf4e38aeeb6f7b93f2ac790d7e7ce74544010ba731661c46ed4c344c22c77",
+      "app\\models.py": "695f338dea0be22bda13439efab9f83bbad3c17cfd09d2b253bb412a8e1d7d69",
+      "app\\mcp_server.py": "0c982f16156363951ae51682ac06004b8bc395551695a847ed8ed301c9ff013c",
+      "app\\mcp_client.py": "be7d1ecf2300f00598a63c18453dd981b21333c726b85c7fbd9e79e28f9e41ba",
+      "app\\trace_store.py": "56ae218edc77e1001b118730f4fd1be3560de9c2c6b5e7af8ab6936a51753bfb",
+      "app\\stripe_mcp.py": "ae27c3252d8c5c446f005420fdfb9b5c418c0a18b326fd2c5a8f261320600cc8",
+      "app\\support_conversations.py": "51500b1eb3baa9e43b2cf4fdcd746aaf2ace19afa72863e55f9ed5d5776f8d0b",
+      "app\\evaluation_snapshot.py": "9cb538a3af6f424e95bba817245bd75133db6d84a26a84767141e3dbc4246cde",
+      "app\\review_recovery.py": "0cc50199290f69fe303092348c2d2f143c0dd6136df87267458a64d402aed9bc",
+      "app\\agent\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\agent\\state.py": "0cd688b38faf9f9309542a1363181e4deb75d0383e246cc10b5aea1215955487",
+      "app\\agent\\graph.py": "b02a6c0a82fc2b59b1e2bd1e53b4fe445c76ab9697d5b4f999e013eb84d29c10",
+      "app\\agent\\actions.py": "88dcec0690f62590421fb778f53823e75fb2b51365c91a42236c805ad9366ae2",
+      "app\\config\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\config\\di.py": "39562f208c5d6eee9fd86c1b0571efeb6c726d64125da6d42f3dd9a36494b221",
+      "app\\config\\llm_settings.py": "af4067981b6094b0a6d0c94fc77f65abe9e0ff04c7967756fc225577642632c5",
+      "app\\llm\\__init__.py": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+      "app\\llm\\client.py": "0116502e5e297f9586bfb083f02149861388eb9c4cd0f15324179dea47677bae",
+      "app\\llm\\guardrail.py": "801f19055a8d62da3e0a59241500a73ac013ea5cc884554ef45882fbf692b050",
+      "app\\llm\\prompts.py": "c9173d04e020f84440441a006dc846d45b3435920e69549f517e3ec9d70f8ade",
+      "app\\llm\\types.py": "401ba317470d08063dd4a7100d5e3e6d69313172227b9316a446733412ab02e8",
+      "app\\llm\\response_generator.py": "e5d03ddaf12c518aabdc54aa1578afccb9ecc0b49d1bbb3831fe8fef37ed6f04",
+      "app\\llm\\intent_planner.py": "fc96117880edd7740c96d6832772b21f2679a36be6be66b5558bc17c78684989",
+      "app\\llm\\offline.py": "bc79f2502b24e2b0bf93bc0c1c894e73c8ccf02bce3c0ab2d6775a3c3e43cacd",
+      "app\\llm\\json_fallback.py": "b9908ef7ea54d1e7ba4341c3457c0e1f7da112b047962f8693de64604e4359b8",
+      "app\\llm\\customer_presenter.py": "2abac6581464293b0d96f1742649d7d67656671333e149b8cb9f00ad62391dee",
+      "app\\llm\\semantic_decision.py": "688d2b464c6dc05920bcdbde6076d366bbe42bbbb4e8e2e4cfbb041c62afd57d",
+      "app\\olist\\__init__.py": "4ab132db8bae8c3e98c1a17ed03922dcc88719796ec48c496f1674ab8cbf647c",
+      "app\\olist\\catalog.py": "803ae0737b67d493681be1a895e8503dc23e02f6a5f6d4257bd8063b0aaec761",
+      "app\\olist\\service.py": "a9399274453b3ebef4d0cc6a86dc5ca1dab682235cbd3f3f99464bb2518d6f2c",
+      "app\\olist\\retrieval.py": "6862bc42a4b5817a1ddc7675262eff47462b8eb3ca07f7baeffdbbfee653ad9d",
+      "app\\olist\\knowledge.py": "d2f375c64883441cd54c0256391759f47a739633f55cfb26cb06387f3e0d4c0f",
+      "app\\intent\\__init__.py": "4197a0d373a464e2a65623e51d378e559e7e8af1a5bac3f178178a18f7afed7c",
+      "app\\intent\\mapping.py": "ff735b51dc20519cbb555f87184489ae7fdadda67810664fcde85e62dbc63c62",
+      "app\\intent\\decomposer.py": "a2dec1e49a8c9abf28bd6a0ce24ef5ab91dd23bdc76b378642bdd06ede5ae4b9",
+      "app\\tools\\__init__.py": "1a71ae6b5d88bcf1952a50ccf045f0c6cc46a165e68102a1999ed57d2b21f83f",
+      "app\\tools\\repair.py": "c103f81856db47d83688974570c45a6197de15a9af36a510aaf7a9c18e80489b",
+      "app\\retrieval\\__init__.py": "be0a1dfcde6c6829b7e3a461eb46986ba55f259722d7b442cd79c5347a93c96f",
+      "app\\retrieval\\hybrid.py": "dbd0e47750574c316ba59c0e7efffcf4e04a7fb690103a17ebca31512789db14",
+      "app\\retrieval\\vector_store.py": "77ab9b69010abae1a4e753625a39b9e8b3365931ac1ce9a773f1071ad64b7775",
+      "app\\tool_call\\__init__.py": "67cfefa5d8edc990eadfc854ff5a99c693bcaf78e3a1fa564eaf5742c8afb913",
+      "app\\tool_call\\framework.py": "fe77fdc9173635ab58c476e949d40a986cfbb5ed530286c07f8a1729da2f63ea",
+      "app\\tool_call\\write_journal.py": "122f9775994788e0c596ebccfe55bfd8eacccb7c10376b0c9b15ae1ea4ec1fff",
+      "app\\tool_call\\mcp_policy.py": "88a3fe419b56b1b430ace17de8a41485adfb031fb72423554c1b814343f78f4a",
+      "app\\after_sales\\__init__.py": "7db8a2a8c0b7034420ce006f99ec53afa16292004f08879e797367dba8e9f2d0",
+      "app\\after_sales\\models.py": "e32032e809bcb5f4bc314faef04ceed83f12b793153c5c7813a8dd15cf2de7e7",
+      "app\\after_sales\\decision.py": "4bbdfb923a1150b7e227a5f0ebb499d28e5912904701e7afd4da8dbe9f734466",
+      "app\\after_sales\\execution_guard.py": "540a76cf6cedfc89f11e79d126579296d2ed0cd7f53eec3debfd8332731ca430"
+    },
+    "judge": "same model, arm labels removed and order randomized; not human validated"
+  },
+  "workflow_regression_comparison": {
+    "before": "before",
+    "after": "after",
+    "pairs": 50,
+    "fixed": 22,
+    "regressed": 1,
+    "delta_pp": 42.0,
+    "mcnemar_exact_p": 5.7220458984375e-06
+  },
+  "publisher_hash": "026048f0149c848ac0d73f4df10dd243b5919d417dc97809e39f3b96c5b42f11"
+}
