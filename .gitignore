@@ -15,6 +15,7 @@ __pycache__/
 fastapi-langgraph-agent.iml
 .env
 local_notes/
+docs/NARRATIVE_AND_INTERVIEW.md
 artifacts/
 .pytest-tmp/
 data/*.db*

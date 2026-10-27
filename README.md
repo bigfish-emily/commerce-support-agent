@@ -1,116 +1,83 @@
-# commerce-support-agent
+# Commerce Support Agent
 
-A public-data sandbox for an e-commerce **order assistant** and asynchronous after-sales review.
+[![CI](https://github.com/bigfish-emily/commerce-support-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/bigfish-emily/commerce-support-agent/actions/workflows/ci.yml)
 
-The product starts from the customer's own order context. Standard actions such as tracking a package or starting a refund request are rendered as native order controls; the Agent handles free-form, ambiguous, multi-step requests that need to find an order, retrieve policy evidence, assemble an after-sales case, or coordinate a handoff. Material-risk actions enter a staff review console. Approved actions append a sandbox event and update the customer-visible order projection.
+An **e-commerce order and after-sales assistant** with a customer interface and an asynchronous staff review console.
 
-> This repository models an after-sales workflow on historical public data. It does not connect to a real payment, logistics, or OMS provider and never moves money.
+用户从自己的订单出发，用自然语言查询进度、了解政策或提出售后诉求；系统收集事实、核对政策并处理申请，需要授权审核的动作进入工作人员审核台。
 
-## What It Demonstrates
+Built with Python, FastAPI and LangGraph, with SQLite business state, optional Redis coordination and MCP integration adapters.
 
-- **Customer path**: a compact owned-order overview, native order controls, free-form intent planning, ownership checks, order/policy retrieval, decision and verifier gates, and clear customer-facing replies.
-- **Review path**: a durable review packet holds order facts, policy references, decision, verifier output, and customer request. An operator can approve, reject, or receive an appeal after a timeout/rejection.
-- **Durable business state**: Olist facts are the immutable initial snapshot. Approved actions append a case event and update a SQLite order projection, so later order queries expose `refund requested`, `address change requested`, or `canceled` status.
-- **Governed tools**: Pydantic input schemas, role/scope checks, customer ownership guards, tenant-aware read cache, timeout/retry/fallback, redacted audit events, Redis-compatible locks, and SQLite idempotency records.
-- **Workflow control**: native page actions bypass LLM planning but enter the same governed workflow. LangGraph checkpointing pauses high-risk cases for staff review and resumes the original graph after a decision.
-- **Integration adapters**: standalone MCP tools and stdio/remote clients are available for integration experiments. The default customer workflow calls governed Python handlers directly; it is not an end-to-end MCP deployment.
-
-## Product Flow
+## How it works
 
 ```mermaid
 flowchart LR
-    Customer[Customer] --> Context[My orders / order detail]
-    Context -->|native control or free text| Chat[/customer/chat]
-    Chat --> Graph[LangGraph case workflow]
-    Graph --> Facts[Owned order facts]
-    Graph --> Policy[Policy evidence]
-    Facts --> Decide[Decision + verifier]
-    Policy --> Decide
-    Decide -->|read / clarify / reject| Reply[Customer reply]
-    Decide -->|eligible low-risk action| Check[Recheck action and order binding]
-    Decide -->|review required| Case[Persistent case packet]
-    Case --> Console[/review]
-    Console -->|approve| Check
-    Console -->|reject / timeout| Reply
-    Check -->|valid| Write[Governed write tool]
-    Check -->|changed or missing| Reply
-    Write -->|success| Event[SQLite event + order projection]
-    Write -->|unknown result| Hold[Quarantine pending reconciliation]
-    Hold --> Reply
-    Event --> Reply
+    A[Customer: order page or chat] --> B[Understand request and resolve owned order]
+    B --> C[Retrieve facts and policy evidence]
+    C --> D[Decision and execution checks]
+    D -->|answer or clarify| E[Customer response]
+    D -->|eligible action| F[Governed execution]
+    D -->|approval required| G[Staff review console]
+    G -->|approve and revalidate| F
+    G -->|reject or expire| E
+    F --> H[Persist result and update order view]
+    H --> E
 ```
 
-## Data Contract
+- **Context-aware requests:** page-selected orders, compound intents and resumable tasks, alongside native order controls.
+- **Review with evidence:** order facts, policy references and proposed actions travel with the case; staff can approve, reject and handle appeals.
+- **Reliable execution:** schema and ownership checks, role/scope permissions, retry boundaries, durable idempotency records and recovery handling. Unknown write results are held for reconciliation.
+- **Inspectable behavior:** recorded tool calls, redacted traces, business-state checks and reproducible evaluation artifacts.
 
-| Asset | Role in the sandbox |
-|---|---|
-| Olist Brazilian E-Commerce dataset | Historical initial order facts. The local derived index contains 98,666 order facts; 518 representative records are checked in as lightweight demo/evaluation seeds. |
-| Demo Marketplace Policy Pack | Versioned local policy/FAQ/merchant-rule documents used as explicit policy evidence. It is intentionally labeled as a sandbox policy, not a real company's policy. |
-| SQLite case/event store | Cases, review status, appeals, idempotency records, append-only after-sales events, and materialized order projections. |
+This is a runnable sandbox using historical public orders and a versioned demo policy pack. Actions update local business records; they do not move money or contact a live OMS or logistics provider.
 
-Public support corpora and external benchmarks live under `experiments/` or external checkouts. They do not share customers, orders, or policies with the Olist sandbox, so their scores are not presented as customer-product results.
+## Run locally
 
-## Run Locally
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+git clone https://github.com/bigfish-emily/commerce-support-agent.git
+cd commerce-support-agent
 uv sync --extra dev
-uv run python scripts/download_olist_data.py
-uv run python scripts/build_olist_dataset.py
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open:
+| Entry | Use |
+|---|---|
+| [Demo](http://127.0.0.1:8000/demo) | Guided scenarios with resettable sandbox state |
+| [Customer](http://127.0.0.1:8000/customer) | Order questions and after-sales requests |
+| [Review](http://127.0.0.1:8000/review) | Evidence packets and approval decisions |
 
-```text
-http://127.0.0.1:8000/demo
-http://127.0.0.1:8000/customer
-http://127.0.0.1:8000/review
-```
+With no model key configured, the local demo uses deterministic fallback behavior. For live language understanding, set `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in your environment or a local `.env`. See [configuration and usage](docs/USER_MANUAL.md). Do not commit credentials.
 
-Start with `/demo` for a three-minute guided walkthrough. It resets a
-disposable local sandbox for each scenario and shows a delivery-delay refund
-handoff, a self-service delivery query, and a blocked delivered-order address
-change. It is enabled only when `DEMO_MODE` is not set to `0`.
+The repository includes 518 Olist-derived seed records. Full-data preparation and optional services are documented in the [implementation guide](docs/PROJECT_GUIDE.md). Redis is enabled with `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`; default operation uses the in-memory runtime backend.
 
-The customer page defaults to the local `demo-customer` actor. `X-Demo-Customer` is a test-only selector; a production BFF must resolve an authenticated principal and inject the allowed-order set server-side. The local review credential is `local-review-demo`; set `REVIEW_API_TOKEN` before exposing the service. Use Redis by setting `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`.
+Local identities and the review credential `local-review-demo` are demonstration defaults. Keep the service bound to localhost; an exposed deployment needs authenticated identities and deployment hardening. The internal `/chat` debugging endpoint is disabled by default.
 
-`/chat` is an internal debugging surface and is disabled by default. Enable it
-only in local development with `INTERNAL_DEBUG_ENABLED=1`; customer traffic
-uses `/customer/chat`.
+## Evaluation you can inspect
 
-## Evaluation
+The latest published experiment compares a workflow and a protected tool-calling loop on **50 authored order-page cases**, using `deepseek-flash`, shared business tools, policy and initial state.
 
-The latest live experiment uses **50 authored order-page cases** and
-`deepseek-flash`, with the same business handlers, policy, ownership checks,
-approval rules and initial state for a protected tool loop and the workflow.
+| Measure | Workflow | Protected tool loop |
+|---|---:|---:|
+| Complete task success | 43/50 | 47/50 |
+| Business-state checks passed | 50/50 | 48/50 |
+| Mean model calls per request | 1.2 | 4.3 |
+| Business-core P95, excluding human waiting | 2.13s | 5.51s |
 
-Fixing nested JSON schemas, page-context propagation and compound replies
-raised workflow task success from **22/50 to 43/50** on the inspected regression
-set. The contemporaneous protected loop scored **47/50**: the workflow is not
-claimed to outperform it on overall success. Workflow mean model calls were
-**1.2 vs 4.3**, with core P95 **2.13s vs 5.51s**, excluding human wait time.
-Business-state checks and model-judged reply quality are reported separately.
+Workflow fixes improved complete task success from **22/50 to 43/50** on this inspected regression set. The comparison exposes a tradeoff: fewer model calls and lower latency, with lower complete-task success than the tool loop. These are sandbox regression results, not production resolution rates or an unseen benchmark.
 
-[Results, scoring rules and row-level API evidence](evaluation/results/matched_business_20260927/README.md)
-include both versions and every failed case. These are sandbox regression
-results, not an unseen benchmark or production customer-resolution rate.
+[Read the protocol, failures and row-level model-call evidence →](evaluation/results/matched_business_20260927/README.md)
 
-- [Evaluation design and ablation plan](docs/EVALUATION.md)
-- [Execution integrity and semantic classifier experiments](docs/EXECUTION_INTEGRITY.md)
-- [Architecture diagrams](docs/ARCHITECTURE_DIAGRAMS.md)
-- [Detailed implementation guide](docs/PROJECT_GUIDE.md)
+## Explore the implementation
+
+- [Architecture and flow diagrams](docs/ARCHITECTURE_DIAGRAMS.md)
+- [Implementation and data sources](docs/PROJECT_GUIDE.md)
 - [Recovery, timeout scheduling and cache protocol](docs/RECOVERY_PROTOCOL.md)
-- [User manual](docs/USER_MANUAL.md)
+- [Evaluation design](docs/EVALUATION.md)
 
-## Scope
-
-The optional Jev shadow-classification adapter is disabled. Account access is
-currently unavailable, and no live Jev quality or speed results are claimed.
-Policy retrieval uses lexical Markdown matching; the separate support-corpus
-experiment uses BM25 and hashing vectors with optional Qdrant storage.
-
-This is a reference implementation for an Olist-backed after-sales sandbox. A production deployment would replace its fixed demo identity, public historical facts, policy pack, and local stores with IAM, OMS, CRM, payment, logistics, notification, and observability services.
+Policy retrieval uses lexical matching over Markdown policy/FAQ/rule documents. Support-corpus retrieval experiments are separate from the customer workflow. MCP adapters support integration experiments, including an optional policy-tool transport; default business tools run through local governed handlers.
 
 ## License
 
-MIT
+[MIT](LICENSE)
