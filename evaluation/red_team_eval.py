@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -106,9 +107,18 @@ async def main() -> None:
 
     rows: list[dict[str, Any]] = []
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        for case in CASES:
-            rows.append(await _run_case(client, case))
+    # ASGITransport skips lifespan, so provision the conversation schema here.
+    # Keep evaluation messages out of a developer's running demo database.
+    previous_db = main_module.conversations.DB
+    with tempfile.TemporaryDirectory(prefix="red-team-conversations-") as directory:
+        main_module.conversations.DB = Path(directory) / "conversations.db"
+        try:
+            main_module.conversations.initialize()
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                for case in CASES:
+                    rows.append(await _run_case(client, case))
+        finally:
+            main_module.conversations.DB = previous_db
 
     OUT_JSONL.write_text(
         "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
