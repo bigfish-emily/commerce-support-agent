@@ -17,7 +17,7 @@ REVIEW_HEADERS = {"X-Review-Token": "local-review-demo"}
 
 
 @pytest.fixture(autouse=True)
-def setup_graph_and_state(monkeypatch) -> None:
+def setup_graph_and_state(monkeypatch, tmp_path) -> None:
     from langgraph.checkpoint.memory import InMemorySaver
 
     import app.main as main_module
@@ -25,6 +25,9 @@ def setup_graph_and_state(monkeypatch) -> None:
 
     monkeypatch.setenv("INTERNAL_DEBUG_ENABLED", "1")
     main_module.agent = agent_graph_builder.build(InMemorySaver())
+    # ASGITransport skips lifespan; do not depend on a developer's existing DB.
+    monkeypatch.setattr(main_module.conversations, "DB", tmp_path / "conversations.db")
+    main_module.conversations.initialize()
     case_service.reset()
 
 

@@ -50,7 +50,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 With no model key configured, the local demo uses deterministic fallback behavior. For live language understanding, set `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in your environment or a local `.env`. See [configuration and usage](docs/USER_MANUAL.md). Do not commit credentials.
 
-The repository includes 518 Olist-derived seed records. Full-data preparation and optional services are documented in the [implementation guide](docs/PROJECT_GUIDE.md). Redis is enabled with `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`; default operation uses the in-memory runtime backend.
+The repository includes 518 Olist-derived seed records and 257 additional public order facts referenced by the demo and regression cases. Full-data preparation and optional services are documented in the [implementation guide](docs/PROJECT_GUIDE.md). Redis is enabled with `RUNTIME_STORE_BACKEND=redis` and `REDIS_URL`; default operation uses the in-memory runtime backend.
 
 Local identities and the review credential `local-review-demo` are demonstration defaults. Keep the service bound to localhost; an exposed deployment needs authenticated identities and deployment hardening. The internal `/chat` debugging endpoint is disabled by default.
 

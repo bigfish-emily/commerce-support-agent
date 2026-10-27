@@ -39,7 +39,13 @@ def load_dataset() -> dict:
 def load_order_facts_index() -> dict:
     path = order_facts_path()
     if not path.exists():
-        return {"metadata": {}, "orders": orders_by_id()}
+        orders = orders_by_id()
+        # Frozen public facts let clean checkouts run demo and regression cases.
+        supplemental = _DEFAULT_DATASET_PATH.with_name("regression_order_facts.json")
+        if not os.environ.get("OLIST_AGENT_DATASET_PATH") and supplemental.exists():
+            with supplemental.open(encoding="utf-8") as f:
+                orders.update(json.load(f)["orders"])
+        return {"metadata": {"order_count": len(orders)}, "orders": orders}
     with path.open(encoding="utf-8") as f:
         return json.load(f)
 
